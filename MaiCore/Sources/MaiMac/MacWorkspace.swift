@@ -4,6 +4,10 @@ import MaiACP
 import MaiCore
 import Observation
 
+enum MacSidebarSection: String, CaseIterable {
+  case hosts = "Hosts", folders = "Folders", conversations = "Conversations"
+}
+
 @MainActor @Observable
 final class MacWorkspace {
   let home = AgentHome.resolve()
@@ -14,6 +18,8 @@ final class MacWorkspace {
   var conversations: [MacConversation] = []
   var selectedID: UUID?
   var search = ""
+  var sidebarSection: MacSidebarSection? = .folders
+  var showArchived = false
   var busy = false
   var error: String?
   var showConnection = false
@@ -25,8 +31,26 @@ final class MacWorkspace {
   var host: ACPRemoteHost? { hosts.first { $0.id == hostID } }
   var hostName: String { host?.name ?? "This Mac" }
   var sessions: [ACPSessionInfo] {
-    snapshot.sessions.filter { $0.cwd == cwd && (search.isEmpty || $0.title.localizedCaseInsensitiveContains(search)) }
-      .sorted { ($0.updatedAt ?? .distantPast) > ($1.updatedAt ?? .distantPast) }
+    snapshot.sessions.filter {
+      $0.cwd == cwd && ($0.isArchived == true) == showArchived
+        && (search.isEmpty || $0.title.localizedCaseInsensitiveContains(search))
+    }.sorted {
+      if ($0.isPinned == true) != ($1.isPinned == true) { return $0.isPinned == true }
+      return ($0.updatedAt ?? .distantPast) > ($1.updatedAt ?? .distantPast)
+    }
+  }
+
+  var unlistedConversations: [MacConversation] {
+    guard !showArchived else { return [] }
+    return conversations.filter { chat in
+      chat.hostID == hostID && chat.cwd == cwd
+        && !snapshot.sessions.contains { $0.sessionID == chat.sessionID && $0.cwd == chat.cwd }
+        && (search.isEmpty || chat.title.localizedCaseInsensitiveContains(search))
+    }
+  }
+
+  func conversation(for session: ACPSessionInfo) -> MacConversation? {
+    conversations.first { $0.hostID == hostID && $0.cwd == session.cwd && $0.sessionID == session.sessionID }
   }
 
   func restore() async {
@@ -40,6 +64,7 @@ final class MacWorkspace {
       if host == nil { hostID = nil }
       cwd = UserDefaults.standard.string(forKey: "mac.cwd") ?? ""
       await refresh()
+      sidebarSection = cwd.isEmpty ? .folders : .conversations
       if let id = UserDefaults.standard.string(forKey: "mac.session"),
         let session = snapshot.sessions.first(where: { $0.sessionID == id && $0.cwd == cwd }) {
         open(session)
@@ -70,6 +95,10 @@ final class MacWorkspace {
 
   func selectHost(_ id: UUID?) {
     guard !busy else { return }
+    sidebarSection = .folders
+    search = ""
+    showArchived = false
+    if hostID == id { return }
     hostID = id
     cwd = ""
     selectedID = nil
@@ -78,6 +107,11 @@ final class MacWorkspace {
   }
 
   func selectFolder(_ path: String) {
+    guard !busy else { return }
+    sidebarSection = .conversations
+    search = ""
+    showArchived = false
+    if cwd == path { return }
     cwd = path
     selectedID = nil
     remember()
@@ -94,6 +128,9 @@ final class MacWorkspace {
       _ = try home.openProject(atWorkingDirectory: url)
       hostID = nil
       cwd = url.path
+      sidebarSection = .conversations
+      search = ""
+      showArchived = false
       selectedID = nil
       Task { await refresh() }
     } catch { self.error = error.localizedDescription }
@@ -101,6 +138,8 @@ final class MacWorkspace {
 
   func open(_ info: ACPSessionInfo? = nil) {
     guard !busy, !cwd.isEmpty else { return }
+    sidebarSection = .conversations
+    showArchived = info?.isArchived == true
     if let info, let existing = conversations.first(where: {
       $0.hostID == hostID && $0.sessionID == info.sessionID && $0.cwd == info.cwd
     }) {
@@ -124,6 +163,121 @@ final class MacWorkspace {
   }
 
   func newChat() { open() }
+
+  func select(_ conversation: MacConversation) {
+    guard !busy else { return }
+    selectedID = conversation.id
+    sidebarSection = .conversations
+    remember()
+  }
+
+  func manage(_ session: ACPSessionInfo, action: ACPSessionAction, title: String? = nil) {
+    let chat = conversation(for: session)
+    guard !busy, chat?.busy != true else { return }
+    busy = true
+    chat?.busy = true
+    Task {
+      defer { chat?.busy = false }
+      var temporaryClient: (any RemoteSessionClient)?
+      do {
+        let client: any RemoteSessionClient
+        if let active = chat?.client, chat?.connected == true {
+          client = active
+        } else {
+          if let host {
+            client = try hostStore.connection(for: host).makeSession(cwd: session.cwd)
+          } else {
+            client = ACPClient(configuration: localConfiguration(cwd: session.cwd))
+          }
+          temporaryClient = client
+        }
+        let result = try await client.manageSession(session.sessionID, cwd: session.cwd, action: action, title: title)
+        if action == .rename, let title { chat?.title = title }
+        if action == .delete || action == .archive, let chat {
+          await chat.close()
+          conversations.removeAll { $0.id == chat.id }
+          if selectedID == chat.id { selectedID = nil }
+        }
+        await temporaryClient?.disconnect()
+        busy = false
+        await refresh()
+        if action == .fork, let result { open(result) }
+      } catch {
+        await temporaryClient?.disconnect()
+        busy = false
+        self.error = error.localizedDescription
+      }
+    }
+  }
+
+  func closeConversation(_ chat: MacConversation) {
+    guard !busy else { return }
+    busy = true
+    Task {
+      await chat.close()
+      conversations.removeAll { $0.id == chat.id }
+      if selectedID == chat.id { selectedID = nil }
+      busy = false
+      await refresh()
+    }
+  }
+
+  func renameHost(_ host: ACPRemoteHost, to name: String) {
+    do {
+      try hostStore.rename(host, to: name)
+      hosts = try hostStore.hosts()
+      for chat in conversations where chat.hostID == host.id { chat.hostName = name }
+    } catch { self.error = error.localizedDescription }
+  }
+
+  func removeHost(_ host: ACPRemoteHost) {
+    guard !busy else { return }
+    busy = true
+    Task {
+      do {
+        for chat in conversations where chat.hostID == host.id { await chat.close() }
+        try hostStore.remove(host)
+        conversations.removeAll { $0.hostID == host.id }
+        if hostID == host.id {
+          hostID = nil
+          cwd = ""
+          selectedID = nil
+          snapshot = .init()
+        }
+        sidebarSection = .hosts
+      } catch { self.error = error.localizedDescription }
+      busy = false
+      await refresh()
+    }
+  }
+
+  func renameFolder(_ folder: ACPWorkspaceFolder, to name: String) {
+    guard hostID == nil, !busy else { return }
+    do {
+      guard var project = try home.loadProject(atWorkingDirectory: URL(fileURLWithPath: folder.cwd)) else { return }
+      project.name = name
+      try home.saveProject(project)
+      Task { await refresh() }
+    } catch { self.error = error.localizedDescription }
+  }
+
+  func forgetFolder(_ folder: ACPWorkspaceFolder) {
+    guard hostID == nil, !busy else { return }
+    busy = true
+    Task {
+      do {
+        for chat in conversations where chat.hostID == nil && chat.cwd == folder.cwd { await chat.close() }
+        if let project = try home.loadProject(atWorkingDirectory: URL(fileURLWithPath: folder.cwd)) {
+          _ = try home.forgetProject(id: project.id)
+        }
+        conversations.removeAll { $0.hostID == nil && $0.cwd == folder.cwd }
+        if cwd == folder.cwd { cwd = ""; selectedID = nil }
+        sidebarSection = .folders
+      } catch { self.error = error.localizedDescription }
+      busy = false
+      await refresh()
+    }
+  }
 
   private func makeClient(profile: RemoteHostConnection?, conversation: MacConversation) throws -> any RemoteSessionClient {
     let update: @Sendable (JSONValue) async -> Void = { [weak conversation] in await conversation?.receive($0) }
@@ -180,6 +334,9 @@ final class MacWorkspace {
     cwd = host.cwd
     selectedID = nil
     snapshot = .init()
+    sidebarSection = .folders
+    search = ""
+    showArchived = false
     remember()
   }
 
@@ -202,11 +359,25 @@ final class MacWorkspace {
     let conversation = selected
     Task {
       await conversation?.close()
-      launchTerminal(sessionID: conversation?.sessionID)
+      launchTerminal(cwd: conversation?.cwd ?? cwd, sessionID: conversation?.sessionID)
     }
   }
 
-  private func launchTerminal(sessionID: String?) {
+  func openTerminal(in folder: ACPWorkspaceFolder) {
+    guard hostID == nil else { return }
+    launchTerminal(cwd: folder.cwd, sessionID: nil)
+  }
+
+  func openTerminal(_ session: ACPSessionInfo) {
+    guard hostID == nil, !busy else { return }
+    let chat = conversation(for: session)
+    Task {
+      await chat?.close()
+      launchTerminal(cwd: session.cwd, sessionID: session.sessionID)
+    }
+  }
+
+  private func launchTerminal(cwd: String, sessionID: String?) {
     func quote(_ value: String) -> String { "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'" }
     var arguments = [Bundle.main.executableURL!.path, "--home", home.rootURL.path]
     if let sessionID { arguments += ["--resume", sessionID] }

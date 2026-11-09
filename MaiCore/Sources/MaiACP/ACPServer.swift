@@ -499,6 +499,7 @@ public actor ACPServer {
       "_meta": .object([
         "pmai": .object([
           "folders": .array(snapshot.folders.map(\.json)), "canManageSessions": .bool(true),
+          "canOrganizeSessions": .bool(snapshot.canOrganizeSessions == true),
         ])
       ])
     ])
@@ -549,10 +550,20 @@ public actor ACPServer {
   }
 
   private func manageSession(params: JSONValue?) async throws -> JSONValue {
-    guard let title = params?.objectValue?["title"],
-      title == .null
-        || title.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-    else { throw JSONRPCError.invalidParams("Provide a nonempty title, or null to delete") }
+    let title = params?.objectValue?["title"]
+    let action: ACPSessionAction
+    if let value = params?.objectValue?["action"] {
+      guard let raw = value.stringValue, let parsed = ACPSessionAction(rawValue: raw) else {
+        throw JSONRPCError.invalidParams("Unknown conversation action")
+      }
+      action = parsed
+    } else {
+      guard let title else { throw JSONRPCError.invalidParams("Provide a nonempty title, or null to delete") }
+      action = title == .null ? .delete : .rename
+    }
+    if action == .rename, title?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
+      throw JSONRPCError.invalidParams("Provide a nonempty title")
+    }
     let id = params?.objectValue?["sessionId"]?.stringValue ?? ""
     let wasLoaded = sessions[id] != nil
     guard sessions[id]?.busy != true else { throw JSONRPCError.invalidParams("Session is busy") }
@@ -564,7 +575,11 @@ public actor ACPServer {
     guard var saved = sessions[id]?.saved else {
       throw JSONRPCError.invalidParams("Unknown session")
     }
-    if title == .null {
+    if action != .rename && action != .delete {
+      guard let workspace else { throw JSONRPCError.methodNotFound(ACP.Method.sessionManage) }
+      return try await workspace.organize(sessionID: id, cwd: saved.workingDirectory.path, action: action).json
+    }
+    if action == .delete {
       if let file = sessionDirectory?.appendingPathComponent(id + ".json"),
         FileManager.default.fileExists(atPath: file.path)
       {
@@ -573,7 +588,7 @@ public actor ACPServer {
       try await workspace?.delete(sessionID: id, cwd: saved.workingDirectory.path)
       sessions.removeValue(forKey: id)
     } else {
-      saved.title = title.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
+      saved.title = title?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
       saved.updatedAt = Date()
       try await save(saved)
       sessions[id]?.saved = saved

@@ -368,15 +368,32 @@ public actor ACPClient {
 
   /// A title renames a durable session; nil deletes it without creating a new session.
   public func manageSession(_ id: String, cwd: String, title: String?) async throws {
+    _ = try await manageSession(id, cwd: cwd, action: title == nil ? .delete : .rename, title: title)
+  }
+
+  public func manageSession(_ id: String, cwd: String, action: ACPSessionAction,
+    title: String? = nil) async throws -> ACPSessionInfo? {
     guard !busy else { throw JSONRPCError.invalidParams("Session is busy") }
     busy = true
     defer { busy = false }
-    _ = try await connectedPeer().request(
+    var fields: [String: JSONValue] = [
+      "sessionId": .string(id), "cwd": .string(cwd), "action": .string(action.rawValue),
+    ]
+    // Older hosts interpret a null title as deletion. Omit it for new actions
+    // so an unsupported operation fails without modifying the conversation.
+    if action == .rename || action == .delete {
+      if action == .rename, title?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
+        throw JSONRPCError.invalidParams("Provide a nonempty title")
+      }
+      fields["title"] = action == .delete ? .null : title.map(JSONValue.string)
+    }
+    let result = try await connectedPeer().request(
       ACP.Method.sessionManage,
-      params: .object([
-        "sessionId": .string(id), "cwd": .string(cwd),
-        "title": title.map(JSONValue.string) ?? .null,
-      ]), timeout: 60)
+      params: .object(fields), timeout: 60)
+    guard let info = result.objectValue, let sessionID = info["sessionId"]?.stringValue,
+      let cwd = info["cwd"]?.stringValue, let title = info["title"]?.stringValue else { return nil }
+    return .init(sessionID: sessionID, cwd: cwd, title: title, updatedAt: Self.parseDate(info["updatedAt"]),
+      isPinned: info["isPinned"]?.boolValue, isArchived: info["isArchived"]?.boolValue)
   }
 
   /// Redeems a server's pairing invitation. Invitations cannot initialize ACP
@@ -438,6 +455,8 @@ public actor ACPClient {
       snapshot.canManageSessions =
         fields["_meta"]?.objectValue?["pmai"]?
         .objectValue?["canManageSessions"]?.boolValue
+      snapshot.canOrganizeSessions = fields["_meta"]?.objectValue?["pmai"]?
+        .objectValue?["canOrganizeSessions"]?.boolValue
       for value in sessions {
         guard let entry = value.objectValue,
           let id = entry["sessionId"]?.stringValue, !id.isEmpty,
@@ -448,7 +467,8 @@ public actor ACPClient {
           snapshot.sessions.append(
             .init(
               sessionID: id, cwd: cwd,
-              title: entry["title"]?.stringValue ?? AgentChat.placeholderTitle, updatedAt: date))
+              title: entry["title"]?.stringValue ?? AgentChat.placeholderTitle, updatedAt: date,
+              isPinned: entry["isPinned"]?.boolValue, isArchived: entry["isArchived"]?.boolValue))
         }
       }
       let folders = fields["_meta"]?.objectValue?["pmai"]?.objectValue?["folders"]?.arrayValue ?? []

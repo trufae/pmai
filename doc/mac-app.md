@@ -13,7 +13,24 @@ appear automatically. **New Chat** is ⌘N; **Send** is Return (or ⌘Return);
 Shift-Return inserts a newline; **Stop** is ⌘. The conversation inspector contains provider, model,
 reasoning, tool settings, and subagents. Running conversations remain open when
 switching folders or hosts. Permission requests are attached to the conversation
-that requested them, with an attention icon in Open Chats.
+that requested them, with an attention icon in the conversation list.
+
+The sidebar expands one section at a time: **Hosts**, **Folders**, or
+**Conversations**. Selecting a host opens its folders; selecting a folder opens
+its conversations. Click another section heading to return to that level. Open
+chats appear once, in their own folder, alongside saved conversations.
+
+Right-click a conversation to rename, fork, pin/unpin, archive/restore, delete,
+or open it in the terminal. The Active/Archived picker exposes archived chats.
+These operations use the CLI's chat storage and preserve the same fork and pin
+semantics as `/chat`. Remote hosts advertise supported operations; older ACP
+hosts and OpenCode offer rename/delete without the newer organization actions.
+Running turns must finish or be stopped before editing a conversation.
+
+Host menus support renaming and removing saved connections. Folder menus offer
+new chats and copying paths; local folders also support display-name changes,
+Finder/terminal access, and removal from the sidebar. Removing a folder keeps
+its files and chats. Removing a host only forgets this Mac's connection.
 
 **⌘+** and **⌘−** resize conversation text, Markdown, and the message composer;
 **⌘0** restores the default size. These commands also appear in the View menu.

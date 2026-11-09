@@ -62,4 +62,18 @@ func acpRemoteHostPairing() throws {
         name: "Renamed", url: #require(URL(string: "ws://127.0.0.1:19284/acp")), token: "token",
         cwd: "/work"))
   }
+  try store.rename(second, to: "Desktop")
+  let renamed = try store.host("desktop")
+  #expect(renamed.id == first.id && renamed.cwd == second.cwd)
+  #expect(try store.connection(for: renamed).token == "new-token")
+  #expect(throws: JSONRPCError.self) { try store.rename(renamed, to: " ") }
+  let other = try store.pair(ACPRemoteConnection(name: "Other",
+    url: #require(URL(string: "ws://127.0.0.1:19284/acp")), token: "other-token", cwd: "/work"))
+  #expect(throws: JSONRPCError.self) { try store.rename(renamed, to: "OTHER") }
+  try Data("{}".utf8).write(to: store.sessionFile(for: renamed))
+  try store.remove(renamed)
+  #expect(try store.hosts() == [other])
+  #expect(!FileManager.default.fileExists(atPath: store.tokenFile(for: renamed).path))
+  #expect(!FileManager.default.fileExists(atPath: store.sessionFile(for: renamed).path))
+  #expect(try store.connection(for: other).token == "other-token")
 }

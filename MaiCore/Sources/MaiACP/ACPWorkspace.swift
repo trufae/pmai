@@ -35,12 +35,17 @@ public struct ACPSessionInfo: Codable, Identifiable, Equatable, Sendable {
   public var cwd: String
   public var title: String
   public var updatedAt: Date?
+  public var isPinned: Bool?
+  public var isArchived: Bool?
 
-  public init(sessionID: String, cwd: String, title: String, updatedAt: Date? = nil) {
+  public init(sessionID: String, cwd: String, title: String, updatedAt: Date? = nil,
+    isPinned: Bool? = nil, isArchived: Bool? = nil) {
     self.sessionID = sessionID
     self.cwd = cwd
     self.title = title
     self.updatedAt = updatedAt
+    self.isPinned = isPinned
+    self.isArchived = isArchived
   }
 
   var json: JSONValue {
@@ -50,6 +55,8 @@ public struct ACPSessionInfo: Codable, Identifiable, Equatable, Sendable {
     if let updatedAt {
       fields["updatedAt"] = .string(updatedAt.ISO8601Format())
     }
+    if let isPinned { fields["isPinned"] = .bool(isPinned) }
+    if let isArchived { fields["isArchived"] = .bool(isArchived) }
     return .object(fields)
   }
 }
@@ -58,11 +65,16 @@ public struct ACPWorkspaceSnapshot: Codable, Equatable, Sendable {
   public var folders: [ACPWorkspaceFolder]
   public var sessions: [ACPSessionInfo]
   public var canManageSessions: Bool?
+  public var canOrganizeSessions: Bool?
 
   public init(folders: [ACPWorkspaceFolder] = [], sessions: [ACPSessionInfo] = []) {
     self.folders = folders
     self.sessions = sessions
   }
+}
+
+public enum ACPSessionAction: String, Sendable {
+  case rename, delete, fork, pin, unpin, archive, restore
 }
 
 /// A durable conversation supplied by the host, rather than owned by ACP.
@@ -94,9 +106,14 @@ public protocol ACPWorkspaceRepository: Sendable {
   func load(sessionID: String, cwd: String) async throws -> ACPWorkspaceConversation?
   func save(_ conversation: ACPWorkspaceConversation) async throws
   func delete(sessionID: String, cwd: String) async throws
+  func organize(sessionID: String, cwd: String, action: ACPSessionAction) async throws -> ACPSessionInfo
 }
 
 extension ACPWorkspaceRepository {
+  public func organize(sessionID: String, cwd: String, action: ACPSessionAction) async throws -> ACPSessionInfo {
+    throw JSONRPCError.methodNotFound(ACP.Method.sessionManage)
+  }
+
   public func delete(sessionID: String, cwd: String) async throws {
     throw JSONRPCError.methodNotFound(ACP.Method.sessionManage)
   }
@@ -108,6 +125,27 @@ public struct AgentHomeACPWorkspace: ACPWorkspaceRepository {
   public let home: AgentHome
 
   public init(home: AgentHome) { self.home = home }
+
+  public func organize(sessionID: String, cwd: String, action: ACPSessionAction) async throws -> ACPSessionInfo {
+    guard let id = UUID(uuidString: sessionID),
+      let project = try home.loadProject(atWorkingDirectory: URL(fileURLWithPath: cwd)),
+      var chat = try home.chatStore(for: project).loadChat(id: id)
+    else { throw JSONRPCError.invalidParams("Unknown conversation") }
+    switch action {
+    case .pin: chat.isPinned = true
+    case .unpin: chat.isPinned = false
+    case .archive:
+      guard !chat.isDisposable else { throw JSONRPCError.invalidParams("This conversation is empty; there is nothing to archive") }
+      chat.isArchived = true
+    case .restore: chat.isArchived = false
+    case .fork: chat = chat.forked()
+    case .rename, .delete: throw JSONRPCError.invalidParams("Use title management to rename or delete")
+    }
+    chat.touch()
+    try home.chatStore(for: project).save(chat)
+    return .init(sessionID: chat.id.uuidString.lowercased(), cwd: cwd, title: chat.displayTitle,
+      updatedAt: chat.updatedAt, isPinned: chat.isPinned, isArchived: chat.isArchived)
+  }
 
   public func delete(sessionID: String, cwd: String) async throws {
     guard let id = UUID(uuidString: sessionID),
@@ -132,10 +170,13 @@ public struct AgentHomeACPWorkspace: ACPWorkspaceRepository {
       sessions += summaries.map {
         ACPSessionInfo(
           sessionID: $0.id.uuidString.lowercased(), cwd: project.workingDirectory,
-          title: $0.displayTitle, updatedAt: $0.updatedAt)
+          title: $0.displayTitle, updatedAt: $0.updatedAt, isPinned: $0.isPinned, isArchived: $0.isArchived)
       }
     }
-    return .init(folders: folders, sessions: sessions)
+    var snapshot = ACPWorkspaceSnapshot(folders: folders, sessions: sessions)
+    snapshot.canManageSessions = true
+    snapshot.canOrganizeSessions = true
+    return snapshot
   }
 
   public func load(sessionID: String, cwd: String) async throws -> ACPWorkspaceConversation? {

@@ -28,6 +28,7 @@ public protocol RemoteSessionClient: AnyObject, Sendable {
   func resumeUpdates() async throws
   func workspace() async throws -> ACPWorkspaceSnapshot?
   func manageSession(_ id: String, cwd: String, title: String?) async throws
+  func manageSession(_ id: String, cwd: String, action: ACPSessionAction, title: String?) async throws -> ACPSessionInfo?
   func configurationOptions() async throws -> [RemoteSessionOption]
   func promptCatalog() async throws -> PromptCatalog
   func setConfigurationOption(id: String, value: JSONValue) async throws -> [RemoteSessionOption]
@@ -45,6 +46,18 @@ public protocol RemoteSessionClient: AnyObject, Sendable {
 }
 
 extension RemoteSessionClient {
+  public func manageSession(_ id: String, cwd: String, action: ACPSessionAction,
+    title: String? = nil) async throws -> ACPSessionInfo? {
+    guard action == .rename || action == .delete else {
+      throw JSONRPCError.invalidParams("This host does not support this conversation action")
+    }
+    if action == .rename, title?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
+      throw JSONRPCError.invalidParams("Provide a nonempty title")
+    }
+    try await manageSession(id, cwd: cwd, title: action == .delete ? nil : title)
+    return nil
+  }
+
   public func resumeUpdates() async throws {}
   public func promptCatalog() async throws -> PromptCatalog { PromptCatalog(builtins: []) }
   public func prompt(_ request: RemotePromptRequest,

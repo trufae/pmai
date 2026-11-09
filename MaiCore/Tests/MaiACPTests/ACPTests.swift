@@ -867,8 +867,38 @@ func acpWorkspaceDiscovery() async throws {
   let renamed = try #require(try home.chatStore(for: emptyProject).loadChat(id: uuid))
   #expect(renamed.title == "Renamed remotely" && renamed.messages == newChat.messages)
   #expect(await recorder.joined == before)
+  // Sidebar operations must survive reloads in the CLI and retain the source
+  // transcript; a fork gets independent identity and provider-session state.
+  func organize(_ action: String) async throws -> JSONValue {
+    try await client.request(ACP.Method.sessionManage,
+      params: .object(management.merging(["action": .string(action)]) { _, new in new }), timeout: 5)
+  }
+  _ = try await organize("pin")
+  _ = try await organize("archive")
+  let archived = try #require(try home.chatStore(for: emptyProject).loadChat(id: uuid))
+  #expect(archived.isPinned && archived.isArchived)
+  #expect(archived.messages == renamed.messages)
+  let organized = try await client.request(ACP.Method.sessionList, params: .object([:]), timeout: 5)
+  #expect(organized.objectValue?["_meta"]?.objectValue?["pmai"]?.objectValue?["canOrganizeSessions"] == .bool(true))
+  let info = try #require(organized.objectValue?["sessions"]?.arrayValue?.first {
+    $0.objectValue?["sessionId"]?.stringValue == newID
+  })
+  #expect(info.objectValue?["isPinned"] == .bool(true))
+  #expect(info.objectValue?["isArchived"] == .bool(true))
+  let fork = try await organize("fork")
+  let forkID = try #require(fork.objectValue?["sessionId"]?.stringValue.flatMap(UUID.init(uuidString:)))
+  let forked = try #require(try home.chatStore(for: emptyProject).loadChat(id: forkID))
+  #expect(forked.id != archived.id && forked.sessionID != archived.sessionID)
+  #expect(forked.title == "Renamed remotely (fork)" && forked.messages == archived.messages)
+  #expect(!forked.isPinned && !forked.isArchived)
+  _ = try await organize("restore")
+  _ = try await organize("unpin")
+  let restored = try #require(try home.chatStore(for: emptyProject).loadChat(id: uuid))
+  #expect(!restored.isPinned && !restored.isArchived)
   for fields in [
     ["title": JSONValue.string(" ")], ["title": .null, "cwd": .string(outsideURL.path)],
+    ["action": .string("unknown"), "title": .null],
+    ["action": .string("fork"), "cwd": .string(outsideURL.path)],
   ] {
     await #expect(throws: JSONRPCError.self) {
       _ = try await client.request(

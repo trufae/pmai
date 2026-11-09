@@ -55,6 +55,36 @@ public struct ACPRemoteHostStore: Sendable {
     directory.appendingPathComponent(host.id.uuidString.lowercased() + ".sessions.json")
   }
 
+  public func rename(_ host: ACPRemoteHost, to name: String) throws {
+    let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !name.isEmpty, !name.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) else {
+      throw JSONRPCError.invalidParams("Enter a host name without control characters")
+    }
+    let lock = try ACPFileLock(url: directory.appendingPathComponent("hosts.lock"), wait: true)
+    defer { withExtendedLifetime(lock) {} }
+    var hosts = try hosts()
+    guard let index = hosts.firstIndex(where: { $0.id == host.id }) else {
+      throw JSONRPCError.invalidParams("Unknown remote host")
+    }
+    guard !hosts.contains(where: { $0.id != host.id && $0.name.caseInsensitiveCompare(name) == .orderedSame }) else {
+      throw JSONRPCError.invalidParams("A different host is already named '\(name)'")
+    }
+    hosts[index].name = name
+    try ACPStateFiles.write(hosts, to: self.index)
+  }
+
+  /// Forgets this client's bookmark and credentials, without deleting remote data.
+  public func remove(_ host: ACPRemoteHost) throws {
+    let lock = try ACPFileLock(url: directory.appendingPathComponent("hosts.lock"), wait: true)
+    defer { withExtendedLifetime(lock) {} }
+    var hosts = try hosts()
+    hosts.removeAll { $0.id == host.id }
+    try ACPStateFiles.write(hosts, to: index)
+    for file in [tokenFile(for: host), sessionFile(for: host)] where FileManager.default.fileExists(atPath: file.path) {
+      try FileManager.default.removeItem(at: file)
+    }
+  }
+
   @discardableResult
   public func pair(_ profile: ACPRemoteConnection, name: String? = nil) throws -> ACPRemoteHost {
     try profile.validate()

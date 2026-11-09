@@ -7,7 +7,7 @@ import Observation
 final class MacConversation: Identifiable {
   let id = UUID()
   let hostID: UUID?
-  let hostName: String
+  var hostName: String
   let cwd: String
   var sessionID: String?
   var title: String
@@ -28,6 +28,7 @@ final class MacConversation: Identifiable {
   var client: (any RemoteSessionClient)?
   var didChange: (() -> Void)?
   private var operation: Task<Void, Never>?
+  private var closing = false
   private var permissionReply: CheckedContinuation<String?, Never>?
   private var draftKey: String? {
     sessionID.map { "mac.draft.\(hostID?.uuidString ?? "local").\($0)" }
@@ -59,7 +60,7 @@ final class MacConversation: Identifiable {
 
   func send() {
     let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !text.isEmpty, connected, !busy, let client else { return }
+    guard !text.isEmpty, connected, !busy, !closing, let client else { return }
     var request = RemotePromptRequest(text: text)
     if let command = PromptSlashCommand.parse(text), let entry = prompts.entry(named: command.command),
       entry.kind != .system {
@@ -123,7 +124,7 @@ final class MacConversation: Identifiable {
   }
 
   private func perform(_ action: @escaping @MainActor () async throws -> Void) {
-    guard !busy else { return }
+    guard !busy, !closing else { return }
     busy = true
     error = nil
     operation = Task {
@@ -145,6 +146,8 @@ final class MacConversation: Identifiable {
   }
 
   func close() async {
+    closing = true
+    defer { closing = false }
     answerPermission(nil)
     let client = client
     // Give the host a bounded opportunity to checkpoint interrupted work.

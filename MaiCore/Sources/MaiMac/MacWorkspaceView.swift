@@ -10,7 +10,7 @@ struct MacWorkspaceView: View {
 
   var body: some View {
     NavigationSplitView(columnVisibility: $columns) {
-      sidebar.navigationSplitViewColumnWidth(min: 220, ideal: 270, max: 360)
+      MacSidebar(workspace: workspace).navigationSplitViewColumnWidth(min: 220, ideal: 270, max: 360)
     } detail: {
       Group {
         if let conversation = workspace.selected {
@@ -58,87 +58,6 @@ struct MacWorkspaceView: View {
     }
   }
 
-  private var sidebar: some View {
-    VStack(spacing: 0) {
-      List {
-        Section("Hosts") {
-          Button { workspace.selectHost(nil) } label: {
-            Label("This Mac", systemImage: workspace.hostID == nil ? "desktopcomputer.and.arrow.down" : "desktopcomputer")
-          }
-          ForEach(workspace.hosts) { host in
-            Button { workspace.selectHost(host.id) } label: {
-              HStack {
-                Label(host.name, systemImage: "network")
-                Spacer()
-                if workspace.hostID == host.id { Image(systemName: "checkmark").accessibilityLabel("Selected") }
-              }
-            }
-          }
-          Button { workspace.showConnection = true } label: { Label("Connect Host…", systemImage: "plus") }
-        }
-        Section("Workspaces") {
-          ForEach(workspace.snapshot.folders) { folder in
-            Button { workspace.selectFolder(folder.cwd) } label: {
-              HStack {
-                Label(folder.name, systemImage: "folder")
-                Spacer()
-                if workspace.cwd == folder.cwd { Image(systemName: "checkmark").accessibilityLabel("Selected") }
-              }
-            }.help(folder.cwd)
-          }
-          if workspace.hostID == nil {
-            Button(action: workspace.chooseFolder) { Label("Open Folder…", systemImage: "folder.badge.plus") }
-          }
-        }
-        if !workspace.conversations.isEmpty {
-          Section("Open Chats") {
-            ForEach(workspace.conversations) { chat in
-              Button {
-                workspace.hostID = chat.hostID
-                workspace.cwd = chat.cwd
-                workspace.selectedID = chat.id
-                workspace.remember()
-                Task { await workspace.refresh() }
-              } label: {
-                HStack {
-                  Image(systemName: chat.permission != nil ? "hand.raised" : "bubble.left")
-                  Text(chat.title).lineLimit(1)
-                  Spacer()
-                  if chat.busy { ProgressView().controlSize(.mini).accessibilityLabel("Working") }
-                  if chat.id == workspace.selectedID { Image(systemName: "checkmark") }
-                }
-              }
-              .help("\(chat.hostName) · \(chat.cwd)")
-            }
-          }
-        }
-        Section("Conversations") {
-          ForEach(workspace.sessions) { session in
-            Button { workspace.open(session) } label: {
-              VStack(alignment: .leading, spacing: 3) {
-                Text(session.title).lineLimit(2)
-                if let date = session.updatedAt {
-                  Text(date, style: .relative).font(.caption).foregroundStyle(.secondary)
-                }
-              }
-            }
-          }
-        }
-      }
-      .listStyle(.sidebar)
-      .buttonStyle(.plain)
-      .searchable(text: $workspace.search, prompt: "Find a conversation")
-      .disabled(workspace.busy)
-      Divider()
-      HStack {
-        Label(workspace.hostName, systemImage: workspace.hostID == nil ? "desktopcomputer" : "network")
-          .font(.caption).foregroundStyle(.secondary).lineLimit(1)
-        Spacer()
-        if workspace.busy { ProgressView().controlSize(.small) }
-        SettingsLink { Image(systemName: "gearshape") }.help("Settings (⌘,)")
-      }.padding(12)
-    }
-  }
 }
 
 struct MacChatView: View {
