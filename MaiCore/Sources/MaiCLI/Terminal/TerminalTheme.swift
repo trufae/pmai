@@ -8,7 +8,7 @@ enum TerminalTheme {
     "ansi": .init(
       backgroundLine: "", foreground: "white", background: "",
       promptForeground: "yellow", promptBackground: "",
-      bubbleForeground: "white", bubbleBackground: "bright-black",
+      bubbleForeground: "black", bubbleBackground: "bright-black",
       toolResultForeground: "yellow", toolCallForeground: "green",
       errorForeground: "red", warningForeground: "yellow", successForeground: "green",
       infoForeground: "white", thinkingForeground: "cyan",
@@ -20,8 +20,8 @@ enum TerminalTheme {
     "mono": .init(
       backgroundLine: "black", foreground: "white", background: "",
       promptForeground: "white", promptBackground: "",
-      bubbleForeground: "white", bubbleBackground: "bright-black",
-      toolResultForeground: "white", toolCallForeground: "white",
+      bubbleForeground: "white", bubbleBackground: "#404040",
+      toolResultForeground: "bright-black", toolCallForeground: "white",
       errorForeground: "white", warningForeground: "white", successForeground: "white",
       infoForeground: "white", thinkingForeground: "white",
       diffAddedForeground: "white", diffAddedBackground: "",
@@ -105,7 +105,7 @@ enum TerminalTheme {
     "blood": .init(
       backgroundLine: "#4b101b", foreground: "#fff1f1", background: "#21090d",
       promptForeground: "#ffb2b2", promptBackground: "#4b101b",
-      bubbleForeground: "#fff1f1", bubbleBackground: "#330e15",
+      bubbleForeground: "#21090d", bubbleBackground: "#330e15",
       toolResultForeground: "#ffd7d7", toolCallForeground: "#fff5f5",
       toolResultBackground: "#2c0c12", toolCallBackground: "#3b101a", toolCallBold: true,
       errorForeground: "#ff6b6b", warningForeground: "#ffb2b2", successForeground: "#fff1f1",
