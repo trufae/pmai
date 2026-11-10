@@ -209,10 +209,73 @@ func partialEmission() {
   #expect(renderer.feed("m one\n") == "item one\n")
   #expect(renderer.feed("## He") == "")
   #expect(renderer.feed("ad\n") == "\u{1B}[1mHead\u{1B}[0m\n")
-  #expect(renderer.feed("```py\nprint(1") == "\u{1B}[2m```py\u{1B}[0m\nprint(1")
+  let code = stripANSI(renderer.feed("```py\nprint(1"))
+  #expect(code.hasPrefix("┌─ py "))
+  #expect(code.hasSuffix("\n│ print(1"))
   #expect(renderer.feed(")\n``") == ")\n")
-  #expect(renderer.feed("`\ntail") == "\u{1B}[2m```\u{1B}[0m\n")
+  #expect(stripANSI(renderer.feed("`\ntail")) == "└" + String(repeating: "─", count: 39) + "\n")
   #expect(renderer.flush() == "tail")
+}
+
+@Test("Fenced commands render as code blocks in streamed replies, including without colors")
+func fencedReplyRendering() {
+  let command = #"docker run --rm -v "$PWD/dist:/d" alpine:latest /d/vaddy-alpine-x86_64 --version"#
+  let source = """
+    It’s here: `./dist/vaddy-alpine-x86_64`
+
+    `make alpine` doesn’t build `./vaddy` at all. It runs a docker buildx build and exports the binary to `ALPINE_OUTPUT`, which defaults to `dist`.
+
+    The `./vaddy` in the repo root is stale (Nov 10 17:22), from a normal `make` — untouched by this run.
+
+    Heads up: the dist one is a musl **linux/amd64** ELF, so it won’t run on your Mac directly. Test it with:
+    ```
+    \(command)
+    ```
+    Change the output dir with `make alpine ALPINE_OUTPUT=/tmp/out`. For a native binary, just run `make`.
+    """
+  for unicode in [true, false] {
+    for width in [24, 100] {
+      let options = MarkdownLayoutOptions(width: width, unicode: unicode)
+      let marker = unicode ? "│ " : "| "
+      for size in [1, 7, source.count] {
+        var renderer = MarkdownTerminalRenderer(theme: .plain, options: options)
+        let chars = Array(source)
+        var output = ""
+        for start in stride(from: 0, to: chars.count, by: size) {
+          output += renderer.feed(String(chars[start..<min(start + size, chars.count)]))
+        }
+        output += renderer.flush()
+        let plain = stripANSI(output)
+        let rows = plain.components(separatedBy: "\n")
+        let code = rows.filter { $0.hasPrefix(marker) }
+        #expect(!plain.contains("```"))
+        #expect(code.map { String($0.dropFirst(2)) }.joined() == command)
+        #expect(code.allSatisfy { MarkdownDisplayWidth.width(of: $0) <= width })
+        #expect(rows.contains { $0.hasPrefix(unicode ? "┌─" : "+-") })
+        #expect(rows.contains { $0.hasPrefix(unicode ? "└─" : "+-") })
+        #expect(rows.first == "It’s here: ./dist/vaddy-alpine-x86_64")
+        #expect(rows.last == "Change the output dir with make alpine ALPINE_OUTPUT=/tmp/out. For a native binary, just run make.")
+      }
+    }
+  }
+}
+
+@Test("Code blocks keep literal content and empty rows, and close at the end of a reply")
+func fencedReplyLiteralContent() {
+  let code = "  **literal** `code` $PWD\n\n界🙂"
+  for ending in ["", "\n", "\n```", "\n```\n"] {
+    var renderer = MarkdownTerminalRenderer(theme: .plain)
+    let output = stripANSI(renderer.feed("```sh\n" + code + ending) + renderer.flush())
+    let rows = output.split(separator: "\n").map(String.init)
+    #expect(rows.first?.hasPrefix("┌─ sh ") == true)
+    #expect(rows.filter { $0.hasPrefix("│ ") }.map { String($0.dropFirst(2)) }.joined(separator: "\n") == code)
+    #expect(rows.last?.hasPrefix("└─") == true)
+    #expect(stripANSI(renderer.feed("After `code`.\n") + renderer.flush()) == "After code.\n")
+  }
+  let narrow = stripANSI(MarkdownTerminalRenderer.render(
+    "```sh\n\t界🙂\n```", theme: .plain, options: .init(width: 8)))
+  #expect(narrow.components(separatedBy: "\n").allSatisfy { MarkdownDisplayWidth.width(of: $0) <= 8 })
+  #expect(narrow.contains("│       \n│ 界🙂\n"))
 }
 
 @Test("Tables buffer until complete, then render with styled cells")
@@ -319,13 +382,12 @@ func blockRendering() {
   #expect(colored.contains("\u{1B}[93m􀟈  \u{1B}[0mtodo\n"))
   #expect(colored.contains("\u{1B}[93m  1. \u{1B}[0msub\n"))
   #expect(colored.contains("\u{1B}[90m────────────────────\u{1B}[0m\n"))
-  #expect(
-    colored.contains("\u{1B}[90m```\u{1B}[0m\n\u{1B}[92mcode\u{1B}[0m\n\u{1B}[90m```\u{1B}[0m"))
+  #expect(stripANSI(colored).contains("┌───────────────────\n│ code\n└───────────────────"))
 
   let ascii = stripANSI(
     MarkdownTerminalRenderer.render(
       source, theme: .plain, options: MarkdownLayoutOptions(width: 20, unicode: false)))
-  #expect(ascii.contains("| quote\n[ ] todo\n  1. sub\n--------------------\n```\ncode\n```"))
+  #expect(ascii.contains("| quote\n[ ] todo\n  1. sub\n--------------------\n+-------------------\n| code\n+-------------------"))
 }
 
 @Test("Terminal palettes replace Markdown colors without changing text or emphasis")

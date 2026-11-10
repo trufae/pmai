@@ -1,7 +1,7 @@
 import Foundation
 
 public struct MarkdownLayoutOptions: Equatable, Sendable {
-  /// Columns available for tables and rules.
+  /// Columns available for tables, code blocks, and rules.
   public var width: Int
   /// Use box drawing and bullet glyphs instead of ASCII.
   public var unicode: Bool
@@ -42,6 +42,7 @@ public struct MarkdownStreamLayout: Equatable, Sendable {
   private var contentStarted = false
   private var held = false
   private var inFence = false
+  private var codeColumn = 0
   private var table: [String] = []
 
   public init(options: MarkdownLayoutOptions = MarkdownLayoutOptions()) {
@@ -80,7 +81,7 @@ public struct MarkdownStreamLayout: Equatable, Sendable {
   /// Ends the document: renders whatever is still buffered and resets.
   public mutating func flush() -> [MarkdownLayoutEvent] {
     var events: [MarkdownLayoutEvent] = []
-    if !pending.isEmpty || base != nil || held {
+    if !pending.isEmpty || base != nil || held || contentStarted {
       let line = String(pending)
       let lineBase = base
       let started = contentStarted
@@ -91,9 +92,10 @@ public struct MarkdownStreamLayout: Equatable, Sendable {
       if inFence {
         if !started, isClosingFence(line) {
           inFence = false
-          events.append(.spans([MarkdownSpan(line, role: .fence)]))
-        } else if !line.isEmpty {
-          events.append(.spans([MarkdownSpan(line, role: .code)]))
+          events.append(.spans([fenceSpan(opening: false)]))
+        } else {
+          events += codeEvents(line)
+          events.append(.lineBreak)
         }
       } else if let lineBase {
         events += contentEvents(line, base: lineBase, started: started)
@@ -107,6 +109,7 @@ public struct MarkdownStreamLayout: Equatable, Sendable {
     } else {
       events += flushTable()
     }
+    if inFence { events.append(.spans([fenceSpan(opening: false)])) }
     reset()
     return events
   }
@@ -125,9 +128,11 @@ public struct MarkdownStreamLayout: Equatable, Sendable {
     if inFence {
       if !started, isClosingFence(line) {
         inFence = false
-        return [.spans([MarkdownSpan(line, role: .fence)]), .lineBreak]
+        return [.spans([fenceSpan(opening: false)]), .lineBreak]
       }
-      return line.isEmpty ? [.lineBreak] : [.spans([MarkdownSpan(line, role: .code)]), .lineBreak]
+      let events = codeEvents(line) + [.lineBreak]
+      codeColumn = 0
+      return events
     }
     if let lineBase {
       return contentEvents(line, base: lineBase, started: started) + [.lineBreak]
@@ -156,9 +161,10 @@ public struct MarkdownStreamLayout: Equatable, Sendable {
       return end
     case .rule:
       return [.spans([ruleSpan()])] + end
-    case .fence:
+    case .fence(let language):
       inFence = true
-      return [.spans([MarkdownSpan(line, role: .fence)])] + end
+      codeColumn = 0
+      return [.spans([fenceSpan(opening: true, language: language)]), .lineBreak]
     case .decided(let lineBase, let contentStart):
       return markerEvents(lineBase)
         + contentEvents(String(chars[contentStart...]), base: lineBase, started: false) + end
@@ -210,8 +216,9 @@ public struct MarkdownStreamLayout: Equatable, Sendable {
     }
     let text = String(pending)
     pending = []
+    guard !text.isEmpty else { return [] }
     contentStarted = true
-    return text.isEmpty ? [] : [.spans([MarkdownSpan(text, role: .code)])]
+    return codeEvents(text)
   }
 
   private mutating func flushTable() -> [MarkdownLayoutEvent] {
@@ -236,6 +243,55 @@ public struct MarkdownStreamLayout: Equatable, Sendable {
 
   private func isClosingFence(_ line: String) -> Bool {
     line.drop(while: { $0 == " " || $0 == "\t" }).hasPrefix("```")
+  }
+
+  private func fenceSpan(opening: Bool, language: String = "") -> MarkdownSpan {
+    let width = max(4, options.width)
+    let horizontal = options.unicode ? "─" : "-"
+    var text = (options.unicode ? (opening ? "┌" : "└") : "+") + horizontal
+    if !language.isEmpty {
+      var label = ""
+      var columns = 0
+      for char in language {
+        let cells = MarkdownDisplayWidth.width(of: char)
+        guard columns + cells <= width - 4 else { break }
+        label.append(char)
+        columns += cells
+      }
+      if !label.isEmpty { text += " " + label + " " }
+    }
+    text += String(repeating: horizontal, count: width - MarkdownDisplayWidth.width(of: text))
+    return MarkdownSpan(text, role: .fence)
+  }
+
+  /// Keep the code literal, with a gutter on every row, including wrapped and empty rows.
+  private mutating func codeEvents(_ text: String) -> [MarkdownLayoutEvent] {
+    let marker = MarkdownSpan(options.unicode ? "│ " : "| ", role: .fence)
+    var events: [MarkdownLayoutEvent] = []
+    if codeColumn == 0 {
+      events.append(.spans([marker]))
+      codeColumn = 2
+    }
+    var piece = ""
+    for char in text {
+      if char == "\t" {
+        if !piece.isEmpty { events.append(.spans([MarkdownSpan(piece, role: .code)])) }
+        piece = ""
+        events += codeEvents(String(repeating: " ", count: 8 - codeColumn % 8))
+        continue
+      }
+      let cells = MarkdownDisplayWidth.width(of: char)
+      if codeColumn > 2, codeColumn + cells > max(4, options.width) {
+        if !piece.isEmpty { events.append(.spans([MarkdownSpan(piece, role: .code)])) }
+        events += [.lineBreak, .spans([marker])]
+        piece = ""
+        codeColumn = 2
+      }
+      piece.append(char)
+      codeColumn += cells
+    }
+    if !piece.isEmpty { events.append(.spans([MarkdownSpan(piece, role: .code)])) }
+    return events
   }
 
   private func ruleSpan() -> MarkdownSpan {
