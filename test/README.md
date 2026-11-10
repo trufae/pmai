@@ -50,11 +50,33 @@ The remaining two smoke scripts require external fixtures:
 Buffer scrolling has an opt-in, offline PTY benchmark:
 `python3 test/bench/terminal-scroll.py MaiCore/.build/debug/pmai --lines 200 --events 100`.
 Use the release binary for the same comparison, or increase both sizes to check
-long transcripts and queued wheel bursts. It reports elapsed scrolling time,
-terminal bytes, and process CPU time (including startup). Output is drained
+long transcripts and queued wheel bursts. It reports resident memory (RSS),
+virtual address space (VSZ), transcript bytes, elapsed scrolling time,
+terminal bytes, and process CPU time (including startup). `--mode classic`
+also measures retention in the classic REPL. RSS is the physical-memory
+comparison; VSZ includes address space that need not occupy RAM. Compare the
+same fixture and build flags, for example `--lines 80000 --events 10` for an
+8 MB transcript. These measurements have no CI pass/fail thresholds. Output is drained
 without emulating a terminal, so these are application throughput measurements.
 On macOS, `--sample /tmp/pmai-scroll.sample` captures stacks during scrolling;
 measure timings separately because sampling adds overhead.
+
+On 2026-11-10, replacing per-character terminal storage with style runs reduced
+the following local measurements (`43d31561` versus the change, macOS 27.0.1
+arm64, Swift 6.4, identical `make repl-build` debug settings). Each row is one
+offline benchmark run per binary, with 10 scroll events and Markdown disabled.
+The final 16 MB comparison ran after the builds completed:
+
+| Transcript | RSS before | RSS after | Process CPU before | Process CPU after |
+| --- | ---: | ---: | ---: | ---: |
+| 8 MB / 80,000 lines | 536.69 MiB | 152.30 MiB | 13.42 s | 5.37 s |
+| 16 MB / 160,000 lines | 1031.62 MiB | 263.55 MiB | 20.57 s | 7.64 s |
+
+The buffer previously retained two Swift Strings per glyph, then cached wrapped
+rows. Style runs retain contiguous text together; ordinary ASCII appends and
+cache invalidations now happen per line. These figures measure transcript
+loading and scrolling locally; Linux server RSS should be measured separately.
+
 Live-provider checks and coding benchmarks remain explicit commands below.
 `python3 test/repl-history-smoke.py MaiCore/.build/debug/pmai` checks input
 history listing, search, deletion, clearing, persistence, path overrides,

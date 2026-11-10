@@ -110,6 +110,26 @@ func terminalBufferControls() {
   #expect(buffer.visibleRows(width: 80, height: 10) == ["new", "safe    end"])
 }
 
+@Test("Cursor edits preserve text across styles, Unicode graphemes and erased tails")
+func terminalBufferStyledCursorEdits() {
+  var buffer = TerminalOutputBuffer()
+  buffer.append("\u{1B}[31mabc\u{1B}[0mdef\r12\u{1B}[32m界")
+  buffer.append("\u{8}e")
+  buffer.append("\u{301}\u{1B}[K\tend\n")
+  buffer.append("👩")
+  buffer.append("\u{200D}💻!")
+  buffer.append("\rX\u{1B}[K\n\u{600}")
+  buffer.append("a\u{8}Z")
+  let rows = buffer.visibleRows(width: 40, height: 10).map {
+    $0.replacingOccurrences(of: "\u{1B}\\[[0-?]*[ -/]*[@-~]", with: "", options: .regularExpression)
+  }
+  #expect(rows == ["12e\u{301}     end", "X", "Z"])
+  #expect(buffer.visibleRows(width: 4, height: 20).allSatisfy {
+    TerminalLineEditor.displayWidth(of: $0.replacingOccurrences(
+      of: "\u{1B}\\[[0-?]*[ -/]*[@-~]", with: "", options: .regularExpression)) <= 4
+  })
+}
+
 @Test("Terminal thinking blocks can be hidden, shortened and restored without losing text")
 func terminalBufferThinking() {
   var buffer = TerminalOutputBuffer()

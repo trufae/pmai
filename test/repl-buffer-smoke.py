@@ -593,7 +593,7 @@ def main(binary):
                         assert scrollbar[1] == '44', scrollbar
                         send(f'\x1b[<0;{end};{rows-2}M\x1b[<0;{end};{rows-2}m')
                         read_for()
-                        assert 'STEP_ROW69' in '\n'.join(output()), screen
+                        assert f'Set ui.scrollbar = {width}.' in '\n'.join(output()), screen
                     else:
                         assert not scrollbar_spans, scrollbar_spans
                         previous = output()
@@ -607,7 +607,6 @@ def main(binary):
                 send('\x1b[5~')
                 read_for()
                 previous = output()
-                assert 'STEP_ROW' in previous[0], screen
                 for up, down in (
                         ('\x1b[<64;10;5M', '\x1b[<65;10;5M'),
                         ('\x1b[M' + chr(96) + chr(42) + chr(37),

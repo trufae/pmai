@@ -28,6 +28,7 @@ def main():
     parser.add_argument('--rows', type=int, default=48)
     parser.add_argument('--columns', type=int, default=160)
     parser.add_argument('--scrollbar', type=int, default=0, help='Scrollbar width (default: hidden)')
+    parser.add_argument('--mode', choices=['buffer', 'classic'], default='buffer')
     parser.add_argument('--sample', type=Path, help='Save a macOS sample during scrolling')
     args = parser.parse_args()
     if min(args.lines, args.events, args.rows, args.columns) < 1:
@@ -40,7 +41,7 @@ def main():
             'defaultAgent': 'hello', 'providers': [{'id': 'hello', 'kind': 'hello'}],
             'agents': [{'id': 'hello', 'provider': 'hello', 'model': 'hello'}],
             'memory': {'enabled': False}, 'use': {'plan': False},
-            'ui': {'mode': 'buffer', 'scrollbar': args.scrollbar, 'markdown': False},
+            'ui': {'mode': args.mode, 'scrollbar': args.scrollbar, 'markdown': False},
         }))
         env = clean_environment() | {'TERM': 'xterm-256color'}
         env.pop('NO_COLOR', None)
@@ -102,6 +103,17 @@ def main():
         try:
             drain_until(b'> ')
             barrier('ready')
+            # RSS is physical memory; VSZ also includes reserved address space.
+            # Keep these measurements opt-in, outside correctness assertions.
+            if sys.platform.startswith('linux'):
+                # BusyBox ps does not provide every procps output field.
+                status = dict(line.split(':', 1) for line in
+                              Path(f'/proc/{process.pid}/status').read_text().splitlines())
+                rss_kib = int(status['VmRSS'].split()[0])
+                virtual_kib = int(status['VmSize'].split()[0])
+            else:
+                rss_kib, virtual_kib = map(int, subprocess.check_output(
+                    ['ps', '-o', 'rss=,vsz=', '-p', str(process.pid)], text=True).split())
             # Leave room to scroll in both directions.
             send(b'\x1b[5~' * 8)
             barrier('positioned')
@@ -131,6 +143,9 @@ def main():
             after = resource.getrusage(resource.RUSAGE_CHILDREN)
             print(json.dumps({
                 'binary': str(binary), 'lines': args.lines, 'events': args.events,
+                'mode': args.mode, 'text_bytes': len(text.encode()),
+                'resident_mib': round(rss_kib / 1024, 2),
+                'virtual_mib': round(virtual_kib / 1024, 2),
                 'size': [args.rows, args.columns], 'scrollbar': args.scrollbar,
                 'wall_seconds': round(elapsed, 4),
                 'ms_per_event': round(elapsed * 1000 / args.events, 4),

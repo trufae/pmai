@@ -17,7 +17,127 @@ struct TerminalOutputBuffer {
   private struct Glyph {
     var text: String
     var style: String
-    var width: Int { TerminalLineEditor.displayWidth(of: text) }
+    var width: Int {
+      if text.utf8.count == 1 { return 1 }
+      return TerminalLineEditor.displayWidth(of: text)
+    }
+  }
+
+  /// Store text once per style run, rather than two Strings per character.
+  /// Glyphs are transient while wrapping; cursor edits split only the affected run.
+  private struct Glyphs: Sequence, ExpressibleByArrayLiteral {
+    private struct Run {
+      var text: String
+      var style: String
+      var count: Int
+    }
+    private var runs: [Run] = []
+    private(set) var count = 0
+    var isEmpty: Bool { count == 0 }
+    var endsWithASCII: Bool { runs.last?.text.utf8.last.map { $0 < 128 } ?? false }
+    var text: String { runs.map(\.text).joined() }
+
+    init(arrayLiteral elements: Glyph...) {
+      self.init(elements)
+    }
+
+    init(_ elements: some Sequence<Glyph>) {
+      // A clipped/edited sequence may contain intentionally separate combining
+      // characters. Keep those boundaries when rebuilding a short preview.
+      runs = elements.map { Run(text: $0.text, style: $0.style, count: 1) }
+      count = runs.count
+    }
+
+    struct Iterator: IteratorProtocol {
+      private let runs: [Run]
+      private var run = 0
+      private var text: String.Iterator?
+
+      fileprivate init(_ glyphs: Glyphs) { runs = glyphs.runs }
+
+      mutating func next() -> Glyph? {
+        while run < runs.count {
+          if text == nil { text = runs[run].text.makeIterator() }
+          if let character = text?.next() {
+            return Glyph(text: String(character), style: runs[run].style)
+          }
+          run += 1
+          text = nil
+        }
+        return nil
+      }
+    }
+
+    func makeIterator() -> Iterator { Iterator(self) }
+
+    private func location(_ index: Int) -> (run: Int, index: String.Index) {
+      precondition(index >= 0 && index < count)
+      if index == count - 1 {
+        let last = runs.count - 1
+        return (last, runs[last].text.index(before: runs[last].text.endIndex))
+      }
+      var offset = index
+      for (run, value) in runs.enumerated() {
+        if offset < value.count {
+          return (run, value.text.index(value.text.startIndex, offsetBy: offset))
+        }
+        offset -= value.count
+      }
+      preconditionFailure("Invalid glyph index")
+    }
+
+    subscript(index: Int) -> Glyph {
+      get {
+        let position = location(index)
+        return Glyph(text: String(runs[position.run].text[position.index]),
+          style: runs[position.run].style)
+      }
+      set {
+        let position = location(index)
+        let end = runs[position.run].text.index(after: position.index)
+        let old = runs[position.run]
+        let prefix = String(old.text[..<position.index])
+        let suffix = String(old.text[end...])
+        var replacement: [Run] = []
+        if !prefix.isEmpty {
+          replacement.append(Run(text: prefix, style: old.style, count: prefix.count))
+        }
+        replacement.append(Run(text: newValue.text, style: newValue.style, count: 1))
+        if !suffix.isEmpty {
+          replacement.append(Run(text: suffix, style: old.style, count: suffix.count))
+        }
+        // Preserve grapheme boundaries at the cursor, even if replacement text
+        // could combine with its neighbours when concatenated into one String.
+        runs.replaceSubrange(position.run...position.run, with: replacement)
+      }
+    }
+
+    mutating func append(_ glyph: Glyph) {
+      append(glyph.text, style: glyph.style, count: 1)
+    }
+
+    mutating func append(_ text: String, style: String, count: Int) {
+      if runs.last?.style == style {
+        runs[runs.count - 1].text += text
+        runs[runs.count - 1].count += count
+      } else {
+        runs.append(Run(text: text, style: style, count: count))
+      }
+      self.count += count
+    }
+
+    mutating func removeSubrange(_ range: PartialRangeFrom<Int>) {
+      guard range.lowerBound < count else { return }
+      let position = location(range.lowerBound)
+      let prefix = String(runs[position.run].text[..<position.index])
+      runs.removeSubrange((position.run + 1)...)
+      if prefix.isEmpty { runs.removeLast() }
+      else {
+        runs[position.run].text = prefix
+        runs[position.run].count = prefix.count
+      }
+      count = range.lowerBound
+    }
   }
 
   private struct Position: Equatable {
@@ -31,7 +151,7 @@ struct TerminalOutputBuffer {
   }
 
   private struct Line {
-    var glyphs: [Glyph] = []
+    var glyphs: Glyphs = []
     var cachedWidth = 0
     var rows: [Row] = []
   }
@@ -396,6 +516,31 @@ struct TerminalOutputBuffer {
   }
 
   mutating func append(_ text: String) {
+    guard !text.isEmpty else { return }
+    // Ordinary provider text can be retained a line at a time. Controls and
+    // Unicode still use the cursor/grapheme parser below, including deltas
+    // that could extend a preceding non-ASCII character.
+    if escape.isEmpty, cursor == lines[lines.count - 1].glyphs.count,
+      cursor == 0 || lines[lines.count - 1].glyphs.endsWithASCII,
+      text.utf8.allSatisfy({ $0 == 10 || (32..<127).contains($0) })
+    {
+      for (offset, line) in text.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
+        if offset > 0 {
+          lines.append(Line())
+          revision &+= 1
+          invalidateOverflow(from: lines.count - 1)
+          cursor = 0
+        }
+        if !line.isEmpty {
+          let count = line.utf8.count
+          lines[lines.count - 1].glyphs.append(String(line), style: style, count: count)
+          cursor += count
+          invalidateLine(lines.count - 1)
+        }
+      }
+      return
+    }
+    var changed = false
     for character in text {
       if !escape.isEmpty {
         escape.append(character)
@@ -433,6 +578,7 @@ struct TerminalOutputBuffer {
       switch character {
       case "\u{1B}": escape = String(character)
       case "\n", "\r\n":
+        if changed { invalidateLine(lines.count - 1); changed = false }
         lines.append(Line())
         revision &+= 1
         invalidateOverflow(from: lines.count - 1)
@@ -442,12 +588,15 @@ struct TerminalOutputBuffer {
       case "\t":
         let column = lines[lines.count - 1].glyphs.prefix(cursor).reduce(0) { $0 + $1.width }
         for _ in 0..<(8 - column % 8) { put(" ") }
+        changed = true
       default:
         if character.unicodeScalars.allSatisfy({ $0.value >= 32 && $0.value != 127 }) {
           put(String(character))
+          changed = true
         }
       }
     }
+    if changed { invalidateLine(lines.count - 1) }
   }
 
   /// Compose retained sections without serializing styled rows back into text.
@@ -469,11 +618,13 @@ struct TerminalOutputBuffer {
   private mutating func put(_ text: String) {
     let last = lines.count - 1
     // A provider may split an accent or an emoji sequence across deltas.
-    if cursor > 0, cursor == lines[last].glyphs.count {
+    // Adjacent printable ASCII cannot form one grapheme. Avoid allocating
+    // and segmenting a two-character String for every ordinary output byte.
+    if cursor > 0, cursor == lines[last].glyphs.count,
+      text.utf8.count > 1 || !lines[last].glyphs.endsWithASCII {
       let combined = lines[last].glyphs[cursor - 1].text + text
       if combined.count == 1 {
         lines[last].glyphs[cursor - 1].text = combined
-        invalidateLine(last)
         return
       }
     }
@@ -484,7 +635,6 @@ struct TerminalOutputBuffer {
       lines[last].glyphs.append(glyph)
     }
     cursor += 1
-    invalidateLine(last)
   }
 
   private mutating func wrappedLine(_ index: Int, width: Int) -> [Row] {
@@ -577,7 +727,7 @@ struct TerminalOutputBuffer {
         || (thinkingDisplay != .status && !activeThinking.contains(index))
       {
         if renderThinkingMarkdown, let template = markdownRenderer {
-          let source = thinkingBlocks[index]!.lines.map { $0.glyphs.map(\.text).joined() }
+          let source = thinkingBlocks[index]!.lines.map { $0.glyphs.text }
             .joined(separator: "\n")
           var options = template.options
           options.width = width
@@ -700,9 +850,9 @@ struct TerminalOutputBuffer {
   }
 
   /// Match before wrapping and styling so ANSI transitions and narrow panes do not split hits.
-  private func highlightedGlyphs(in glyphs: [Glyph]) -> IndexSet {
+  private func highlightedGlyphs(in glyphs: Glyphs) -> IndexSet {
     guard !highlight.isEmpty else { return [] }
-    let text = glyphs.map(\.text).joined()
+    let text = glyphs.text
     var matches = IndexSet()
     var start = text.startIndex
     while start < text.endIndex, let range = text.range(of: highlight, range: start..<text.endIndex) {
@@ -735,7 +885,7 @@ struct TerminalOutputBuffer {
       used += glyph.width
       return true
     }
-    lines[0].glyphs = Array(visible) + [Glyph(text: "…", style: visible.last?.style ?? "")]
+    lines[0].glyphs = Glyphs(Array(visible) + [Glyph(text: "…", style: visible.last?.style ?? "")])
   }
 
   /// Block-local row positions become positions in their parent logical line.
