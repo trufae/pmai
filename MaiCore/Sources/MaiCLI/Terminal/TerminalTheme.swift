@@ -8,6 +8,7 @@ enum TerminalTheme {
     "ansi": .init(
       backgroundLine: "", foreground: "white", background: "",
       promptForeground: "yellow", promptBackground: "",
+      bubbleForeground: "white", bubbleBackground: "bright-black",
       toolResultForeground: "yellow", toolCallForeground: "green",
       errorForeground: "red", warningForeground: "yellow", successForeground: "green",
       infoForeground: "white", thinkingForeground: "cyan",
@@ -19,6 +20,7 @@ enum TerminalTheme {
     "mono": .init(
       backgroundLine: "black", foreground: "white", background: "",
       promptForeground: "white", promptBackground: "",
+      bubbleForeground: "white", bubbleBackground: "bright-black",
       toolResultForeground: "white", toolCallForeground: "white",
       errorForeground: "white", warningForeground: "white", successForeground: "white",
       infoForeground: "white", thinkingForeground: "white",
@@ -30,6 +32,7 @@ enum TerminalTheme {
     "plum": .init(
       backgroundLine: "#30213f", foreground: "#e6dcf5", background: "#1c1428",
       promptForeground: "#bd9aff", promptBackground: "#30213f",
+      bubbleForeground: "#e6dcf5", bubbleBackground: "#261d33",
       toolResultForeground: "#b6a6cf", toolCallForeground: "#c7b4ff",
       toolResultBackground: "#261b34", toolCallBackground: "#342447", toolCallBold: true,
       errorForeground: "#ff969f", warningForeground: "#e8c67e", successForeground: "#a9d5ae",
@@ -42,6 +45,7 @@ enum TerminalTheme {
     "sand": .init(
       backgroundLine: "#e8d9b5", foreground: "#463a28", background: "#f6eedb",
       promptForeground: "#775b12", promptBackground: "#e8d9b5",
+      bubbleForeground: "#463a28", bubbleBackground: "#efe3c9",
       toolResultForeground: "#6c5940", toolCallForeground: "#53652b",
       errorForeground: "#a13e35", warningForeground: "#80601b", successForeground: "#476333",
       infoForeground: "#6f557b", thinkingForeground: "#82745c",
@@ -52,6 +56,7 @@ enum TerminalTheme {
       boldForeground: "#775b12", italicForeground: "#6f557b"),
     "slime": .init(
       backgroundLine: "rgb:021", foreground: "rgb:afa", promptForeground: "rgb:8f8",
+      bubbleForeground: "rgb:afa", bubbleBackground: "rgb:132",
       toolResultForeground: "rgb:8c8", toolCallForeground: "rgb:8f8",
       errorForeground: "rgb:f88", warningForeground: "rgb:dc8", successForeground: "rgb:8fb",
       infoForeground: "rgb:8cc", thinkingForeground: "rgb:798",
@@ -63,6 +68,7 @@ enum TerminalTheme {
     "summer": .init(
       backgroundLine: "#ffe5a3", foreground: "#49371c", background: "#fffdf5",
       promptForeground: "#9a4d08", promptBackground: "#ffe5a3",
+      bubbleForeground: "#49371c", bubbleBackground: "#fff0c7",
       toolResultForeground: "#80571c", toolCallForeground: "#426329",
       toolResultBackground: "#fff3ce", toolCallBackground: "#edf3d9", toolCallBold: true,
       errorForeground: "#ad352b", warningForeground: "#8a5800", successForeground: "#38633d",
@@ -74,6 +80,7 @@ enum TerminalTheme {
       boldForeground: "#9a4d08", italicForeground: "#6f557b"),
     "ember": .init(
       backgroundLine: "rgb:310", foreground: "rgb:fdb", promptForeground: "rgb:f95",
+      bubbleForeground: "rgb:fdb", bubbleBackground: "rgb:321",
       toolResultForeground: "rgb:c96", toolCallForeground: "rgb:fb7",
       errorForeground: "rgb:f77", warningForeground: "rgb:fc7", successForeground: "rgb:bd9",
       infoForeground: "rgb:eb9", thinkingForeground: "rgb:a87",
@@ -85,6 +92,7 @@ enum TerminalTheme {
     "pink": .init(
       backgroundLine: "#4a1837", foreground: "#ffe0f1", background: "#2a1021",
       promptForeground: "#ff7fc0", promptBackground: "#4a1837",
+      bubbleForeground: "#ffe0f1", bubbleBackground: "#38162d",
       toolResultForeground: "#f1afd4", toolCallForeground: "#ffb3db",
       toolResultBackground: "#311326", toolCallBackground: "#3d1831", toolCallBold: true,
       errorForeground: "#ff879a", warningForeground: "#ffd19a", successForeground: "#b6e6cf",
@@ -97,6 +105,7 @@ enum TerminalTheme {
     "blood": .init(
       backgroundLine: "#4b101b", foreground: "#fff1f1", background: "#21090d",
       promptForeground: "#ffb2b2", promptBackground: "#4b101b",
+      bubbleForeground: "#fff1f1", bubbleBackground: "#330e15",
       toolResultForeground: "#ffd7d7", toolCallForeground: "#fff5f5",
       toolResultBackground: "#2c0c12", toolCallBackground: "#3b101a", toolCallBold: true,
       errorForeground: "#ff6b6b", warningForeground: "#ffb2b2", successForeground: "#fff1f1",
@@ -108,6 +117,7 @@ enum TerminalTheme {
       boldForeground: "#ffb2b2", italicForeground: "#ff9696"),
     "night": .init(
       backgroundLine: "rgb:013", foreground: "rgb:def", promptForeground: "rgb:7cf",
+      bubbleForeground: "rgb:def", bubbleBackground: "rgb:123",
       toolResultForeground: "rgb:9bd", toolCallForeground: "rgb:9df",
       errorForeground: "rgb:f88", warningForeground: "rgb:ed9", successForeground: "rgb:fff",
       infoForeground: "rgb:aaf", thinkingForeground: "rgb:89a",
@@ -120,6 +130,7 @@ enum TerminalTheme {
     "codark": .init(
       backgroundLine: "#2e3436", foreground: "#d3d7cf", background: "#1e1e1e",
       promptForeground: "#729fcf", promptBackground: "#2e3436",
+      bubbleForeground: "#d3d7cf", bubbleBackground: "#272b2d",
       toolResultForeground: "#e9b96e", toolCallForeground: "#8ae234",
       toolResultBackground: "#2b2620", toolCallBackground: "#233028", toolCallBold: true,
       errorForeground: "#ef5c5c", warningForeground: "#fce94f", successForeground: "#8ae234",
@@ -133,6 +144,7 @@ enum TerminalTheme {
     "colit": .init(
       backgroundLine: "#f3f3f3", foreground: "#333333", background: "#ffffff",
       promptForeground: "#005fb8", promptBackground: "#f3f3f3",
+      bubbleForeground: "#333333", bubbleBackground: "#e8eef5",
       toolResultForeground: "#a31515", toolCallForeground: "#001080",
       errorForeground: "#a1260d", warningForeground: "#795e26", successForeground: "#008000",
       infoForeground: "#0451a5", thinkingForeground: "#6a737d",
@@ -147,7 +159,8 @@ enum TerminalTheme {
     [
       ("bgline", \.backgroundLine), ("fgcolor", \.foreground),
       ("bgcolor", \.background), ("fgprompt", \.promptForeground),
-      ("bgprompt", \.promptBackground), ("fgtoolresult", \.toolResultForeground),
+      ("bgprompt", \.promptBackground), ("fgbubble", \.bubbleForeground),
+      ("bgbubble", \.bubbleBackground), ("fgtoolresult", \.toolResultForeground),
       ("fgtoolcall", \.toolCallForeground), ("fgerror", \.errorForeground),
       ("bgtoolresult", \.toolResultBackground), ("bgtoolcall", \.toolCallBackground),
       ("fgwarning", \.warningForeground), ("fgsuccess", \.successForeground),
@@ -226,7 +239,11 @@ enum TerminalTheme {
       border,
       row(name, foreground: ui.infoForeground, background: ui.backgroundLine, bold: true),
       border,
-      row("> List the project files", foreground: ui.foreground, bold: ui.bold, prompt: true),
+      row("> Ask a follow-up", foreground: ui.foreground, bold: ui.bold, prompt: true),
+      row("You: List the project files",
+        foreground: ui.bubbleForeground.isEmpty ? ui.foreground : ui.bubbleForeground,
+        background: ui.bubbleBackground.isEmpty ? ui.background : ui.bubbleBackground,
+        bold: ui.bold),
       row("Thinking... inspecting the project", foreground: ui.thinkingForeground),
       row("-> files_list .", foreground: ui.toolCallForeground,
         background: ui.toolCallBackground.isEmpty ? ui.background : ui.toolCallBackground,

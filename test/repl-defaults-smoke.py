@@ -64,16 +64,22 @@ def main():
         assert 'awake = off' in run(['/set awake off', '/reset awake', '/set awake'])
         assert json.loads(config.read_text())['awake'] is False
         assert 'Usage: /set awake [on|off]' in run(['/set awake invalid'])
-        # Emphasis overrides survive restarts and custom-theme save/load; none
+        # Appearance overrides survive restarts and custom-theme save/load; none
         # removes only the color. Invalid input must leave saved settings intact.
-        output = run(['/set ui.fgbold #123456', '/set ui.fgitalic none', '/set ui.'])
+        output = run(['/set ui.fgbold #123456', '/set ui.fgitalic none',
+                      '/theme color fgbubble #fedcba', '/theme color bgbubble #234567', '/set ui.'])
         assert 'ui.fgbold = #123456' in output and 'ui.fgitalic = none' in output, output
         saved_ui = json.loads(config.read_text())['ui']
+        assert saved_ui['bgbubble'] == '#234567', saved_ui
+        assert saved_ui['fgbubble'] == '#fedcba', saved_ui
         assert saved_ui['fgbold'] == '#123456' and saved_ui['fgitalic'] == '', saved_ui
         output = run(['/set ui.fgbold', '/set ui.fgitalic', '/theme save emphasis',
-                      '/theme use mono', '/theme use emphasis', '/theme color fgbold'])
+                      '/theme color bgbubble', '/theme use mono', '/theme use emphasis',
+                      '/theme color fgbold', '/theme color fgbubble', '/theme color bgbubble'])
         assert 'ui.fgbold = #123456' in output and 'ui.fgitalic = none' in output, output
         assert 'fgbold = #123456' in output, output
+        assert 'bgbubble = #234567' in output, output
+        assert 'fgbubble = #fedcba' in output, output
         assert json.loads(config.read_text())['ui'] == saved_ui
         original = config.read_bytes()
         assert 'Unknown color' in run(['/set ui.fgitalic invalid-color'], allow_errors=True)

@@ -97,6 +97,8 @@ extension MaiCLI {
       "/set tool.proxy hybrid", "/set tool.auto on", "/set tool.auto off",
       "/set ui.editor ", "/set ui.editor none",
       "/theme color bgline rgb:024", "/theme color bgline none",
+      "/theme color bgbubble rgb:123", "/theme color bgbubble none",
+      "/theme color fgbubble none",
       "/theme color fgprompt yellow", "/version", "/about", "/help about", "/last", "/skills",
       "/theme color fgcolor none", "/theme color bgcolor none", "/theme color bgprompt none",
       "/theme color fgtoolresult yellow", "/set use.", "/set use.agentsmd on",

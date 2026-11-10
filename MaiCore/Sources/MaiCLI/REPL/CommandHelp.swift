@@ -460,6 +460,8 @@ extension MaiCLI {
       /theme color bgcolor COLOR      Text and buffer background
       /theme color fgprompt COLOR     Prompt foreground
       /theme color bgprompt COLOR     Background of the entire input area
+      /theme color fgbubble COLOR     Submitted message text (none uses fgcolor)
+      /theme color bgbubble COLOR     Submitted message bubbles (none for outlines)
       /theme color fgtoolresult COLOR Successful tool-result output
       /theme color fgtoolcall COLOR   Tool-call previews
       /theme color bgtoolcall COLOR   Tool-call background

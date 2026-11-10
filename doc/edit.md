@@ -50,6 +50,12 @@ Both settings work with `ui.mode classic` and `ui.mode buffer`. Up/Down walk
 input rows before reaching history. `<<EOF` still collects lines until `EOF`
 appears by itself. `/help shell` lists these input forms.
 
+In buffer mode, `/theme color bgbubble COLOR` sets the background of submitted
+message bubbles independently of the input area and status bar. Use `none` for
+unfilled outlines. `/theme color fgbubble COLOR` sets their text color; `none`
+uses `fgcolor`. Built-in themes include matching bubble colors, and
+`/theme save NAME` saves both with the rest of the palette.
+
 ## Targets
 
 | Command | What opens | When it applies |

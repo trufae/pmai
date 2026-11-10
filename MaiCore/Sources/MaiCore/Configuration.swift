@@ -590,6 +590,10 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
   public var background: String
   public var promptForeground: String
   public var promptBackground: String
+  /// Text color of submitted message bubbles. Empty keeps the normal foreground.
+  public var bubbleForeground: String
+  /// Background of submitted message bubbles. Empty uses an unfilled outline.
+  public var bubbleBackground: String
   /// Foreground color used for successful tool-result previews in the text REPL.
   public var toolResultForeground: String
   public var toolCallForeground: String
@@ -642,6 +646,8 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
     background: String = "",
     promptForeground: String = "yellow",
     promptBackground: String = "",
+    bubbleForeground: String = "",
+    bubbleBackground: String = "rgb:123",
     toolResultForeground: String = "yellow",
     toolCallForeground: String = "green",
     toolResultBackground: String = "",
@@ -682,6 +688,8 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
     self.background = background
     self.promptForeground = promptForeground
     self.promptBackground = promptBackground
+    self.bubbleForeground = bubbleForeground
+    self.bubbleBackground = bubbleBackground
     self.toolResultForeground = toolResultForeground
     self.toolCallForeground = toolCallForeground
     self.toolResultBackground = toolResultBackground
@@ -724,6 +732,8 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
     case background = "bgcolor"
     case promptForeground = "fgprompt"
     case promptBackground = "bgprompt"
+    case bubbleForeground = "fgbubble"
+    case bubbleBackground = "bgbubble"
     case toolResultForeground = "fgtoolresult"
     case toolCallForeground = "fgtoolcall"
     case toolResultBackground = "bgtoolresult"
@@ -774,6 +784,10 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
         ?? "yellow",
       promptBackground: (try? container.decodeIfPresent(String.self, forKey: .promptBackground))
         ?? "",
+      bubbleForeground: (try? container.decodeIfPresent(String.self, forKey: .bubbleForeground))
+        ?? "",
+      bubbleBackground: (try? container.decodeIfPresent(String.self, forKey: .bubbleBackground))
+        ?? "rgb:123",
       toolResultForeground: (try? container.decodeIfPresent(
         String.self, forKey: .toolResultForeground)) ?? "yellow",
       toolCallForeground: (try? container.decodeIfPresent(

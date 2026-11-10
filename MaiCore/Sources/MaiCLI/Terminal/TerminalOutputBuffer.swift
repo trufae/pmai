@@ -646,11 +646,9 @@ struct TerminalOutputBuffer {
     // Reserve a tail, two sides and right padding, plus room for a wide grapheme.
     let decorated = width >= 6
     var theme = colors
-    let fill = colors.map {
-      !$0.promptBackground.isEmpty ? $0.promptBackground
-        : !$0.backgroundLine.isEmpty ? $0.backgroundLine : "bright-black"
-    }
-    if decorated { theme?.background = fill ?? "" }
+    if let colors, !colors.bubbleForeground.isEmpty { theme?.foreground = colors.bubbleForeground }
+    let fill = colors.flatMap { $0.bubbleBackground.isEmpty ? nil : $0.bubbleBackground }
+    if decorated, let fill { theme?.background = fill }
     let message = userBlocks[index]!
     var output = TerminalOutputBuffer()
     output.configureColors(theme)
@@ -673,21 +671,21 @@ struct TerminalOutputBuffer {
     func row(_ text: String, _ glyph: Int) -> Row {
       Row(position: Position(line: index, glyph: glyph), text: text)
     }
-    let top = colors == nil
+    let top = fill == nil
       ? " ╭" + String(repeating: "─", count: contentWidth + 1) + "╮"
       : " " + String(repeating: "▂", count: contentWidth + 2)
     var result = [row(base, 0), row(edge + top + base, 1)]
-    let side = colors == nil ? "│" : "█"
+    let side = fill == nil ? "│" : "█"
     for (offset, line) in body.enumerated() {
       let padding = String(repeating: " ",
         count: contentWidth - widths[offset])
       result.append(row(edge + (offset == body.count - 1 ? "◢" : " ") + side
         + inside + line.text + inside + padding + " " + edge
-        + (colors == nil ? "│" : "") + base,
+        + (fill == nil ? "│" : "") + base,
         line.position.glyph + 2))
     }
     let end = (body.last?.position.glyph ?? 0) + 3
-    let bottom = colors == nil
+    let bottom = fill == nil
       ? " ╰" + String(repeating: "─", count: contentWidth + 1) + "╯"
       : " " + String(repeating: "▔", count: contentWidth + 2)
     result.append(row(edge + bottom + base, end))

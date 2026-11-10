@@ -75,8 +75,12 @@ func terminalBufferUserMessageReflow() {
   func plain(_ text: String) -> String {
     text.replacingOccurrences(of: "\u{1B}\\[[0-?]*[ -/]*[@-~]", with: "", options: .regularExpression)
   }
-  for theme: ConfiguredTerminalUI? in [ConfiguredTerminalUI(), TerminalTheme.builtins["sand"], nil] {
+  for theme: ConfiguredTerminalUI? in [
+    ConfiguredTerminalUI(), TerminalTheme.builtins["sand"],
+    ConfiguredTerminalUI(bubbleBackground: ""), nil,
+  ] {
     buffer.configureColors(theme)
+    let outlined = theme?.bubbleBackground.isEmpty ?? true
     for width in [40, 12, 6, 5, 40] {
       let rendered = buffer.visibleRows(width: width, height: 100)
       let rows = rendered.map(plain)
@@ -85,7 +89,8 @@ func terminalBufferUserMessageReflow() {
       #expect(rows.last == "after")
       // Only trim layout padding; graphemes must survive wrapping intact.
       let content = width >= 6 ? rows.dropFirst(3).dropLast(3).map {
-        String($0.dropFirst(2).dropLast(theme == nil ? 2 : 1)).trimmingCharacters(in: .whitespaces)
+        String($0.dropFirst(2).dropLast(outlined ? 2 : 1))
+          .trimmingCharacters(in: .whitespaces)
       } : Array(rows.dropFirst().dropLast())
       #expect(content.joined() == "abcdefghij界e\u{301}👩‍💻")
       if theme == nil { #expect(!rendered.joined().contains("\u{1B}")) }
