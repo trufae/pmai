@@ -347,7 +347,8 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
         systemImage: "brain",
         content: section.content,
         monospaced: false,
-        detail: Self.reasoningSize(section.content),
+        showsGenerationSpeed: true,
+        generationStats: message.stats,
         collapsedStatus: showThinking && compactDisplay == .status && isStreaming
           ? "Thinking…" : nil,
         collapsedPreviewLines: showThinking && compactDisplay != .status
@@ -380,12 +381,6 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
       !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     else { return nil }
     return ResponseScrollTarget(messageID: message.id, partID: partID)
-  }
-
-  private static func reasoningSize(_ content: String) -> String {
-    let characters = content.count
-    let tokens = GenerationStats.estimatedTokenCount(forCharacterCount: characters)
-    return "\(ModelUsageFormat.tokens(tokens, estimated: true)) · \(ModelUsageFormat.count(characters)) chars"
   }
 
   @ViewBuilder
@@ -2084,7 +2079,8 @@ private struct FoldableMetaSection: View {
   let systemImage: String
   let content: String
   var monospaced: Bool
-  var detail: String? = nil
+  var showsGenerationSpeed = false
+  var generationStats: GenerationStats? = nil
   var collapsedStatus: String? = nil
   var collapsedPreviewLines: Int = 0
   var dimmedContent: Bool = false
@@ -2107,7 +2103,8 @@ private struct FoldableMetaSection: View {
     systemImage: String,
     content: String,
     monospaced: Bool,
-    detail: String? = nil,
+    showsGenerationSpeed: Bool = false,
+    generationStats: GenerationStats? = nil,
     collapsedStatus: String? = nil,
     collapsedPreviewLines: Int = 0,
     dimmedContent: Bool = false,
@@ -2126,7 +2123,8 @@ private struct FoldableMetaSection: View {
     self.systemImage = systemImage
     self.content = content
     self.monospaced = monospaced
-    self.detail = detail
+    self.showsGenerationSpeed = showsGenerationSpeed
+    self.generationStats = generationStats
     self.collapsedStatus = compact ? nil : collapsedStatus
     self.collapsedPreviewLines = compact ? 0 : max(0, collapsedPreviewLines)
     self.dimmedContent = dimmedContent
@@ -2157,8 +2155,8 @@ private struct FoldableMetaSection: View {
               .font(compact ? .caption : .caption.weight(.semibold))
               .foregroundStyle(.secondary)
             Spacer(minLength: 8)
-            if let detail {
-              Text(detail)
+            if showsGenerationSpeed {
+              ReasoningSpeedLabel(content: content, isStreaming: isStreaming, stats: generationStats)
                 .font(.caption2.monospacedDigit())
                 .foregroundStyle(.tertiary)
                 .lineLimit(1)
@@ -2268,6 +2266,33 @@ private struct FoldableMetaSection: View {
     .onChange(of: initiallyExpanded) { _, expandedByDefault in
       expanded = expandedByDefault
     }
+  }
+}
+
+private struct ReasoningSpeedLabel: View {
+  let content: String
+  let isStreaming: Bool
+  let stats: GenerationStats?
+  @State private var rate = ReasoningGenerationRate()
+
+  private var label: String {
+    if !isStreaming, let stats, let speed = stats.tokensPerSecond {
+      return ModelUsageFormat.speed(speed, estimated: stats.tokensEstimated)
+    }
+    return rate.tokensPerSecond.map { ModelUsageFormat.speed($0, estimated: true) } ?? "— tok/s"
+  }
+
+  var body: some View {
+    Text(label)
+      .onChange(of: content, initial: true) { _, text in
+        if isStreaming { rate.observe(characterCount: text.count, at: Date()) }
+      }
+      .onChange(of: isStreaming) { _, streaming in
+        if streaming {
+          rate = ReasoningGenerationRate()
+          rate.observe(characterCount: content.count, at: Date())
+        }
+      }
   }
 }
 

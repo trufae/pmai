@@ -7,6 +7,28 @@ import XCTest
 final class GenerationStatsTests: XCTestCase {
   private let start = Date(timeIntervalSince1970: 1_000)
 
+  func testLiveReasoningRateExcludesHistoryAndStopsWithTheReasoning() {
+    var rate = ReasoningGenerationRate()
+    rate.observe(characterCount: 4_000, at: start)
+    XCTAssertNil(rate.tokensPerSecond)
+    rate.observe(characterCount: 4_080, at: start.addingTimeInterval(1))
+    rate.observe(characterCount: 4_160, at: start.addingTimeInterval(2))
+    XCTAssertEqual(rate.tokensPerSecond ?? -1, 20, accuracy: 0.001)
+    // Re-rendering during tool work must not reduce the displayed generation speed.
+    rate.observe(characterCount: 4_160, at: start.addingTimeInterval(20))
+    XCTAssertEqual(rate.tokensPerSecond ?? -1, 20, accuracy: 0.001)
+    rate.observe(characterCount: 10, at: start.addingTimeInterval(21))
+    XCTAssertNil(rate.tokensPerSecond)
+  }
+
+  func testLiveReasoningBurstDoesNotInventAHighSpeed() {
+    var rate = ReasoningGenerationRate()
+    rate.observe(characterCount: 0, at: start)
+    rate.observe(characterCount: 400, at: start.addingTimeInterval(0.01))
+    rate.observe(characterCount: 800, at: start.addingTimeInterval(0.02))
+    XCTAssertNil(rate.tokensPerSecond)
+  }
+
   func testStreamedTimingSplitsPromptAndGeneration() {
     var observation = StreamTimingObservation(requestStart: start)
     observation.noteTokenChunk(at: start.addingTimeInterval(0.8))
