@@ -51,6 +51,11 @@ final class MacWindowTabs: NSObject {
     open(workspace, beside: activeWindow, openWindow: openWindow)
   }
 
+  func selectTab(at index: Int) {
+    guard let tabs = activeWindow?.tabbedWindows, tabs.indices.contains(index) else { return }
+    tabs[index].makeKeyAndOrderFront(nil)
+  }
+
   private var activeWindow: NSWindow? {
     for window in [NSApp.keyWindow, NSApp.mainWindow].compactMap({ $0 }) {
       if windows[ObjectIdentifier(window)] != nil { return window }

@@ -152,7 +152,8 @@ private struct MacWorkspaceCommands: Commands {
         .keyboardShortcut("k", modifiers: [.command, .shift])
         .disabled(workspace == nil)
     }
-    CommandGroup(replacing: .sidebar) {
+    // Preserve the system full-screen command and its Globe+F shortcut.
+    CommandGroup(before: .sidebar) {
       Button("Toggle Sidebar") {
         withAnimation {
           sidebarVisibility = sidebarVisibility == .detailOnly ? .all : .detailOnly
@@ -165,6 +166,13 @@ private struct MacWorkspaceCommands: Commands {
       }
       .keyboardShortcut("o", modifiers: .command)
       .disabled(workspace?.selected == nil)
+    }
+    CommandGroup(before: .windowList) {
+      ForEach(1...9, id: \.self) { number in
+        Button("Select Tab \(number)") { tabs.selectTab(at: number - 1) }
+          .keyboardShortcut(KeyEquivalent(Character(String(number))), modifiers: .command)
+          .disabled(workspace == nil)
+      }
     }
     CommandMenu("Conversation") {
       Button("Stop Response") { workspace?.selected?.stop() }.keyboardShortcut(".")
