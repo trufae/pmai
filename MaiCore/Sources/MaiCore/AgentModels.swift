@@ -930,8 +930,8 @@ public struct AgentRetryPolicy: Codable, Equatable, Sendable {
 }
 
 /// Context strategy. Cache mode preserves the retained prefix and can drop
-/// dispensable suffix messages. Size prunes earlier reads; smart (the default),
-/// tools and adaptive build disposable summaries while retaining saved history.
+/// dispensable suffix messages. Size prunes earlier reads; smart, tools and
+/// adaptive (the default) build disposable summaries while retaining saved history.
 public enum AgentContextMode: String, Codable, Equatable, Sendable {
   case cache
   case size
@@ -1078,7 +1078,7 @@ public struct AgentDefinition: Codable, Equatable, Identifiable, Sendable {
     toolDelegation: AgentToolDelegation = .inline,
     retry: AgentRetryPolicy = .init(),
     autocompact: AgentAutocompact = .init(),
-    context: AgentContextMode = .smart
+    context: AgentContextMode = .adaptive
   ) {
     self.id = id
     self.displayName = displayName ?? id
@@ -1157,7 +1157,7 @@ public struct AgentDefinition: Codable, Equatable, Identifiable, Sendable {
       retry: try container.decodeIfPresent(AgentRetryPolicy.self, forKey: .retry) ?? .init(),
       autocompact: try container.decodeIfPresent(AgentAutocompact.self, forKey: .autocompact)
         ?? .init(),
-      context: try container.decodeIfPresent(AgentContextMode.self, forKey: .context) ?? .smart)
+      context: try container.decodeIfPresent(AgentContextMode.self, forKey: .context) ?? .adaptive)
   }
 }
 
@@ -1220,7 +1220,7 @@ public struct AgentRequest: Codable, Equatable, Sendable {
     toolDelegation: AgentToolDelegation = .inline,
     retry: AgentRetryPolicy = .init(),
     autocompact: AgentAutocompact = .init(),
-    context: AgentContextMode = .smart,
+    context: AgentContextMode = .adaptive,
     sessionID: String? = nil
   ) {
     self.agentID = agentID

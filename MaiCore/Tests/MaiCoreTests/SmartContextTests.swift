@@ -283,12 +283,12 @@ func smartContextAttachments() {
   #expect(messages[2] == original[1])
 }
 
-@Test("Smart mode and its independent prompt persist and validate")
+@Test("Context defaults to adaptive; explicit smart mode and its prompt persist and validate")
 func smartContextConfiguration() async throws {
-  #expect(AgentDefinition(id: "main", instructions: "", provider: "hello", model: "hello").context == .smart)
-  #expect(AgentRequest(provider: "hello", messages: []).context == .smart)
+  #expect(AgentDefinition(id: "main", instructions: "", provider: "hello", model: "hello").context == .adaptive)
+  #expect(AgentRequest(provider: "hello", messages: []).context == .adaptive)
   let legacy = Data(#"{"id":"main","provider":"hello"}"#.utf8)
-  #expect(try JSONDecoder().decode(AgentDefinition.self, from: legacy).context == .smart)
+  #expect(try JSONDecoder().decode(AgentDefinition.self, from: legacy).context == .adaptive)
   let explicit = Data(#"{"id":"main","provider":"hello","context":"cache"}"#.utf8)
   #expect(try JSONDecoder().decode(AgentDefinition.self, from: explicit).context == .cache)
   let agent = AgentDefinition(

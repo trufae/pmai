@@ -42,7 +42,7 @@ def main():
         assert 'No provider selected.' in output, output
         assert 'Chat: no model selected' in output, output
         assert 'effort = low' in output, output
-        assert 'ctx.strategy = smart' in output, output
+        assert 'ctx.strategy = adaptive' in output, output
         assert '/about' in output, output
         assert '/visual' not in output, output
         for help_output in run(['/provider add', '/help provider'], split=True):
@@ -138,11 +138,11 @@ def main():
         saved = json.loads(config.read_text())
         provider = next(p for p in saved['providers'] if p['id'] == 'local')
         assert provider['apiKeyFile'] == str(key_file), provider
-        assert 'ctx.strategy = smart' in run(['/set ctx.strategy'])
+        assert 'ctx.strategy = adaptive' in run(['/set ctx.strategy'])
         run(['/set ctx.strategy cache'])
         assert 'ctx.strategy = cache' in run(['/set ctx.strategy'])
         run(['/reset ctx.strategy'])
-        assert 'ctx.strategy = smart' in run(['/set ctx.strategy'])
+        assert 'ctx.strategy = adaptive' in run(['/set ctx.strategy'])
         run(['/model'])  # Normalize the newly created task agents' named prompts.
         original = config.read_bytes()
         for env in ({}, {'PMAI_PROVIDER': 'hello', 'PMAI_MODEL': 'stale'},

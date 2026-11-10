@@ -1031,7 +1031,7 @@ cursor position and history search. It does not clear the conversation.
 resume the same input or active run.
 
 [Context strategies and their tradeoffs](../doc/context.md) describes all modes.
-The default is `smart`; explicit saved choices take precedence.
+The default is `adaptive`; explicit saved choices take precedence.
 
 `/set ctx.strategy=smart` (config key `context: "smart"`) keeps small working
 conversations intact. It reduces at 75% of the prepared input budget, after
@@ -1089,7 +1089,7 @@ the runtime a smaller window and trigger reduction even with `ctx.compact=0`.
 An unchanged rejected request is not sent again. Managed tool-loop providers
 keep ownership of their own context. This does not guarantee that a huge new
 result or immutable instructions can fit. A failed brief retains the evidence.
-Saved history is untouched. `smart` is the default; `adaptive` is opt-in.
+Saved history is untouched. `adaptive` is the default.
 
 While a run is active, the status line reports cumulative `spent` tokens and
 `think` tokens when the provider reports them. Thinking is a subset of output,
@@ -1101,7 +1101,7 @@ history. It remains an estimate, separate from cumulative spending. Missing
 usage estimates include reasoning text, tool arguments, and tool results;
 provider-reported totals take precedence.
 
-`/set ctx.strategy size` (config key `context`, default `smart`) turns on the cheap
+`/set ctx.strategy size` (config key `context`, default `adaptive`) turns on the cheap
 half of that: before every model call the runtime replaces the body of any file
 read while answering an *earlier* prompt with one line saying what it was and
 how to read it again. This includes full files, `files_read_range`, and

@@ -1,6 +1,6 @@
 # Context strategies
 
-`/set ctx.strategy` shows the current strategy. **`smart` is the default** for
+`/set ctx.strategy` shows the current strategy. **`adaptive` is the default** for
 new agents, requests and REPL sessions, and for agent configurations that omit
 `context`. An explicitly saved strategy still takes precedence.
 
@@ -14,19 +14,19 @@ new agents, requests and REPL sessions, and for agent configurations that omit
 /reset ctx.strategy
 ```
 
-The configuration key is the agent's `context`, for example `"context": "smart"`.
-`/reset ctx.strategy` restores `smart`. Context strategy is independent of the
+The configuration key is the agent's `context`, for example `"context": "adaptive"`.
+`/reset ctx.strategy` restores `adaptive`. Context strategy is independent of the
 model's reasoning effort and of the durable compaction threshold.
 
 ## Comparison
 
 | Strategy | Good | Bad | Use it when |
 | --- | --- | --- | --- |
-| `smart` (default) | Uses the prepared request's window budget, including runtime instructions, schemas and reply reserve. Keeps every user message, pins, active instructions and the newest complete exchange exact. Reuses a disposable brief; original history stays available. | Older assistant/tool evidence can still lose details in a summary. Reductions add latency and model usage. A growing user history or one huge protected result can still fill the window. | General coding and long mixed tool conversations. |
+| `smart` | Uses the prepared request's window budget, including runtime instructions, schemas and reply reserve. Keeps every user message, pins, active instructions and the newest complete exchange exact. Reuses a disposable brief; original history stays available. | Older assistant/tool evidence can still lose details in a summary. Reductions add latency and model usage. A growing user history or one huge protected result can still fill the window. | Preserving every user message verbatim is important. |
 | `cache` | Preserves the retained prefix. Can discard dispensable suffix messages without rewriting that prefix. No summary-model calls unless durable compaction is enabled separately. | Does not automatically discard substantive evidence. Context can keep growing. Cache hits depend on the provider and cached input still occupies the window. | Short sessions, exact replay, or workloads where provider cache reuse is particularly valuable. |
 | `size` | Replaces old file-read bodies with read-again references without a model call. Keeps current-task reads intact. | Rewrites older messages, reducing eligible cache reuse from that point. Does not bound one long task or remove large shell/search output, tool arguments or prose. Files may need rereading. | Many separate coding tasks with large reads from previous tasks. |
 | `tools` | Summarizes only large, already-consumed successful tool results. Keeps user/assistant prose and call arguments intact; saved results stay whole. | Can add frequent summary calls and change the cached prefix. Small results, errors, prose and arguments still accumulate. Summaries may omit exact values or code. | Tool output dominates and preserving conversation prose is important. |
-| `adaptive` | Uses the same window-aware brief machinery as `smart`, but can also summarize earlier user messages. Retains the active task and recent exchanges exactly. | More aggressive: older user wording can be lost as well as tool evidence. Has the same summary cost and overflow limits. | Explicitly opting into stronger reduction when old user messages dominate. |
+| `adaptive` (default) | Uses the same window-aware brief machinery as `smart`, but can also summarize earlier user messages. Retains the active task and recent exchanges exactly. | More aggressive: older user wording can be lost as well as tool evidence. Has the same summary cost and overflow limits. | General coding and long mixed tool conversations, including growing user history. |
 
 ## Smart: preserve evidence until there is pressure
 

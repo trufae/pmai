@@ -673,7 +673,7 @@ can start a new turn when selected.
 /set limits.maxTotalTokens 120k   token cap on a run (off to lift)
 /set retry.attempts N             repeats of a failed model call; /set retry.delay 5
 /set ctx.compact 120k             summarize older exchanges once the chat holds ~N tokens
-/set ctx.strategy cache|size|smart|tools|adaptive  choose context strategy (default smart)
+/set ctx.strategy cache|size|smart|tools|adaptive  choose context strategy (default adaptive)
 /set effort LEVEL [TEXT]          how hard the model thinks (low, medium, high, xhigh, max), plus guidance
 /set use.agentsmd on              use applicable AGENTS.md files (off by default)
 /set use.agentsmd ask             ask once per working directory before using them

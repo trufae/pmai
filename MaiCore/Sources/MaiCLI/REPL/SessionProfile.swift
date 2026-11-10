@@ -100,7 +100,7 @@ struct SessionProfile: Sendable {
     toolDelegation = .inline
     retry = .init()
     autocompact = .init()
-    context = .smart
+    context = .adaptive
   }
 
   var agentDefinition: AgentDefinition {
