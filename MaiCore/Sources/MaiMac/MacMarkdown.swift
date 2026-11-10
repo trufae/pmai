@@ -3,21 +3,33 @@ import MaiMarkdown
 import SwiftUI
 
 /// The same block parser as CLI output and document exports, rendered natively.
-struct MacMarkdown: View {
+struct MacMarkdown: View, @MainActor Equatable {
   let text: String
+  @State private var document: MacMarkdownDocument?
   private var typography = MacChatTypography()
   private var appearance = MacAppearance()
 
+  static func == (lhs: Self, rhs: Self) -> Bool { lhs.text == rhs.text }
+
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
-      ForEach(Array(MarkdownBlockParser.blocks(from: text).enumerated()), id: \.offset) { _, block in
-        render(block)
+      if let document {
+        ForEach(Array(document.blocks.enumerated()), id: \.offset) { _, block in
+          render(block)
+        }
+      } else if !text.isEmpty {
+        ProgressView().controlSize(.small)
       }
     }.font(typography.font()).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+      .task(id: text) {
+        guard document?.source != text else { return }
+        guard let prepared = try? await MacMarkdownParser.shared.parse(text), !Task.isCancelled else { return }
+        document = prepared
+      }
   }
 
   private func inline(_ text: String) -> Text {
-    var attributed = (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(text)
+    var attributed = document?.inlineText[text] ?? AttributedString(text)
     for run in attributed.runs where run.inlinePresentationIntent?.contains(.stronglyEmphasized) == true {
       attributed[run.range].foregroundColor = appearance.accentColor
     }
@@ -74,5 +86,49 @@ struct MacMarkdown: View {
         }.padding(12)
       }.background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
     }
+  }
+}
+
+private actor MacMarkdownParser {
+  static let shared = MacMarkdownParser()
+
+  func parse(_ text: String) throws -> MacMarkdownDocument {
+    // Serialize work so rapid stream updates cannot launch overlapping parses.
+    // Cancelled snapshots are discarded before parsing starts.
+    try MacMarkdownDocument(source: text)
+  }
+}
+
+/// Width-independent parsing is retained by each bubble. Resizing only lays out
+/// prepared text; neither block parsing nor inline Markdown runs on the UI thread.
+struct MacMarkdownDocument: Sendable {
+  let source: String
+  let blocks: [MarkdownBlock]
+  let inlineText: [String: AttributedString]
+
+  init(source: String) throws {
+    try Task.checkCancellation()
+    self.source = source
+    blocks = MarkdownBlockParser.blocks(from: source)
+    var inlineText: [String: AttributedString] = [:]
+    for block in blocks {
+      try Task.checkCancellation()
+      let strings: [String]
+      switch block {
+      case .paragraph(let text), .heading(_, let text), .quote(let text): strings = [text]
+      case .bullets(let items): strings = items
+      case .ordered(let items): strings = items.map(\.text)
+      case .tasks(let items): strings = items.map(\.text)
+      case .footnotes(let items): strings = items.map { "[\($0.key)] \($0.text)" }
+      case .table(let table): strings = table.headers + table.rows.flatMap { $0 }
+      case .rule, .code: strings = []
+      }
+      for text in strings where inlineText[text] == nil {
+        try Task.checkCancellation()
+        inlineText[text] = (try? AttributedString(markdown: text,
+          options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(text)
+      }
+    }
+    self.inlineText = inlineText
   }
 }

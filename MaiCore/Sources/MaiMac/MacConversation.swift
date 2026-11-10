@@ -11,7 +11,10 @@ final class MacConversation: Identifiable {
   let cwd: String
   var sessionID: String?
   var title: String
-  var messages: [ACPConversationMessage] = []
+  var messages: [ACPConversationMessage] = [] {
+    didSet { messageRuns = MacMessageRun.grouped(messages) }
+  }
+  private(set) var messageRuns: [MacMessageRun] = []
   var options: [RemoteSessionOption] = []
   var modelName: String? {
     guard let model = options.first(where: { $0.category == "model" }) else { return nil }

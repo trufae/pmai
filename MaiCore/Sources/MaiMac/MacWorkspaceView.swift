@@ -14,7 +14,7 @@ struct MacWorkspaceView: View {
     } detail: {
       Group {
         if let conversation = workspace.selected {
-          MacChatView(conversation: conversation)
+          MacChatView(conversation: conversation).id(conversation.id)
         } else {
           ContentUnavailableView {
             Label(workspace.cwd.isEmpty ? "Your workspace, in pmai" : "Start a conversation", systemImage: "bubble.left.and.bubble.right")
@@ -75,18 +75,38 @@ struct MacWorkspaceView: View {
 }
 
 struct MacChatView: View {
+  private struct ScrollLayout: Equatable {
+    let contentSize: CGSize
+    let containerSize: CGSize
+  }
+
   @Bindable var conversation: MacConversation
   @State private var followsBottom = true
+  @State private var firstVisibleRunID: UUID?
+  @State private var scrollPhase = ScrollPhase.idle
   @State private var pinchBaseFontSize: Double?
   @GestureState private var isPinching = false
   private var typography = MacChatTypography()
-  private var appearance = MacAppearance()
+
+  private var firstVisibleIndex: Int {
+    let runs = conversation.messageRuns
+    return firstVisibleRunID.flatMap { id in runs.firstIndex { $0.id == id } } ?? max(0, runs.count - 8)
+  }
 
   var body: some View {
     VStack(spacing: 0) {
       ScrollViewReader { proxy in
         ScrollView {
-          LazyVStack(alignment: .leading, spacing: 26) {
+          // A bounded eager stack avoids stale height estimates for streaming bubbles.
+          VStack(alignment: .leading, spacing: 18) {
+            if firstVisibleIndex > 0 {
+              Button("Load earlier messages") {
+                let anchor = conversation.messageRuns[firstVisibleIndex].id
+                followsBottom = false
+                firstVisibleRunID = conversation.messageRuns[max(0, firstVisibleIndex - 8)].id
+                DispatchQueue.main.async { proxy.scrollTo(anchor, anchor: .top) }
+              }.buttonStyle(.borderless)
+            }
             if conversation.messages.isEmpty {
               VStack(alignment: .leading, spacing: 12) {
                 Image(systemName: "sparkle").font(.largeTitle).foregroundStyle(.tint)
@@ -94,8 +114,14 @@ struct MacChatView: View {
                 Text(conversation.cwd).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
               }.padding(.vertical, 50)
             }
-            ForEach(conversation.messages) { message in
-              messageRow(message).id(message.id)
+            ForEach(conversation.messageRuns.suffix(from: firstVisibleIndex)) { run in
+              Group {
+                if run.isActivity {
+                  MacActivityRow(run: run, conversation: conversation).equatable()
+                } else if let message = run.messages.first {
+                  MacMessageRow(message: message, conversation: conversation).equatable()
+                }
+              }.id(run.id)
             }
             Color.clear.frame(height: 1).id("bottom")
           }
@@ -103,7 +129,6 @@ struct MacChatView: View {
           .padding(28)
           .frame(maxWidth: .infinity)
         }
-        .defaultScrollAnchor(.bottom)
         .simultaneousGesture(
           MagnifyGesture()
             .updating($isPinching) { _, active, _ in active = true }
@@ -118,11 +143,31 @@ struct MacChatView: View {
         .onChange(of: isPinching) { _, active in
           if !active { pinchBaseFontSize = nil }
         }
-        .onScrollGeometryChange(for: Bool.self) { geometry in
-          geometry.contentOffset.y + geometry.containerSize.height >= geometry.contentSize.height - 80
-        } action: { _, bottom in followsBottom = bottom }
-        .onChange(of: conversation.messages.last?.text) { _, _ in
-          if followsBottom { proxy.scrollTo("bottom", anchor: .bottom) }
+        .defaultScrollAnchor(.bottom, for: .initialOffset)
+        .onChange(of: conversation.messageRuns.first?.id, initial: true) { _, _ in
+          if firstVisibleRunID == nil || !conversation.messageRuns.contains(where: { $0.id == firstVisibleRunID }) {
+            firstVisibleRunID = conversation.messageRuns.suffix(8).first?.id
+          }
+        }
+        .onScrollGeometryChange(for: ScrollLayout.self) { geometry in
+          ScrollLayout(contentSize: geometry.contentSize, containerSize: geometry.containerSize)
+        } action: { _, _ in
+          // Follow layout, including asynchronously parsed Markdown and tool updates.
+          // Content growth must never be mistaken for the user scrolling away.
+          DispatchQueue.main.async {
+            if followsBottom, scrollPhase == .idle { proxy.scrollTo("bottom", anchor: .bottom) }
+          }
+        }
+        .onScrollPhaseChange { old, phase, context in
+          scrollPhase = phase
+          if phase == .interacting {
+            followsBottom = false
+          } else if phase == .idle, old == .interacting || old == .decelerating {
+            followsBottom = context.geometry.visibleRect.maxY >= context.geometry.contentSize.height - 80
+          }
+        }
+        .onChange(of: followsBottom) { _, follows in
+          if follows { proxy.scrollTo("bottom", anchor: .bottom) }
         }
         .overlay(alignment: .bottomTrailing) {
           if !followsBottom {
@@ -197,39 +242,5 @@ struct MacChatView: View {
       }
     }
     .allowsHitTesting(false)
-  }
-
-  private func messageRow(_ message: ACPConversationMessage) -> some View {
-    VStack(alignment: .leading, spacing: 9) {
-      HStack {
-        Label(message.role == "user" ? "You" : message.role == "assistant" ? "pmai" : message.role.capitalized,
-          systemImage: message.role == "user" ? "person.crop.circle" : message.role == "tool" ? "wrench.and.screwdriver" : "sparkle")
-          .font(typography.font(.callout).weight(.semibold)).foregroundStyle(.secondary)
-        Spacer()
-        if let status = message.status { Text(status.capitalized).font(typography.font(.caption1)).foregroundStyle(.secondary) }
-      }
-      if message.role == "tool" || message.role == "thought" {
-        DisclosureGroup(message.toolName ?? (message.role == "thought" ? "Reasoning" : "Tool details")) {
-          if let input = message.toolInput,
-            let data = try? JSONEncoder().encode(input), let text = String(data: data, encoding: .utf8) {
-            Text(text).font(typography.font(.caption1, design: .monospaced)).textSelection(.enabled)
-          }
-          MacMarkdown(text: message.text)
-        }
-      } else {
-        MacMarkdown(text: message.text)
-      }
-    }
-    .font(typography.font())
-    .padding(message.role == "user" ? 16 : 0)
-    .background {
-      if message.role == "user" { RoundedRectangle(cornerRadius: 14).fill(appearance.accentColor.opacity(0.12)) }
-    }
-    .contextMenu {
-      Button("Copy") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(message.text, forType: .string) }
-      if message.role == "user", conversation.canRewind, message.remoteID != nil {
-        Button("Edit from Here…") { conversation.rewind(message) }.disabled(conversation.busy)
-      }
-    }
   }
 }
