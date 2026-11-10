@@ -589,7 +589,7 @@
 				CODE_SIGN_ENTITLEMENTS = "$(POCKETMAI_ENTITLEMENTS)";
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 118;
+				CURRENT_PROJECT_VERSION = 119;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = PocketMai/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = PocketMai;
@@ -598,7 +598,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.14.5;
+				MARKETING_VERSION = 1.14.6;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-framework",
@@ -624,7 +624,7 @@
 				CODE_SIGN_ENTITLEMENTS = "$(POCKETMAI_ENTITLEMENTS)";
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 118;
+				CURRENT_PROJECT_VERSION = 119;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = PocketMai/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = PocketMai;
@@ -633,7 +633,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.14.5;
+				MARKETING_VERSION = 1.14.6;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-framework",
@@ -691,7 +691,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = PocketMaiWidgets/PocketMaiWidgets.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 118;
+				CURRENT_PROJECT_VERSION = 119;
 				DEVELOPMENT_TEAM = J5PTVY8BHH;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = PocketMaiWidgets/Info.plist;
@@ -701,7 +701,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.14.5;
+				MARKETING_VERSION = 1.14.6;
 				PRODUCT_BUNDLE_IDENTIFIER = io.github.trufae.mai.PocketMaiWidgetsExtension;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -718,7 +718,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = PocketMaiWidgets/PocketMaiWidgets.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 118;
+				CURRENT_PROJECT_VERSION = 119;
 				DEVELOPMENT_TEAM = J5PTVY8BHH;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = PocketMaiWidgets/Info.plist;
@@ -728,7 +728,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.14.5;
+				MARKETING_VERSION = 1.14.6;
 				PRODUCT_BUNDLE_IDENTIFIER = io.github.trufae.mai.PocketMaiWidgetsExtension;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -745,7 +745,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = PocketMaiShare/PocketMaiShare.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 118;
+				CURRENT_PROJECT_VERSION = 119;
 				DEVELOPMENT_TEAM = J5PTVY8BHH;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = PocketMaiShare/Info.plist;
@@ -755,7 +755,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.14.5;
+				MARKETING_VERSION = 1.14.6;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-framework",
@@ -777,7 +777,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = PocketMaiShare/PocketMaiShare.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 118;
+				CURRENT_PROJECT_VERSION = 119;
 				DEVELOPMENT_TEAM = J5PTVY8BHH;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = PocketMaiShare/Info.plist;
@@ -787,7 +787,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.14.5;
+				MARKETING_VERSION = 1.14.6;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-framework",
