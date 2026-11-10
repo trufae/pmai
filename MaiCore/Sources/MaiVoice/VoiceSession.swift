@@ -208,6 +208,11 @@ import MaiCore
     default: break
     }
   }
+  /// Hosts using a remote chat protocol can supply the completed assistant text.
+  public func appendReply(_ text: String) {
+    guard enabled, !paused else { return }
+    enqueue(sentences.append(text))
+  }
   public func finishReply(error: String? = nil) {
     guard enabled else { return }
     if let error {

@@ -199,7 +199,7 @@ let package = Package(
 if !focusedTests {
   package.products.append(.executable(name: "pmai-mac", targets: ["MaiMac"]))
   package.targets.append(.executableTarget(name: "MaiMac",
-    dependencies: ["MaiCLI", "MaiCore", "MaiACP", "MaiMarkdown", "MaiStandardTools", "MaiDocuments"]))
+    dependencies: ["MaiCLI", "MaiCore", "MaiACP", "MaiMarkdown", "MaiStandardTools", "MaiDocuments", "MaiVoice"]))
 }
 #endif
 

@@ -1,6 +1,7 @@
 import Foundation
 import MaiACP
 import MaiCore
+import MaiDocuments
 import Observation
 
 @MainActor @Observable
@@ -15,6 +16,22 @@ final class MacConversation: Identifiable {
     didSet { messageRuns = MacMessageRun.grouped(messages); find.update(messages) }
   }
   let find = MacConversationSearch()
+  let voice = MacVoice()
+  var webXDC: MacWebXDCSession?
+  var showWebXDC = false
+
+  func startWebXDC(_ app: WebXDCAppInfo) {
+    if webXDC?.app.id != app.id {
+      stopWebXDC()
+      webXDC = MacWebXDCSession(app: app, conversation: self)
+    }
+    showWebXDC = true
+  }
+  func stopWebXDC() {
+    webXDC?.stop()
+    webXDC = nil
+    showWebXDC = false
+  }
   private(set) var messageRuns: [MacMessageRun] = []
   var options: [RemoteSessionOption] = []
   var modelName: String? {
@@ -74,31 +91,56 @@ final class MacConversation: Identifiable {
   }
 
   func send() {
+    if voice.handleCommand(draft, in: self) { draft = ""; return }
+    guard canSend, !closing, client != nil else { return }
+    let submitted = attachments
     let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard canSend, !closing, let client else { return }
+    draft = ""
+    attachments = []
+    submit(text, attachments: submitted, restoreDraft: true)
+  }
+
+  func sendVoice(_ text: String) { submit(text) }
+
+  @discardableResult
+  func sendApp(_ text: String, completion: @escaping (Result<String, Error>) -> Void) -> Bool {
+    guard connected, !busy, !closing, client != nil else { return false }
+    submit(text, completion: completion)
+    return true
+  }
+
+  private func submit(_ text: String, attachments submittedAttachments: [MacAttachment] = [],
+    restoreDraft: Bool = false, completion: ((Result<String, Error>) -> Void)? = nil) {
+    guard connected, !busy, !closing, let client else { return }
     var request = RemotePromptRequest(text: text)
     if let command = PromptSlashCommand.parse(text), let entry = prompts.entry(named: command.command),
       entry.kind != .system {
       request = .init(text: entry.invocation != nil || entry.skillID != nil ? command.remainder
         : entry.message(arguments: command.remainder) ?? text, command: entry.invocation, skillID: entry.skillID)
     }
-    let submittedAttachments = attachments
     request.attachments = submittedAttachments.map(\.content)
-    draft = ""
-    attachments = []
     let displayText = ([text] + submittedAttachments.map { "Attached: \($0.name)" })
       .filter { !$0.isEmpty }.joined(separator: "\n\n")
     messages.append(.init(role: "user", text: displayText))
     if title == "New Chat" { title = String(displayText.prefix(80)) }
+    voice.beginReply()
     perform {
       self.status = "Working…"
       do {
         _ = try await client.prompt(request) { _ in }
       } catch {
-        if self.draft.isEmpty { self.draft = text }
-        self.attachments.insert(contentsOf: submittedAttachments, at: 0)
+        if restoreDraft {
+          if self.draft.isEmpty { self.draft = text }
+          self.attachments.insert(contentsOf: submittedAttachments, at: 0)
+        }
+        self.voice.finishReply("", error: error.localizedDescription)
+        completion?(.failure(error))
         throw error
       }
+      let reply = self.messages.reversed().prefix(while: { $0.role != "user" }).reversed()
+        .filter { $0.role == "assistant" }.map(\.text).joined(separator: "\n\n")
+      self.voice.finishReply(reply)
+      completion?(.success(reply))
       self.status = "Ready"
       self.didChange?()
     }
@@ -169,7 +211,7 @@ final class MacConversation: Identifiable {
     busy = true
     error = nil
     operation = Task {
-      defer { busy = false; operation = nil }
+      defer { busy = false; operation = nil; webXDC?.flushChat() }
       do { try await action() }
       catch {
         if !Task.isCancelled { self.error = error.localizedDescription }
@@ -180,6 +222,7 @@ final class MacConversation: Identifiable {
   }
 
   func stop() {
+    voice.stop()
     answerPermission(nil)
     // The protocol cancellation lets the host save its interrupted transcript
     // before the prompt returns. Closing the transport would lose that result.
@@ -188,6 +231,8 @@ final class MacConversation: Identifiable {
 
   func close() async {
     closing = true
+    voice.stop()
+    stopWebXDC()
     defer { closing = false }
     answerPermission(nil)
     let client = client
@@ -211,6 +256,7 @@ final class MacConversation: Identifiable {
   }
 
   func disconnected() {
+    voice.stop()
     connected = false
     status = "Disconnected"
     answerPermission(nil)

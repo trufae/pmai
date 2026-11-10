@@ -69,6 +69,7 @@ struct MacChatView: View {
   }
 
   @Bindable var conversation: MacConversation
+  @State private var showApps = false
   @State private var followsBottom = true
   @State private var firstVisibleRunID: UUID?
   @State private var scrollPhase = ScrollPhase.idle
@@ -185,6 +186,7 @@ struct MacChatView: View {
         }
       }
     }
+    .sheet(isPresented: $showApps) { MacWebXDCLauncher(conversation: conversation) }
     .onChange(of: conversation.find.focusRequest) { _, _ in
       DispatchQueue.main.async { findFocused = true }
     }
@@ -201,9 +203,13 @@ struct MacChatView: View {
             Button("Dismiss") { conversation.error = nil }
           }.font(.callout).padding().background(.orange.opacity(0.12))
         }
+        if let session = conversation.webXDC, conversation.showWebXDC {
+          MacWebXDCRunner(session: session, conversation: conversation)
+        }
         composer
       }
     }
+    .onDisappear { conversation.voice.stop(); conversation.webXDC?.suspendAudio() }
     .background(Color(nsColor: .textBackgroundColor))
     .sheet(isPresented: Binding(get: { conversation.permission != nil }, set: {
       if !$0 { conversation.answerPermission(nil) }
@@ -237,6 +243,11 @@ struct MacChatView: View {
 
   private var composer: some View {
     VStack(alignment: .leading, spacing: 8) {
+      if let app = conversation.webXDC, !conversation.showWebXDC {
+        Button { conversation.showWebXDC = true } label: { Label("Open " + app.app.name, systemImage: "app") }
+          .buttonStyle(.borderless)
+      }
+      if conversation.voice.isActive { MacVoiceStatus(conversation: conversation) }
       if conversation.importingAttachments {
         ProgressView("Preparing attachments…").controlSize(.small)
       }
@@ -260,6 +271,8 @@ struct MacChatView: View {
       }
       HStack(alignment: .center, spacing: 12) {
         Menu {
+          Button("Webxdc Apps…", systemImage: "app") { showApps = true }
+          Divider()
           Button("Images…", systemImage: "photo") { chooseAttachments(images: true) }
           Button("Documents and Files…", systemImage: "doc") { chooseAttachments() }
           Button("Folder…", systemImage: "folder") { chooseAttachments(folders: true) }
@@ -269,7 +282,7 @@ struct MacChatView: View {
         }
         .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
         .disabled(conversation.importingAttachments)
-        .help("Attach images, documents, files, or folders").accessibilityLabel("Add attachments")
+        .help("Start a webxdc app or attach files").accessibilityLabel("Add attachments or apps")
         MacComposer(text: $conversation.draft, prompts: conversation.prompts) { conversation.send(); followsBottom = true }
           .id(conversation.id)
           .zIndex(1)
@@ -279,6 +292,7 @@ struct MacChatView: View {
                 .padding(.top, 6).allowsHitTesting(false)
             }
           }
+        MacVoiceButton(conversation: conversation)
         Group {
           if conversation.busy {
             Button(action: conversation.stop) { Label("Stop", systemImage: "stop.fill") }
