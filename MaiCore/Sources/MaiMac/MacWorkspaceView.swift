@@ -17,20 +17,7 @@ struct MacWorkspaceView: View {
         if let conversation = workspace.selected {
           MacChatView(conversation: conversation).id(conversation.id)
         } else {
-          ContentUnavailableView {
-            Label(workspace.cwd.isEmpty ? "Your workspace, in pmai" : "Start a conversation", systemImage: "bubble.left.and.bubble.right")
-          } description: {
-            Text(workspace.cwd.isEmpty
-              ? "Open a folder to use your projects, tools, and agents. Connect a host to work on another machine."
-              : "Ask a question, work with files, or delegate a task to an agent.")
-          } actions: {
-            if workspace.cwd.isEmpty {
-              Button("Open Workspace…", action: workspace.chooseFolder).buttonStyle(.borderedProminent)
-              Button("Connect to Host…") { workspace.showConnection = true }
-            } else {
-              Button("New Chat", action: workspace.newChat).buttonStyle(.borderedProminent)
-            }
-          }
+          MacWelcomeView(workspace: workspace)
         }
       }
       .navigationTitle(workspace.selected?.title ?? "pmai")
