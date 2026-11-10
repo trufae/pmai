@@ -74,6 +74,40 @@ it back to one row. The current model appears in the window title bar; there is
 no idle status row below the composer. Disconnected chats offer **Reconnect** in
 the toolbar.
 
+The microphone offers **Dictation**, **Voice Conversation**, and **Walkie-talkie**.
+Dictation previews recognized speech and adds it to your draft when you finish.
+Voice conversation sends after a pause and reads replies aloud; walkie-talkie
+waits for an explicit send. Audio uses this Mac's `voice` configuration, including
+its language, input/output providers, silence timeout, and speech voice. The app
+bundle includes microphone and Speech Recognition privacy descriptions. System
+transcription stays on device and requires an installed recognition language.
+
+`/voice` toggles conversation mode. `/voice on`, `off`, `pause`, `resume`, `send`,
+`discard`, `realtime`, `walkie-talkie`, and `dictate` also work in the composer.
+**Control-Space** records/sends, **Control-T** sends the current voice turn, and
+**Control-G** discards it. The **Voice** menu exposes these controls. On current
+pmai hosts, voice uses a separate agent with access to the text conversation,
+so keyboard work and spoken conversation can run concurrently. Its transcript
+is shown in the voice controls and saved with the chat's subagents. Cancelling
+voice does not cancel the keyboard task. Older or non-pmai hosts use the current
+chat for voice turns and wait until it is idle. Typed drafts and attachments are
+preserved when a spoken message is sent. Switching away from the chat stops audio.
+
+Use **(+) → Webxdc Apps…** to import a `.xdc` archive or start an installed app
+directly inside the chat. **Hide** retains the running browser; **Open [app]** in
+the composer brings it back. **Stop App** closes it. Imports, app revisions, and
+status updates live in `$PMAI_HOME/WebXDCApps`; each app has its own persistent
+WebKit storage. Importing an identical archive preserves its identity and data.
+The archive loader and standard `webxdc.js` bridge are shared with iOS.
+
+Apps run offline. **Chat interaction** forwards app updates to the assistant and
+delivers its JSON replies to the app; `sendToChat` queues messages while the chat
+is busy. The PocketMai bridge supports native speech and inference with explicit
+permissions for the running app. Mac inference currently requires `scope: 'chat'`
+and uses that chat's agent; isolated provider selection is not implemented.
+Native audio stops when an app is hidden or the chat is closed. File import and
+realtime channels inside apps have the same unsupported behavior as the iOS bridge.
+
 Type `/` or `$` at the start of the composer to complete names from the host's
 configured prompt catalog and project/global skills. Suggestions open above the
 composer and narrow as you type; the arrow keys select a suggestion, Tab inserts

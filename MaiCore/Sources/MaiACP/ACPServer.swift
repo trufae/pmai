@@ -1,6 +1,7 @@
 import Foundation
 import MaiCore
 import MaiStandardTools
+import MaiVoice
 
 /// Exposes a MaiCore `AgentRuntime` to any ACP client (Zed, JetBrains, …) over
 /// stdio. It is deliberately thin: `session/prompt` becomes one
@@ -35,6 +36,11 @@ public actor ACPServer {
     var liveUpdates: [JSONValue] = []
     var busy = false
     var children: [AgentPID: Task<AgentResult, Error>] = [:]
+    var voicePID: AgentPID?
+    var voiceBusy = false
+    var voiceTurnID: String?
+    var voiceCancelled = false
+    var voiceHistory: [AgentMessage] = []
   }
 
   private let runtime: AgentRuntime
@@ -97,6 +103,9 @@ public actor ACPServer {
   /// Serves the client on the given transport (usually this process's stdio)
   /// until it disconnects.
   public func serve(on transport: any JSONRPCTransport) async {
+    for tool in VoiceAgentTools.tools(supervisor: runtime.supervisor) {
+      try? await runtime.register(tool: tool, replacingExisting: true)
+    }
     let peer = JSONRPCPeer(
       transport: transport,
       onRequest: { [weak self] method, params in
@@ -189,6 +198,8 @@ public actor ACPServer {
       return try await inject(params: params)
     case "_pmai/session/agents":
       return try await sessionAgents(params: params)
+    case "_pmai/session/voice":
+      return try await voicePrompt(params: params)
     case ACP.Method.sessionPrompt:
       return try await runPrompt(params: params)
     case ACP.Method.sessionSetConfigOption:
@@ -199,8 +210,18 @@ public actor ACPServer {
   }
 
   private func handleNotification(method: String, params: JSONValue?) async {
-    guard connected, (try? authorize()) != nil, method == ACP.Method.sessionCancel else { return }
+    guard connected, (try? authorize()) != nil else { return }
     guard let id = params?.objectValue?["sessionId"]?.stringValue else { return }
+    if method == "_pmai/session/voice/cancel" {
+      guard params?.objectValue?["turnId"]?.stringValue == sessions[id]?.voiceTurnID else { return }
+      sessions[id]?.voiceCancelled = true
+      if let pid = sessions[id]?.voicePID {
+        sessions[id]?.children[pid]?.cancel()
+        await runtime.supervisor.stop(pid, reason: "Voice cancelled")
+      }
+      return
+    }
+    guard method == ACP.Method.sessionCancel else { return }
     sessions[id]?.task?.cancel()
     for task in sessions[id]?.children.values ?? Dictionary<AgentPID, Task<AgentResult, Error>>().values { task.cancel() }
     for pid in sessions[id]?.processes ?? [] {
@@ -220,6 +241,7 @@ public actor ACPServer {
           "workspacePrompts": .integer(1),
           "workspaceTerminal": .integer(Self.hasPTY ? 1 : 0),
           "historyRewind": .integer(1), "injection": .integer(1), "agents": .integer(1),
+          "voice": .integer(1),
         ])]),
         "loadSession": .bool(sessionDirectory != nil || workspace != nil),
         "sessionCapabilities": .object(
@@ -1036,6 +1058,98 @@ public actor ACPServer {
     return try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(records))
   }
 
+  /// A voice child has its own turns and history, so it can converse while the
+  /// root's keyboard task is running. Audio capture/playback belongs to the client.
+  private func voicePrompt(params: JSONValue?) async throws -> JSONValue {
+    guard let fields = params?.objectValue, let id = fields["sessionId"]?.stringValue,
+      let saved = sessions[id]?.saved, let root = sessions[id]?.processes.first,
+      !loadingSessions.contains(id), let text = fields["text"]?.stringValue,
+      !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+      let turnID = fields["turnId"]?.stringValue else {
+      throw JSONRPCError.invalidParams("Connect to a chat and supply a voice turn")
+    }
+    guard sessions[id]?.voiceBusy != true else {
+      throw JSONRPCError.invalidParams("A voice turn is already running")
+    }
+    var settings = ConfiguredVoice()
+    if let language = fields["language"]?.stringValue { settings.language = language }
+    try settings.validate()
+    sessions[id]?.voiceBusy = true
+    sessions[id]?.voiceTurnID = turnID
+    sessions[id]?.voiceCancelled = false
+    defer { sessions[id]?.voiceBusy = false; sessions[id]?.voiceTurnID = nil }
+    var request = try await sessionRequest(id)
+    if sessions[id]?.busy == true, let live = await runtime.conversationRequest(for: root) {
+      request.messages = live.messages
+    }
+    request.messages = AgentTranscriptEditor.answeringUnansweredToolCalls(
+      in: request.messages, reason: "voice snapshot while the text conversation continues")
+    request = try await runtime.taskRequest(.voice, from: request)
+    request.agentID = (saved.definition?.id ?? agent.id) + ".voice"
+    request.stream = true
+    request.context = .cache
+    request.responseFormat = .text
+    request.toolNames.formUnion(VoiceAgentTools.names)
+    for name in VoiceAgentTools.names { request.toolPolicy.tools[name] = .direct }
+    if !request.messages.contains(where: { $0.role == .system && $0.text == VoicePrompt.instructions }) {
+      request.messages.append(.system(VoicePrompt.instructions))
+    }
+    request.messages.append(.system("Voice language: " + settings.languageIdentifier))
+    let pid: AgentPID
+    if let existing = sessions[id]?.voicePID {
+      pid = existing
+      request.messages += await runtime.supervisor.drainInbox(pid)
+    } else {
+      let active = await runtime.supervisor.tree().subtree(of: root).dropFirst().filter { !$0.state.isTerminal }.count
+      guard active < request.limits.maxSubagents, request.limits.maxSubagentDepth > 0 else {
+        throw JSONRPCError.invalidParams("This chat's subagent limit is reached")
+      }
+      guard let child = await runtime.forkConversation(request, parent: root, title: "Voice agent") else {
+        throw JSONRPCTransportError.closed
+      }
+      pid = child
+      sessions[id]?.voicePID = pid
+    }
+    guard connected, sessions[id] != nil else {
+      await runtime.supervisor.stop(pid, reason: "Chat closed")
+      throw JSONRPCTransportError.closed
+    }
+    let contextCount = request.messages.count
+    request.messages += sessions[id]?.voiceHistory ?? []
+    request.messages.append(.user(text))
+    guard sessions[id]?.voiceCancelled == false else { throw CancellationError() }
+    let scope = AgentExecutionScope(sessionID: id, workingDirectory: saved.workingDirectory)
+    let voiceRequest = request
+    let task = Task { [weak self, runtime] in
+      try await AgentExecutionScope.$current.withValue(scope) {
+        try await runtime.run(voiceRequest, process: pid) { [weak self] event in
+          if case .provider(let context, .textDelta(let delta)) = event, context.pid == pid {
+            await self?.sendUpdate(session: id, update: .object([
+              "sessionUpdate": .string("_pmai/voice"), "turnId": .string(turnID), "text": .string(delta),
+            ]))
+          }
+        }
+      }
+    }
+    sessions[id]?.children[pid] = task
+    await runtime.supervisor.attach(task, to: pid)
+    defer { sessions[id]?.children[pid] = nil }
+    do {
+      let result = try await task.value
+      sessions[id]?.voiceHistory = Array(result.transcript.dropFirst(contextCount))
+      try await checkpointAgents(id)
+      return .object(["text": .string(result.response.text), "pid": .integer(pid.rawValue)])
+    } catch {
+      // Retain interrupted voice turns in the same subagent store as the CLI.
+      let transcript = await runtime.supervisor.transcript(pid)
+      if transcript.count > contextCount {
+        sessions[id]?.voiceHistory = Array(transcript.dropFirst(contextCount))
+      }
+      try? await checkpointAgents(id)
+      throw error
+    }
+  }
+
   private func childEnded(session id: String, pid: AgentPID) async {
     sessions[id]?.children[pid] = nil
     do { try await checkpointAgents(id) }
@@ -1283,7 +1397,8 @@ public actor ACPServer {
   /// Asks the editor to approve a tool call, mapping its answer to a decision.
   /// Called by `ACPPermissionBridge` on the runtime's approval path.
   func requestPermission(_ request: ApprovalRequest, sessionID: String?) async -> ApprovalDecision {
-    guard let peer, let sessionID, sessions[sessionID]?.task != nil, connected else {
+    guard let peer, let sessionID, let session = sessions[sessionID], connected,
+      session.task != nil || !session.children.isEmpty else {
       return .deny(reason: "no ACP client is connected")
     }
     do { try authorize() } catch { return .deny(reason: "Peer authorization was revoked") }
@@ -1313,6 +1428,9 @@ public actor ACPServer {
     ])
     let params: JSONValue = .object([
       "sessionId": .string(sessionID), "toolCall": toolCall, "options": options,
+      "_meta": .object(["pmai": .object([
+        "voiceTurnId": request.run.pid == session.voicePID ? session.voiceTurnID.map(JSONValue.string) ?? .null : .null,
+      ])]),
     ])
     guard
       let outcome = try? await peer.request(

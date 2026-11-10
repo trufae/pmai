@@ -57,11 +57,17 @@ final class MacConversation: Identifiable {
   var permission: JSONValue?
   var canRewind = false
   var canManageAgents = false
+  var canUseVoiceAgent = false
   var client: (any RemoteSessionClient)?
   var didChange: (() -> Void)?
   private var operation: Task<Void, Never>?
   private var closing = false
-  private var permissionReply: CheckedContinuation<String?, Never>?
+  private struct PermissionRequest {
+    let id: UUID
+    let value: JSONValue
+    let reply: CheckedContinuation<String?, Never>
+  }
+  private var permissions: [PermissionRequest] = []
   private var draftKey: String? {
     sessionID.map { "mac.draft.\(hostID?.uuidString ?? "local").\($0)" }
   }
@@ -84,6 +90,7 @@ final class MacConversation: Identifiable {
       self.prompts = try await client.promptCatalog()
       self.canRewind = await client.historyRewindSupported()
       self.canManageAgents = await (client as? ACPClient)?.agentManagementSupported() ?? false
+      self.canUseVoiceAgent = await (client as? ACPClient)?.voiceSupported() ?? false
       self.connected = true
       self.status = "Ready"
       self.didChange?()
@@ -176,6 +183,10 @@ final class MacConversation: Identifiable {
   }
 
   func receive(_ update: JSONValue) {
+    if update.objectValue?["sessionUpdate"]?.stringValue == "_pmai/voice" {
+      voice.receive(update)
+      return
+    }
     ACPConversationTranscript.apply(update, to: &messages)
     if update.objectValue?["sessionUpdate"]?.stringValue == "config_option_update" {
       options = RemoteSessionOption.parse(update.objectValue?["configOptions"])
@@ -223,7 +234,7 @@ final class MacConversation: Identifiable {
 
   func stop() {
     voice.stop()
-    answerPermission(nil)
+    dismissPermissions()
     // The protocol cancellation lets the host save its interrupted transcript
     // before the prompt returns. Closing the transport would lose that result.
     Task { await client?.cancel() }
@@ -234,7 +245,7 @@ final class MacConversation: Identifiable {
     voice.stop()
     stopWebXDC()
     defer { closing = false }
-    answerPermission(nil)
+    dismissPermissions()
     let client = client
     // Give the host a bounded opportunity to checkpoint interrupted work.
     // A broken transport must never hold up application termination forever.
@@ -259,23 +270,47 @@ final class MacConversation: Identifiable {
     voice.stop()
     connected = false
     status = "Disconnected"
-    answerPermission(nil)
+    dismissPermissions()
   }
 
   func askPermission(_ value: JSONValue) async -> String? {
-    await withTaskCancellationHandler {
+    if let turn = value.objectValue?["_meta"]?.objectValue?["pmai"]?.objectValue?["voiceTurnId"]?.stringValue,
+      !voice.acceptsPermission(turn) { return nil }
+    let id = UUID()
+    return await withTaskCancellationHandler {
       await withCheckedContinuation { continuation in
-        answerPermission(nil)
-        permission = value
-        permissionReply = continuation
+        guard !closing, !Task.isCancelled else { continuation.resume(returning: nil); return }
+        permissions.append(.init(id: id, value: value, reply: continuation))
+        permission = permissions.first?.value
       }
-    } onCancel: { Task { @MainActor [weak self] in self?.answerPermission(nil) } }
+    } onCancel: { Task { @MainActor [weak self] in self?.cancelPermission(id) } }
   }
 
   func answerPermission(_ option: String?) {
+    guard !permissions.isEmpty else { return }
+    let request = permissions.removeFirst()
+    permission = permissions.first?.value
+    request.reply.resume(returning: option)
+  }
+
+  private func cancelPermission(_ id: UUID) {
+    guard let index = permissions.firstIndex(where: { $0.id == id }) else { return }
+    let request = permissions.remove(at: index)
+    permission = permissions.first?.value
+    request.reply.resume(returning: nil)
+  }
+
+  func dismissVoicePermissions(_ turnID: UUID) {
+    let ids = permissions.filter {
+      $0.value.objectValue?["_meta"]?.objectValue?["pmai"]?.objectValue?["voiceTurnId"]?.stringValue == turnID.uuidString
+    }.map(\.id)
+    for id in ids { cancelPermission(id) }
+  }
+
+  private func dismissPermissions() {
+    let pending = permissions
+    permissions = []
     permission = nil
-    let reply = permissionReply
-    permissionReply = nil
-    reply?.resume(returning: option)
+    for request in pending { request.reply.resume(returning: nil) }
   }
 }

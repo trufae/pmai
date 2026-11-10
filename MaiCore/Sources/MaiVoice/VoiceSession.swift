@@ -16,6 +16,7 @@ import MaiCore
   private let output: any VoiceOutputProvider
   private let changed: @Sendable (String?) -> Void
   private let submit: @Sendable (UUID, String) -> Void
+  private let submitEmptyCaptures: Bool
   private var captureTask: Task<Void, Never>?
   private var timer: Task<Void, Never>?
   private var animation: Task<Void, Never>?
@@ -38,7 +39,8 @@ import MaiCore
   public init(
     settings: ConfiguredVoice, input: any VoiceInputProvider,
     output: any VoiceOutputProvider, changed: @escaping @Sendable (String?) -> Void,
-    submit: @escaping @Sendable (UUID, String) -> Void
+    submit: @escaping @Sendable (UUID, String) -> Void,
+    submitEmptyCaptures: Bool = false
   ) {
     self.settings = settings
     self.mode = settings.mode
@@ -46,6 +48,7 @@ import MaiCore
     self.output = output
     self.changed = changed
     self.submit = submit
+    self.submitEmptyCaptures = submitEmptyCaptures
   }
 
   public func start() {
@@ -156,7 +159,7 @@ import MaiCore
         let text = try await input.finish().trimmingCharacters(in: .whitespacesAndNewlines)
         try Task.checkCancellation()
         guard generation == self.generation else { return }
-        guard !text.isEmpty else {
+        guard !text.isEmpty || submitEmptyCaptures else {
           // Silence and empty recognition are idle capture, not a failed turn.
           // Pace restarts for backends that immediately return an empty result.
           try await Task.sleep(for: .milliseconds(250))

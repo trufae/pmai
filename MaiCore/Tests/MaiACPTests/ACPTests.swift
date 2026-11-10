@@ -1436,3 +1436,147 @@ private actor ACPSettingsProvider: ChatProvider {
     return ProviderResponse(message: .assistant("configured"))
   }
 }
+
+private actor ACPVoiceKeyboardProvider: ChatProvider {
+  nonisolated let descriptor = ProviderDescriptor(id: "voice-keyboard", displayName: "Voice fixture", capabilities: [.streaming, .nativeToolCalling])
+  nonisolated let changes = AgentChangeSignal()
+  var requests: [ProviderRequest] = []
+  var released: Set<String> = []
+  func release(_ text: String) { released.insert(text); changes.notify() }
+  func started(_ text: String) -> Bool { requests.contains { $0.messages.last?.text == text } }
+  func complete(_ request: ProviderRequest, emit: @escaping ProviderEventHandler) async throws -> ProviderResponse {
+    requests.append(request)
+    changes.notify()
+    let text = request.messages.last?.text ?? ""
+    if text == "keyboard task" || text == "cancel this voice turn" {
+      while !released.contains(text) {
+        let revision = changes.revision
+        try await changes.wait(after: revision)
+      }
+    }
+    let answer = "Reply to \(text)."
+    await emit(.textDelta(answer))
+    return .init(message: .assistant(answer), stopReason: .stop)
+  }
+  func waitFor(_ text: String) async throws {
+    let deadline = ContinuousClock.now + .seconds(30)
+    while !started(text) {
+      let revision = changes.revision
+      try #require(ContinuousClock.now < deadline, "Provider did not receive \(text)")
+      try await changes.wait(after: revision, until: deadline)
+    }
+  }
+}
+
+@Test("Voice converses alongside keyboard work, keeps its history, and cancels independently", .timeLimit(.minutes(1)))
+func acpVoiceAndKeyboard() async throws {
+  let directory = FileManager.default.temporaryDirectory.appendingPathComponent("acp-voice-\(UUID())")
+  defer { try? FileManager.default.removeItem(at: directory) }
+  let provider = ACPVoiceKeyboardProvider()
+  let runtime = AgentRuntime()
+  try await runtime.register(provider)
+  let agent = AgentDefinition(id: "main", instructions: "", provider: "voice-keyboard", model: "fixture")
+  let (transport, worker) = PipeTransport.pair()
+  let server = ACPServer(runtime: runtime, agent: agent, bridge: ACPPermissionBridge(), sessionDirectory: directory)
+  let serving = Task { await server.serve(on: worker) }
+  let chunks = ChunkRecorder()
+  let peer = JSONRPCPeer(transport: transport, onNotification: { _, params in
+    let update = params?.objectValue?["update"]?.objectValue
+    if update?["sessionUpdate"]?.stringValue == "_pmai/voice", let text = update?["text"]?.stringValue {
+      await chunks.append(text)
+    }
+  })
+  await peer.start()
+  do {
+    let initialized = try await peer.request("initialize", params: .object(["protocolVersion": .integer(1)]), timeout: 30)
+    #expect(initialized.objectValue?["agentCapabilities"]?.objectValue?["_meta"]?.objectValue?["pmai"]?.objectValue?["voice"] == .integer(1))
+    let created = try await peer.request("session/new", params: .object(["cwd": .string("/tmp")]), timeout: 30)
+    let id = try #require(created.objectValue?["sessionId"]?.stringValue)
+    let keyboard = Task {
+      try await peer.request("session/prompt", params: .object([
+        "sessionId": .string(id), "prompt": .array([ACP.ContentBlock.text("keyboard task").json]),
+      ]), timeout: 30)
+    }
+    defer { keyboard.cancel() }
+    try await provider.waitFor("keyboard task")
+    func voice(_ text: String, token: UUID = UUID()) async throws -> JSONValue {
+      try await peer.request("_pmai/session/voice", params: .object([
+        "sessionId": .string(id), "turnId": .string(token.uuidString),
+        "text": .string(text), "language": .string("en-US"),
+      ]), timeout: 30)
+    }
+    let first = try await voice("first spoken question")
+    let second = try await voice("second spoken question")
+    #expect(first.objectValue?["pid"] == second.objectValue?["pid"])
+    #expect(second.objectValue?["text"]?.stringValue == "Reply to second spoken question.")
+    #expect(await chunks.joined.contains("Reply to first spoken question."))
+    let requests = await provider.requests
+    let secondRequest = try #require(requests.last)
+    #expect(secondRequest.messages.contains { $0.text == "first spoken question" })
+    #expect(secondRequest.messages.contains { $0.text == VoicePrompt.instructions })
+    #expect(secondRequest.tools.contains { $0.name == "voice_agents" })
+    let token = UUID()
+    let cancelled = Task { try await voice("cancel this voice turn", token: token) }
+    try await provider.waitFor("cancel this voice turn")
+    try peer.notify("_pmai/session/voice/cancel", params: .object([
+      "sessionId": .string(id), "turnId": .string(token.uuidString),
+    ]))
+    await #expect(throws: (any Error).self) { _ = try await cancelled.value }
+    // A successful keyboard result proves voice cancellation did not cancel its sibling.
+    await provider.release("keyboard task")
+    #expect(try await keyboard.value.objectValue?["stopReason"]?.stringValue == "end_turn")
+    let result = try await peer.request("_pmai/session/agents", params: .object(["sessionId": .string(id)]), timeout: 30)
+    let records = try JSONDecoder().decode([AgentProcessRecord].self, from: JSONEncoder().encode(result))
+    #expect(records.count == 1)
+    #expect(records.first?.messages.contains { $0.text == "first spoken question" } == true)
+    await peer.close()
+    await serving.value
+  } catch {
+    await peer.close()
+    await serving.value
+    throw error
+  }
+}
+
+@Test("Voice tool approvals work when the keyboard agent is idle", .timeLimit(.minutes(1)))
+func acpVoiceToolApproval() async throws {
+  let bridge = ACPPermissionBridge()
+  let runtime = AgentRuntime(approvalHandler: bridge.approvalHandler)
+  let call = ToolCall(id: "voice-check", name: "check", arguments: .object([:]))
+  try await runtime.register(ACPScriptedProvider(responses: [
+    .init(message: .init(role: .assistant, content: [.toolCall(call)]), stopReason: .toolCall),
+    .init(message: .assistant("Approved voice action."), stopReason: .stop),
+  ]))
+  try await runtime.register(tool: ClosureTool(definition: .init(
+    name: "check", description: "Check approval", parameters: [],
+    annotations: .init(approval: .confirm))) { _, _ in ToolOutput(text: "allowed") })
+  let agent = AgentDefinition(id: "main", instructions: "", provider: "scripted", model: "fixture", toolNames: ["check"])
+  let (transport, worker) = PipeTransport.pair()
+  let server = ACPServer(runtime: runtime, agent: agent, bridge: bridge)
+  let serving = Task { await server.serve(on: worker) }
+  let permissions = ChunkRecorder()
+  let turn = UUID()
+  let peer = JSONRPCPeer(transport: transport, onRequest: { method, params in
+    #expect(method == ACP.Method.requestPermission)
+    #expect(params?.objectValue?["_meta"]?.objectValue?["pmai"]?.objectValue?["voiceTurnId"]?.stringValue == turn.uuidString)
+    await permissions.append("requested")
+    return .object(["outcome": .object(["outcome": .string("selected"), "optionId": .string("allow_once")])])
+  })
+  await peer.start()
+  do {
+    _ = try await peer.request("initialize", params: .object(["protocolVersion": .integer(1)]), timeout: 30)
+    let created = try await peer.request("session/new", params: .object(["cwd": .string("/tmp")]), timeout: 30)
+    let id = try #require(created.objectValue?["sessionId"]?.stringValue)
+    let reply = try await peer.request("_pmai/session/voice", params: .object([
+      "sessionId": .string(id), "turnId": .string(turn.uuidString), "text": .string("Run the check"),
+    ]), timeout: 30)
+    #expect(reply.objectValue?["text"]?.stringValue == "Approved voice action.")
+    #expect(await permissions.joined == "requested")
+    await peer.close()
+    await serving.value
+  } catch {
+    await peer.close()
+    await serving.value
+    throw error
+  }
+}

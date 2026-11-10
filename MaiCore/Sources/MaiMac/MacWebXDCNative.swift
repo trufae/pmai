@@ -201,7 +201,8 @@ private struct WebXDCNativeError: LocalizedError {
             guard let self, let session = self.session else { return }
             changed(session.transcript)
             if let error = session.error { self.finish(.failure(WebXDCNativeError(error))) }
-          } }, submit: { [weak self] _, text in Task { @MainActor in self?.finish(.success(text)) } })
+          } }, submit: { [weak self] _, text in Task { @MainActor in self?.finish(.success(text)) } },
+          submitEmptyCaptures: true)
         session?.start()
       }
     } onCancel: { Task { @MainActor [weak self] in self?.stop() } }

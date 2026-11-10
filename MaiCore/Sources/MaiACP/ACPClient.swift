@@ -98,6 +98,7 @@ public actor ACPClient {
   private var supportsYolo = false
   private var supportsInjection = false
   private var supportsAgents = false
+  private var supportsVoice = false
   private var supportsPromptImages = false
   private var supportsHistoryRewind = false
   private var busy = false
@@ -602,6 +603,27 @@ public actor ACPClient {
     return try JSONDecoder().decode([AgentProcessRecord].self, from: JSONEncoder().encode(result))
   }
 
+  public func voiceSupported() -> Bool { supportsVoice }
+
+  public func voicePrompt(_ text: String, turnID: UUID, language: String) async throws -> String {
+    guard supportsVoice, sessionLoaded, let sessionID, let peer else {
+      throw JSONRPCError.invalidParams("Update the pmai host to use a separate voice agent")
+    }
+    return try await withTaskCancellationHandler {
+      try Task.checkCancellation()
+      let result = try await peer.request("_pmai/session/voice", params: .object([
+        "sessionId": .string(sessionID), "turnId": .string(turnID.uuidString),
+        "text": .string(text), "language": .string(language),
+      ]), timeout: configuration.promptTimeout)
+      return result.objectValue?["text"]?.stringValue ?? ""
+    } onCancel: { Task { await self.cancelVoice(turnID: turnID) } }
+  }
+
+  public func cancelVoice(turnID: UUID) async {
+    guard let peer, let sessionID else { return }
+    try? peer.notify("_pmai/session/voice/cancel", params: .object(["sessionId": .string(sessionID), "turnId": .string(turnID.uuidString)]))
+  }
+
   public func cancel() async {
     guard let peer, let sessionID else { return }
     try? peer.notify(ACP.Method.sessionCancel, params: .object(["sessionId": .string(sessionID)]))
@@ -626,6 +648,7 @@ public actor ACPClient {
     supportsYolo = false
     supportsHistoryRewind = false
     supportsAgents = false
+    supportsVoice = false
     supportsPromptImages = false
     let tunnel = forwirohTunnel
     forwirohTunnel = nil
@@ -779,6 +802,7 @@ public actor ACPClient {
         .objectValue?["pmai"]?.objectValue
       supportsInjection = pmaiCapabilities?["injection"]?.intValue == 1
       supportsAgents = pmaiCapabilities?["agents"]?.intValue == 1
+      supportsVoice = pmaiCapabilities?["voice"]?.intValue == 1
       supportsPromptImages = initialized.objectValue?["agentCapabilities"]?.objectValue?["promptCapabilities"]?
         .objectValue?["image"]?.boolValue == true
       supportsFiles = pmaiCapabilities?["workspaceFiles"]?.intValue == 1

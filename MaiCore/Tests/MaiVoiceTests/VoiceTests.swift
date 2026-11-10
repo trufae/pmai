@@ -83,6 +83,23 @@ private final class TestSubmissions: @unchecked Sendable {
 }
 
 extension VoiceTests {
+  @MainActor func testOneShotListeningCompletesAnEmptyCapture() async throws {
+    // A webxdc listen() promise must finish on silence instead of restarting forever.
+    let input = TestInput()
+    input.text = ""
+    let submitted = expectation(description: "Empty recording returned to the caller")
+    let session = VoiceSession(settings: .init(), input: input, output: TestOutput(),
+      changed: { _ in }, submit: { _, text in
+        XCTAssertEqual(text, "")
+        submitted.fulfill()
+      }, submitEmptyCaptures: true)
+    defer { session.stop() }
+    session.start()
+    try await waitFor { session.state == .listening }
+    session.send()
+    await fulfillment(of: [submitted], timeout: 10)
+  }
+
   @MainActor private func waitFor(
     _ condition: () -> Bool, file: StaticString = #filePath, line: UInt = #line
   ) async throws {
