@@ -107,7 +107,10 @@ def main(binary):
                         scrollbar.pop(row, None)
                         scrollbar_spans.pop(row, None)
                     match = re.search(r'\x1b\[([0-9;]+)m( +)\x1b\[0m', content)
-                    if match and (column > 1 or row < rows - 1):
+                    # A left gutter moves straight to its adjacent content.
+                    if match and ((column > 1 and not CSI.sub('', content).strip()
+                            and scrollbar_spans.get(row, (0, 0))[0] != 1) or (index + 1 < len(moves) and
+                            tuple(map(int, moves[index + 1].groups())) == (row, len(match[2]) + 1))):
                         scrollbar[row] = match[1]
                         scrollbar_spans[row] = (column, len(match[2]))
                     if column == 1 and '\x1b[2K' in content:
@@ -249,6 +252,16 @@ def main(binary):
                 chunks.put({'reasoning_content': ''.join(f'THOUGHT_{i:02d}\n' for i in range(40))})
                 wait_for('THOUGHT_39')
                 assert 'THOUGHT_' not in bottom(), screen
+                assert not scrollbar_spans, scrollbar_spans
+                send('\t')
+                wait_for('view focused')
+                send('g')
+                wait_for('view: thinking · 0%')
+                assert 'THOUGHT_00' in top(), screen
+                send('G')
+                wait_for('THOUGHT_39')
+                send('\t')
+                wait_for('Tab on empty prompt to focus')
                 for mode in ('three', 'status', 'full'):
                     send(f'/set ui.thinking {mode}\r')
                     wait_for(f'Set ui.thinking = {mode}.')
@@ -373,7 +386,13 @@ def main(binary):
                 assert not summary_request.get('tools'), summary_request
                 send('/view tools\r')
                 wait_for('── view: tools')
+                # Command bubbles can push the completed reasoning above the
+                # chat viewport; page back before checking it is restored.
+                send('\x1b[5~')
+                wait_for('FOLLOWED_THOUGHT')
                 assert 'FOLLOWED_THOUGHT' in bottom(), screen
+                send('\x1b[62;6u')
+                wait_for('/view tools')
                 send('/view thinking\r')
                 wait_for('── view: thinking')
                 assert 'FOLLOWED_THOUGHT' not in bottom(), screen

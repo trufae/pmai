@@ -538,10 +538,13 @@ and task/activity details. The heading counts active, waiting, and finished jobs
 Narrow panes use two lines per job. Scrolling stays anchored during updates;
 Tab focuses the view and Enter expands it to fullscreen. `/view off` closes it.
 
-Each pane (and the chat alone when the view is closed) shows a scrollbar on the
-right only when its wrapped content exceeds its height. `/set ui.scrollbar N`
-sets its width in characters: `0` hides it, `1` is the default, `2` uses two
-columns, and negative values place it on the left (`-1` uses one column).
+While browsing history, the status bar shows the scroll position as a percentage:
+`0%` is the beginning and `100%` is the latest output. The indicator disappears
+when following new output. A scrolled view shows its percentage in its separator.
+Scrollbars are hidden by default to avoid gutter layout and rendering work.
+`/set ui.scrollbar N` enables a scrollbar when content exceeds the pane height
+and sets its width in characters: `0` hides it (the default), `1` uses one column,
+`2` uses two columns, and negative values place it on the left (`-1` uses one column).
 The setting is saved and applies immediately to both panes.
 The width is clamped to leave at least one content column in narrow terminals;
 when hidden, the content uses the full width. Background-colored spaces use the

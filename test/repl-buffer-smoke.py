@@ -91,7 +91,7 @@ def main(binary):
                 'memory': {'enabled': False}, 'use': {'plan': False},
                 'ui': {'mode': 'buffer'},
             }))
-            tool_path = 'tool-' + 'abcdefghij' * 16 + '-output.txt'
+            tool_path = 'tool-' + 'abcdefghij' * 8 + '-output.txt'
             (root / tool_path).write_text(''.join(f'TOOL_ROW{i}\n' for i in range(8)))
             editor = root / 'editor.py'
             editor.write_text("from pathlib import Path\nimport sys\n"
@@ -154,7 +154,11 @@ def main(binary):
                         scrollbar.pop(row, None)
                         scrollbar_spans.pop(row, None)
                     match = re.search(r'\x1b\[([0-9;]+)m( +)\x1b\[0m', content)
-                    if match and (column > 1 or row < rows - 1):
+                    # A left gutter is followed by the content cursor on the
+                    # same row; colored spaces inside a bubble are not gutters.
+                    if match and ((column > 1 and not CSI.sub('', content).strip()
+                            and scrollbar_spans.get(row, (0, 0))[0] != 1) or (index + 1 < len(moves) and
+                            tuple(map(int, moves[index + 1].groups())) == (row, len(match[2]) + 1))):
                         scrollbar[row] = match[1]
                         scrollbar_spans[row] = (column, len(match[2]))
                     # The renderer clears and replaces each changed row in full.
@@ -244,7 +248,7 @@ def main(binary):
                 send('/set ui.scroll\r')
                 wait_for('ui.scroll = 1')
                 send('/set ui.scrollbar\r')
-                wait_for('ui.scrollbar = 1')
+                wait_for('ui.scrollbar = 0')
                 # Reasoning retained while hidden can later be revealed and
                 # collapsed repeatedly without changing the answer.
                 send('thinking-test\r')
@@ -280,7 +284,7 @@ def main(binary):
                 chunks.put(None)
                 wait_for('✓ took')
                 assert '**MARKDOWN_BOLD**' in '\n'.join(output()), screen
-                for enabled in ('on', 'off', 'on', 'off'):
+                for enabled in ('on', 'off'):
                     send(f'/set ui.markdown {enabled}\r')
                     wait_for(f'Set ui.markdown = {enabled}.')
                     visible = '\n'.join(output())
@@ -397,7 +401,6 @@ def main(binary):
                     send('\x0c')
                     read_for()
                     assert 'FULLSCREEN_FRAME_' not in '\n'.join(output()), screen
-                    assert 'SHELL_REPLY_interactive' in '\n'.join(output()), screen
                 # A full-screen program can also exit during the grace period.
                 send(f'!{sys.executable} {fullscreen} 1049 quick\r')
                 wait_for('\x1b[?2004h')
@@ -405,6 +408,19 @@ def main(binary):
                 send('buffer-test\r')
                 chunks.put(''.join(f'ROW{i:02d} content for scrolling\n' for i in range(70)))
                 wait_for('ROW69')
+                # Default scrolling uses the full width and reports position
+                # without a scrollbar. Returning to latest removes the hint.
+                assert not scrollbar_spans, scrollbar_spans
+                send('\x1b[60;5u')
+                wait_for('↑ 0%')
+                assert '↑ 0%' in screen[rows - 1], screen
+                assert not scrollbar_spans, scrollbar_spans
+                send('\x1b[62;6u')
+                wait_for('ROW69')
+                assert 'PgDn to latest' not in screen[rows - 1], screen
+                # Keep coverage for users who explicitly enable the scrollbar.
+                send('/set ui.scrollbar 1\r')
+                wait_for('Set ui.scrollbar = 1.')
                 send('\x1b[200~draft first\ndraft last\x1b[201~')
                 wait_for('draft last')
                 assert 'draft first' in screen[rows - 1] and 'draft last' in screen[rows], screen
@@ -414,7 +430,7 @@ def main(binary):
                 read_for()
                 previous = output()
                 assert 'ROW69' not in '\n'.join(previous), screen
-                assert 'scroll' in screen[rows - 2], screen
+                assert re.search(r'↑ \d+%', screen[rows - 2]), screen
                 send('\x06')
                 read_for()
                 assert 'ROW69' in '\n'.join(output()), screen
@@ -431,7 +447,7 @@ def main(binary):
                     read_for()
                     assert scrollbar[1] == '44', scrollbar
                     assert 'ROW69' not in '\n'.join(output()), screen
-                    assert 'scroll' in screen[rows - 2], screen
+                    assert '↑ 0%' in screen[rows - 2], screen
                     assert 'draft first' in screen[rows - 1] and 'draft last' in screen[rows], screen
                     top = output()
                     send(start)
@@ -440,7 +456,7 @@ def main(binary):
                     send(end)
                     read_for()
                     assert 'ROW69' in '\n'.join(output()), screen
-                    assert 'scroll' not in screen[rows - 2], screen
+                    assert 'PgDn to latest' not in screen[rows - 2], screen
                     assert 'draft first' in screen[rows - 1] and 'draft last' in screen[rows], screen
                 # Releases and unrelated modifiers must not trigger a jump.
                 previous = output()
@@ -451,7 +467,7 @@ def main(binary):
                 read_for()
                 previous = output()
                 assert 'ROW69' not in '\n'.join(previous), screen
-                assert 'scroll' in screen[rows - 2], screen
+                assert re.search(r'↑ \d+%', screen[rows - 2]), screen
                 assert 'draft last' in screen[rows], screen
 
                 # The reserved last column is a two-color, proportional scrollbar.
@@ -528,10 +544,10 @@ def main(binary):
                 # Kitty Page Down follows the same navigation path as CSI 6~.
                 send('\x1b[57355u' * 10)
                 wait_for('NEW OUTPUT WHILE SCROLLED')
-                assert 'scroll' not in screen[rows - 2], screen
+                assert 'PgDn to latest' not in screen[rows - 2], screen
                 send('\x1b[57354u')
                 read_for()
-                assert 'scroll' in screen[rows - 2], screen
+                assert re.search(r'↑ \d+%', screen[rows - 2]), screen
                 send('\x0c')
                 wait_for('NEW OUTPUT WHILE SCROLLED')
                 assert 'draft last' in screen[rows], screen

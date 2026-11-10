@@ -182,12 +182,12 @@ func terminalScrollSetting() throws {
     from: JSONEncoder().encode(configured)) == configured)
 }
 
-@Test("Terminal scrollbars default to one column and persist hidden and wider settings")
+@Test("Terminal scrollbars default to hidden and preserve explicit widths")
 func terminalScrollbarSetting() throws {
   let decoder = JSONDecoder()
-  #expect(ConfiguredTerminalUI().scrollbar == 1)
+  #expect(ConfiguredTerminalUI().scrollbar == 0)
   for json in ["{}", #"{"scrollbar":"bad"}"#] {
-    #expect(try decoder.decode(ConfiguredTerminalUI.self, from: Data(json.utf8)).scrollbar == 1)
+    #expect(try decoder.decode(ConfiguredTerminalUI.self, from: Data(json.utf8)).scrollbar == 0)
   }
   #expect(try decoder.decode(ConfiguredTerminalUI.self,
     from: Data(#"{"scrollbar":-3}"#.utf8)).scrollbar == -3)

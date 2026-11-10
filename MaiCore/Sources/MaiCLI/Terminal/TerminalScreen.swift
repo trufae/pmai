@@ -1653,12 +1653,14 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       return transcript.visibleRows(width: width, height: outputHeight)
     }
     visible += Array(repeating: "", count: max(0, outputHeight - visible.count))
-    let bar = TerminalConversationScope.$id.withValue(nil) {
-      transcript.scrollbar(width: width, height: outputHeight)
-    }
-    visible = visible.enumerated().map { index, text in
-      paneRow(text, row: outputOrigin + index, index: index, column: outputColumn,
-        columns: outputColumns, width: width, bar: bar)
+    if width < outputColumns {
+      let bar = TerminalConversationScope.$id.withValue(nil) {
+        transcript.scrollbar(width: width, height: outputHeight)
+      }
+      visible = visible.enumerated().map { index, text in
+        paneRow(text, row: outputOrigin + index, index: index, column: outputColumn,
+          columns: outputColumns, width: width, bar: bar)
+      }
     }
     var out = ""
     for (index, text) in visible.enumerated() {
@@ -1739,18 +1741,22 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     if let voiceHeader { visible.insert(voiceHeader, at: 0) }
     if visible.isEmpty { visible = [Self.truncated("No matching output yet.", width: width)] }
     visible += Array(repeating: "", count: max(0, height - visible.count))
-    let bar = view!.buffer.scrollbar(width: width, height: contentHeight)
-    visible = visible.enumerated().map { index, text in
-      if index < headerRows { return text }
-      return paneRow(text, row: index + 1, index: index - headerRows, column: viewColumn,
-        columns: viewColumns, width: width, bar: bar)
+    if width < viewColumns {
+      let bar = view!.buffer.scrollbar(width: width, height: contentHeight)
+      visible = visible.enumerated().map { index, text in
+        if index < headerRows { return text }
+        return paneRow(text, row: index + 1, index: index - headerRows, column: viewColumn,
+          columns: viewColumns, width: width, bar: bar)
+      }
     }
     let focused = view?.focused == true
     let focus = focused
       ? "view focused · Space layout · Enter fullscreen · / search · j/k scroll · J/K page · g/G top/bottom · v/V resize · q close · Tab prompt"
       : "Tab on empty prompt to focus"
     let resizeHint = isVerticalView ? "" : " · drag to resize"
-    let label = "── view: \(view?.title ?? "") · \(focus)\(resizeHint) ──"
+    let position = view!.buffer.isFollowing ? ""
+      : " · \(view!.buffer.scrollPercentage(width: width, height: contentHeight))%"
+    let label = "── view: \(view?.title ?? "")\(position) · \(focus)\(resizeHint) ──"
     let separatorWidth = isVerticalView ? viewColumns : columns
     let text = Self.truncated(label, width: separatorWidth)
     let padded = text + String(repeating: " ", count: max(0, separatorWidth - Self.displayWidth(text)))
@@ -1847,7 +1853,12 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     } else {
       timer = ""
     }
-    let scrollHint = ui.mode == .buffer && !transcript.isFollowing ? " ↑ scroll · PgDn to latest · " : ""
+    let scrollHint = TerminalConversationScope.$id.withValue(nil) {
+      guard ui.mode == .buffer, !transcript.isFollowing else { return "" }
+      let percent = transcript.scrollPercentage(
+        width: paneContentWidth(inView: false), height: outputHeight)
+      return " ↑ \(percent)% · PgDn to latest · "
+    }
     let right = Self.truncated(timer, width: width)
     // Keep the activity indicator in the same cell when the scroll hint appears.
     let leftWidth = max(0, width - Self.displayWidth(right))

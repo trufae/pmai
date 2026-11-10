@@ -635,7 +635,7 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
     mode: TerminalOutputMode = .buffer,
     line: TerminalInputLineMode = .multi,
     scroll: Int = 1,
-    scrollbar: Int = 1,
+    scrollbar: Int = 0,
     highlight: String = "",
     backgroundLine: String = "rgb:024",
     foreground: String = "",
@@ -764,7 +764,7 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
       mode: (try? container.decodeIfPresent(TerminalOutputMode.self, forKey: .mode)) ?? .buffer,
       line: (try? container.decodeIfPresent(TerminalInputLineMode.self, forKey: .line)) ?? .multi,
       scroll: (try? container.decodeIfPresent(Int.self, forKey: .scroll)) ?? 1,
-      scrollbar: (try? container.decodeIfPresent(Int.self, forKey: .scrollbar)) ?? 1,
+      scrollbar: (try? container.decodeIfPresent(Int.self, forKey: .scrollbar)) ?? 0,
       highlight: (try? container.decodeIfPresent(String.self, forKey: .highlight)) ?? "",
       backgroundLine: (try? container.decodeIfPresent(String.self, forKey: .backgroundLine))
         ?? "rgb:024",

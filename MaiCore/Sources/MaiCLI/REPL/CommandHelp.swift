@@ -603,7 +603,7 @@ extension MaiCLI {
       /set ui.mode MODE           classic or buffer (default): scroll with Page Up/Down and mouse wheel
       /set ui.scroll N            Lines per mouse-wheel event in buffer mode (default 1)
       /set ui.highlight WORD      Highlight literal matches; none clears (also /highlight WORD)
-      /set ui.scrollbar N         Scrollbar width: positive right, negative left, 0 hidden (default 1)
+      /set ui.scrollbar N         Scrollbar width: positive right, negative left, 0 hidden (default 0)
       /set ui.editor COMMAND       Editor /edit opens (`none` falls back to $EDITOR, $VISUAL, vim)
       /set ui.markdown BOOL        Render replies as styled markdown (on/off)
                                    Buffer mode also redraws earlier replies with this setting

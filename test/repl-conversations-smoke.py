@@ -139,7 +139,7 @@ def main(binary):
                 send('\x1b1')
                 read_for()
                 assert output() == anchor, screen
-                assert '↑ scroll' in screen[25], screen
+                assert re.search(r'↑ \d+%', screen[25]), screen
                 send('\x1b[6~')
                 read_for()
                 send('/fork --empty Second child\r')

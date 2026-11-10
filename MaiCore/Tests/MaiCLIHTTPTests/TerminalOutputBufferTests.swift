@@ -28,23 +28,42 @@ func terminalBufferReflow() {
 func terminalBufferScroll() {
   var buffer = TerminalOutputBuffer()
   buffer.append((0..<30).map { "line \($0)" }.joined(separator: "\n"))
+  #expect(buffer.scrollPercentage(width: 40, height: 5) == 100)
   #expect(buffer.visibleRows(width: 40, height: 5).first == "line 25")
   buffer.scroll(lines: -10, width: 40, height: 5)
   let history = buffer.visibleRows(width: 40, height: 5)
   #expect(history.first == "line 15")
+  #expect(buffer.scrollPercentage(width: 40, height: 5) == 60)
   buffer.append("\nnew output\nmore output")
   #expect(!buffer.isFollowing)
   #expect(buffer.visibleRows(width: 40, height: 5) == history)
+  #expect(buffer.scrollPercentage(width: 40, height: 5) == 55)
   // The logical anchor survives a width change, including long wrapped lines.
   #expect(buffer.visibleRows(width: 4, height: 5).first == "line")
   #expect(buffer.visibleRows(width: 40, height: 5) == history)
   buffer.scroll(lines: 1000, width: 40, height: 5)
   #expect(buffer.isFollowing)
+  #expect(buffer.scrollPercentage(width: 40, height: 5) == 100)
   #expect(buffer.visibleRows(width: 40, height: 5).last == "more output")
   buffer.scroll(lines: -1000, width: 40, height: 5)
   #expect(buffer.visibleRows(width: 40, height: 5).first == "line 0")
+  #expect(buffer.scrollPercentage(width: 40, height: 5) == 0)
   buffer.follow()
   #expect(buffer.visibleRows(width: 40, height: 5).last == "more output")
+}
+
+@Test("Scroll percentages use wrapped rows after reflow and handle empty buffers")
+func terminalBufferScrollPercentageReflow() {
+  var buffer = TerminalOutputBuffer()
+  #expect(buffer.scrollPercentage(width: 10, height: 2) == 100)
+  buffer.append("abcdefghij\nklmnopqrst\nuvwxyzabcd\nefghijklmn")
+  buffer.scroll(to: 1, width: 10, height: 2)
+  #expect(buffer.scrollPercentage(width: 10, height: 2) == 50)
+  #expect(buffer.scrollPercentage(width: 5, height: 2) == 33)
+  #expect(buffer.scrollPercentage(width: 10, height: 2) == 50)
+  #expect(buffer.scrollPercentage(width: 10, height: 20) == 100)
+  buffer.clear()
+  #expect(buffer.scrollPercentage(width: 10, height: 2) == 100)
 }
 
 @Test("User bubbles retain multiline Unicode text within the pane after resizing")

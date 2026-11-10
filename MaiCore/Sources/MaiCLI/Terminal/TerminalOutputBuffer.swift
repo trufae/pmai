@@ -887,6 +887,18 @@ struct TerminalOutputBuffer {
     return rows[offset - rowOffsets[lower]].position
   }
 
+  /// Position within the scrollable rows, from the beginning (0) to latest (100).
+  mutating func scrollPercentage(width: Int, height: Int) -> Int {
+    // Following output needs only the visible tail, never a full-history count.
+    guard !isFollowing else { return 100 }
+    let width = max(1, width)
+    updateRowCounts(width: width)
+    let bottom = max(0, totalRowCount - max(1, height))
+    guard bottom > 0 else { return 100 }
+    let offset = scrollOffset(width: width, bottom: bottom)
+    return Int(Double(offset) / Double(bottom) * 100)
+  }
+
   mutating func scrollbar(width: Int, height: Int) -> TerminalScrollbar {
     let width = max(1, width)
     let height = max(1, height)
