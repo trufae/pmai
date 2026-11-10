@@ -5,15 +5,31 @@ public struct RemotePromptRequest: Sendable {
   public var text: String
   public var command: String?
   public var skillID: String?
+  public var attachments: [ContentPart]
 
-  public init(text: String, command: String? = nil, skillID: String? = nil) {
+  public init(text: String, command: String? = nil, skillID: String? = nil, attachments: [ContentPart] = []) {
     self.text = text
     self.command = command
     self.skillID = skillID
+    self.attachments = attachments
   }
 
   public var draft: String {
     command.map { "/" + $0 + (text.isEmpty ? "" : " " + text) } ?? text
+  }
+
+  /// Text-only hosts must reject unsupported parts instead of silently losing them.
+  public func textIncludingAttachments() throws -> String {
+    var parts = [text]
+    for attachment in attachments {
+      switch attachment {
+      case .text(let text): parts.append(text)
+      case .file(let file) where file.text != nil:
+        parts.append("Attached file: \(file.name)\n\(file.text!)")
+      default: throw JSONRPCError.invalidParams("This host does not support this attachment type.")
+      }
+    }
+    return parts.filter { !$0.isEmpty }.joined(separator: "\n\n")
   }
 }
 
@@ -67,7 +83,9 @@ extension RemoteSessionClient {
   public func promptCatalog() async throws -> PromptCatalog { PromptCatalog(builtins: []) }
   public func prompt(_ request: RemotePromptRequest,
     emit: @escaping @Sendable (ProviderEvent) async -> Void) async throws -> ProviderStopReason {
-    try await prompt(request.draft, emit: emit)
+    var request = request
+    request.text = try request.textIncludingAttachments()
+    return try await prompt(request.draft, emit: emit)
   }
   public var supportsHistoryRewind: Bool { false }
   public func injectionSupported() async -> Bool { false }

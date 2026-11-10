@@ -413,13 +413,14 @@ public actor OpenCodeClient: RemoteSessionClient {
     guard isConnected, !prompting, !observing, !configuring, let id = sessionID else {
       throw JSONRPCError.invalidParams("Connect to an idle OpenCode session first.")
     }
+    let text = try request.textIncludingAttachments()
     prompting = true
     defer { prompting = false }
     let completedHistory: [JSONValue]
     do {
       // Admission returns before execution finishes. Never resend this POST on a
       // network failure: the server may already have accepted and run the prompt.
-      var body: [String: JSONValue] = ["text": .string(request.text)]
+      var body: [String: JSONValue] = ["text": .string(text)]
       if let command = request.command { body["name"] = .string(command) }
       if let skillID = request.skillID {
         body["skills"] = .array([.object(["id": .string(skillID)])])

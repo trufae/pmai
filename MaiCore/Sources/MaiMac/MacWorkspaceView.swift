@@ -2,6 +2,7 @@ import AppKit
 import MaiACP
 import MaiCore
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct MacWorkspaceView: View {
   @Bindable var workspace: MacWorkspace
@@ -198,37 +199,84 @@ struct MacChatView: View {
   }
 
   private var composer: some View {
-    HStack(alignment: .bottom, spacing: 12) {
-      MacComposer(text: $conversation.draft, prompts: conversation.prompts) { conversation.send(); followsBottom = true }
-        .id(conversation.id)
-        .zIndex(1)
-        .overlay(alignment: .topLeading) {
-          if conversation.draft.isEmpty {
-            Text("Message pmai…").font(typography.font()).foregroundStyle(.tertiary)
-              .padding(.top, 6).allowsHitTesting(false)
+    VStack(alignment: .leading, spacing: 8) {
+      if conversation.importingAttachments {
+        ProgressView("Preparing attachments…").controlSize(.small)
+      }
+      if !conversation.attachments.isEmpty {
+        ScrollView(.horizontal) {
+          HStack(spacing: 8) {
+            ForEach(conversation.attachments) { attachment in
+              HStack(spacing: 6) {
+                Label(attachment.name, systemImage: attachment.symbol).lineLimit(1)
+                Button {
+                  conversation.attachments.removeAll { $0.id == attachment.id }
+                } label: { Image(systemName: "xmark") }
+                  .buttonStyle(.plain).help("Remove \(attachment.name)")
+                  .accessibilityLabel("Remove \(attachment.name)")
+              }
+              .font(typography.font(.caption1)).padding(8)
+              .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+            }
           }
         }
-      Group {
-        if conversation.busy {
-          Button(action: conversation.stop) { Label("Stop", systemImage: "stop.fill") }
-            .help("Stop response (⌘.)")
-        } else {
-          Button { conversation.send(); followsBottom = true } label: { Label("Send", systemImage: "arrow.up") }
-            .keyboardShortcut(.return, modifiers: .command)
-            .disabled(!conversation.connected || conversation.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            .help("Return sends. Shift-Return adds a new line.")
-        }
       }
-      .labelStyle(.iconOnly)
-      .buttonStyle(.borderedProminent)
-      .buttonBorderShape(.circle)
-      .controlSize(.regular)
+      HStack(alignment: .center, spacing: 12) {
+        Menu {
+          Button("Images…", systemImage: "photo") { chooseAttachments(images: true) }
+          Button("Documents and Files…", systemImage: "doc") { chooseAttachments() }
+          Button("Folder…", systemImage: "folder") { chooseAttachments(folders: true) }
+            .disabled(conversation.hostID != nil)
+        } label: {
+          Image(systemName: "plus").frame(width: 28, height: 28)
+        }
+        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+        .disabled(conversation.importingAttachments)
+        .help("Attach images, documents, files, or folders").accessibilityLabel("Add attachments")
+        MacComposer(text: $conversation.draft, prompts: conversation.prompts) { conversation.send(); followsBottom = true }
+          .id(conversation.id)
+          .zIndex(1)
+          .overlay(alignment: .topLeading) {
+            if conversation.draft.isEmpty {
+              Text("Message pmai…").font(typography.font()).foregroundStyle(.tertiary)
+                .padding(.top, 6).allowsHitTesting(false)
+            }
+          }
+        Group {
+          if conversation.busy {
+            Button(action: conversation.stop) { Label("Stop", systemImage: "stop.fill") }
+              .help("Stop response (⌘.)")
+          } else {
+            Button { conversation.send(); followsBottom = true } label: { Label("Send", systemImage: "arrow.up") }
+              .keyboardShortcut(.return, modifiers: .command)
+              .disabled(!conversation.canSend)
+              .help("Return sends. Shift-Return adds a new line.")
+          }
+        }
+        .labelStyle(.iconOnly)
+        .buttonStyle(.borderedProminent)
+        .buttonBorderShape(.circle)
+        .controlSize(.regular)
+      }
     }
-    .padding(.leading, 16).padding(.trailing, 8).padding(.vertical, 8)
+    .padding(.leading, 12).padding(.trailing, 8).padding(.vertical, 8)
     .background { composerBackground }
     .frame(maxWidth: 860)
     .padding(.horizontal, 28).padding(.top, 10).padding(.bottom, 14)
     .frame(maxWidth: .infinity)
+  }
+
+  private func chooseAttachments(images: Bool = false, folders: Bool = false) {
+    let panel = NSOpenPanel()
+    panel.title = folders ? "Attach Folders" : images ? "Attach Images" : "Attach Documents and Files"
+    panel.prompt = "Attach"
+    panel.canChooseFiles = !folders
+    panel.canChooseDirectories = folders
+    panel.allowsMultipleSelection = true
+    if images { panel.allowedContentTypes = [.image] }
+    panel.begin { response in
+      if response == .OK { conversation.importAttachments(panel.urls) }
+    }
   }
 
   private var composerBackground: some View {

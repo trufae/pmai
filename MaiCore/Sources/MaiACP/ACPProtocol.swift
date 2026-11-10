@@ -127,6 +127,50 @@ public enum ACP {
       .filter { !$0.isEmpty }
       .joined(separator: "\n\n")
   }
+
+  public static func promptBlocks(text: String, attachments: [ContentPart]) throws -> [JSONValue] {
+    var blocks = text.isEmpty ? [] : [ContentBlock.text(text).json]
+    for attachment in attachments {
+      switch attachment {
+      case .text(let text): blocks.append(ContentBlock.text(text).json)
+      case .file(let file) where file.text != nil:
+        blocks.append(ContentBlock.text("Attached file: \(file.name)\n\(file.text!)").json)
+      case .image(let image):
+        guard case .data(let data) = image.source, !data.isEmpty, data.count <= 10 * 1024 * 1024,
+          image.mimeType.hasPrefix("image/") else {
+          throw JSONRPCError.invalidParams("Attach an image of at most 10 MB.")
+        }
+        blocks.append(ContentBlock.text("Attached image: \(image.name ?? "Image")").json)
+        blocks.append(.object([
+          "type": .string("image"), "mimeType": .string(image.mimeType),
+          "data": .string(data.base64EncodedString()),
+        ]))
+      default: throw JSONRPCError.invalidParams("Unsupported attachment type")
+      }
+    }
+    guard try JSONEncoder().encode(JSONValue.array(blocks)).count <= 15 * 1024 * 1024 else {
+      throw JSONRPCError.invalidParams("The attachments are too large to send together. Send fewer files at once.")
+    }
+    return blocks
+  }
+
+  /// Keep images as model input instead of flattening them away with prompt text.
+  public static func promptContent(_ prompt: JSONValue?) throws -> [ContentPart] {
+    guard let blocks = prompt?.arrayValue else { return [.text(prompt?.stringValue ?? "")] }
+    return try blocks.compactMap { block in
+      let fields = block.objectValue
+      if fields?["type"]?.stringValue == "image" {
+        guard let encoded = fields?["data"]?.stringValue, encoded.utf8.count <= 14 * 1024 * 1024,
+          let mime = fields?["mimeType"]?.stringValue, mime.hasPrefix("image/"),
+          let data = Data(base64Encoded: encoded), !data.isEmpty, data.count <= 10 * 1024 * 1024 else {
+          throw JSONRPCError.invalidParams("Invalid or oversized image attachment")
+        }
+        return .image(ImageContent(source: .data(data), mimeType: mime))
+      }
+      let text = ContentBlock.text(from: block)
+      return text.isEmpty ? nil : .text(text)
+    }
+  }
 }
 
 /// How MaiCore answers an agent's `session/request_permission`.

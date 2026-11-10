@@ -225,7 +225,7 @@ public actor ACPServer {
         "sessionCapabilities": .object(
           sessionDirectory != nil || workspace != nil ? ["list": .object([:])] : [:]),
         "promptCapabilities": .object([
-          "image": .bool(false), "audio": .bool(false), "embeddedContext": .bool(true),
+          "image": .bool(true), "audio": .bool(false), "embeddedContext": .bool(true),
         ]),
       ]),
       "authMethods": .array([]),
@@ -1057,13 +1057,17 @@ public actor ACPServer {
       throw JSONRPCError.invalidParams("A prompt is already running in this session")
     }
     let text = ACP.promptText(params?.objectValue?["prompt"])
-    guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+    let content = try ACP.promptContent(params?.objectValue?["prompt"])
+    guard content.contains(where: { part in
+      if case .image = part { return true }
+      return part.textValue?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+    }) else {
       throw JSONRPCError.invalidParams("prompt is empty")
     }
     sessions[id]?.busy = true
     sessions[id]?.liveUpdates = []
     await sessionState(id)
-    sessions[id]?.saved.transcript.append(.user(text))
+    sessions[id]?.saved.transcript.append(AgentMessage(role: .user, content: content))
     if AgentChat.isPlaceholderTitle(sessions[id]?.saved.title ?? AgentChat.placeholderTitle) {
       sessions[id]?.saved.title = AgentChat.derivedTitle(from: text)
     }

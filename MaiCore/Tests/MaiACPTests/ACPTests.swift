@@ -463,12 +463,18 @@ func jsonRPCRequestCancellation() async {
 }
 
 @Test("ACP content blocks flatten a prompt and read agent updates")
-func acpContentBlocks() {
+func acpContentBlocks() throws {
   let prompt: JSONValue = .array([
     .object(["type": .string("text"), "text": .string("summarize")]),
     .object(["type": .string("resource_link"), "name": .string("README"), "uri": .string("f.md")]),
   ])
   #expect(ACP.promptText(prompt) == "summarize\n\nREADME: f.md")
+  #expect(try ACP.promptContent(prompt).compactMap(\.textValue) == ["summarize", "README: f.md"])
+  #expect(throws: JSONRPCError.self) {
+    try ACP.promptContent(.array([.object([
+      "type": .string("image"), "mimeType": .string("image/png"), "data": .string("invalid base64")
+    ])]))
+  }
 
   // Updates carry content as a single block or an array; both read.
   #expect(ACP.ContentBlock.text(from: .object(["text": .string("hi")])) == "hi")
@@ -571,13 +577,21 @@ func acpServerServesARuntime() async throws {
     ACP.Method.sessionPrompt,
     params: .object([
       "sessionId": .string(sessionID),
-      "prompt": .array([.object(["type": .string("text"), "text": .string("hi")])]),
+      "prompt": .array(try ACP.promptBlocks(text: "hi", attachments: [
+        .image(.init(source: .data(Data([1, 2, 3])), mimeType: "image/png", name: "fixture.png"))
+      ])),
     ]),
     timeout: 5)
   #expect(result.objectValue?["stopReason"]?.stringValue == ACP.StopReason.endTurn.rawValue)
   #expect(await chunks.joined == "Hello from pmai")
+  #expect(await provider.requests.last?.messages.contains { message in
+    message.role == .user && message.content.contains {
+      if case .image(let image) = $0 { return image.source == .data(Data([1, 2, 3])) }
+      return false
+    }
+  } == true)
   let promptID = try #require(
-    await snapshots.last.first(where: { $0.objectValue?["text"]?.stringValue == "hi" })?
+    await snapshots.last.first(where: { $0.objectValue?["role"]?.stringValue == "user" })?
       .objectValue?["remoteID"]?.stringValue)
   _ = try await client.request(
     ACP.Method.sessionRewind,
@@ -723,15 +737,17 @@ func mcpServerExposesAgent() async throws {
 
 private actor ACPScriptedProvider: ChatProvider {
   nonisolated let descriptor = ProviderDescriptor(
-    id: "scripted", displayName: "Scripted", capabilities: [.streaming, .nativeToolCalling])
+    id: "scripted", displayName: "Scripted", capabilities: [.streaming, .nativeToolCalling, .imageInput])
   private var responses: [ProviderResponse]
   private(set) var sessionIDs: [String] = []
+  private(set) var requests: [ProviderRequest] = []
   init(responses: [ProviderResponse]) { self.responses = responses }
 
   func complete(
     _ request: ProviderRequest, emit: @escaping ProviderEventHandler
   ) async throws -> ProviderResponse {
     sessionIDs.append(request.sessionID ?? "")
+    requests.append(request)
     let response =
       responses.isEmpty ? ProviderResponse(message: .assistant("")) : responses.removeFirst()
     if !response.message.text.isEmpty { await emit(.textDelta(response.message.text)) }

@@ -98,6 +98,7 @@ public actor ACPClient {
   private var supportsYolo = false
   private var supportsInjection = false
   private var supportsAgents = false
+  private var supportsPromptImages = false
   private var supportsHistoryRewind = false
   private var busy = false
   private var internetAccess = InternetAccessPolicy()
@@ -523,18 +524,29 @@ public actor ACPClient {
     _ text: String,
     emit: @escaping @Sendable (ProviderEvent) async -> Void
   ) async throws -> ProviderStopReason {
+    try await prompt(RemotePromptRequest(text: text), emit: emit)
+  }
+
+  public func prompt(
+    _ request: RemotePromptRequest,
+    emit: @escaping @Sendable (ProviderEvent) async -> Void
+  ) async throws -> ProviderStopReason {
     guard !busy else { throw JSONRPCError.invalidParams("An ACP prompt is already running") }
     busy = true
     defer { busy = false }
     let peer = try await connectedPeer()
     let sessionID = try await ensureSession(peer: peer)
+    let blocks = try ACP.promptBlocks(text: request.draft, attachments: request.attachments)
+    if !supportsPromptImages, request.attachments.contains(where: { if case .image = $0 { true } else { false } }) {
+      throw JSONRPCError.invalidParams("This host does not accept images. Update the pmai host to attach images.")
+    }
     toolCalls.removeAll()
     toolNames.removeAll()
     activeSink = emit
     defer { activeSink = nil }
     let params: JSONValue = .object([
       "sessionId": .string(sessionID),
-      "prompt": .array([ACP.ContentBlock.text(text).json]),
+      "prompt": .array(blocks),
     ])
     do {
       let result = try await peer.request(
@@ -614,6 +626,7 @@ public actor ACPClient {
     supportsYolo = false
     supportsHistoryRewind = false
     supportsAgents = false
+    supportsPromptImages = false
     let tunnel = forwirohTunnel
     forwirohTunnel = nil
     transport?.close()
@@ -766,6 +779,8 @@ public actor ACPClient {
         .objectValue?["pmai"]?.objectValue
       supportsInjection = pmaiCapabilities?["injection"]?.intValue == 1
       supportsAgents = pmaiCapabilities?["agents"]?.intValue == 1
+      supportsPromptImages = initialized.objectValue?["agentCapabilities"]?.objectValue?["promptCapabilities"]?
+        .objectValue?["image"]?.boolValue == true
       supportsFiles = pmaiCapabilities?["workspaceFiles"]?.intValue == 1
       supportsTerminal = pmaiCapabilities?["workspaceTerminal"]?.intValue == 1
       supportsPrompts = pmaiCapabilities?["workspacePrompts"]?.intValue == 1

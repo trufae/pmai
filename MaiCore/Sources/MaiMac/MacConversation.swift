@@ -27,6 +27,12 @@ final class MacConversation: Identifiable {
     didSet { if let draftKey { UserDefaults.standard.set(draft, forKey: draftKey) } }
   }
   var busy = false
+  var attachments: [MacAttachment] = []
+  var importingAttachments = false
+  var canSend: Bool {
+    connected && !busy && !importingAttachments
+      && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty)
+  }
   var connected = false
   var status = "Connecting…"
   var error: String?
@@ -68,21 +74,47 @@ final class MacConversation: Identifiable {
 
   func send() {
     let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !text.isEmpty, connected, !busy, !closing, let client else { return }
+    guard canSend, !closing, let client else { return }
     var request = RemotePromptRequest(text: text)
     if let command = PromptSlashCommand.parse(text), let entry = prompts.entry(named: command.command),
       entry.kind != .system {
       request = .init(text: entry.invocation != nil || entry.skillID != nil ? command.remainder
         : entry.message(arguments: command.remainder) ?? text, command: entry.invocation, skillID: entry.skillID)
     }
+    let submittedAttachments = attachments
+    request.attachments = submittedAttachments.map(\.content)
     draft = ""
-    messages.append(.init(role: "user", text: text))
-    if title == "New Chat" { title = String(text.prefix(80)) }
+    attachments = []
+    let displayText = ([text] + submittedAttachments.map { "Attached: \($0.name)" })
+      .filter { !$0.isEmpty }.joined(separator: "\n\n")
+    messages.append(.init(role: "user", text: displayText))
+    if title == "New Chat" { title = String(displayText.prefix(80)) }
     perform {
       self.status = "Working…"
-      _ = try await client.prompt(request) { _ in }
+      do {
+        _ = try await client.prompt(request) { _ in }
+      } catch {
+        if self.draft.isEmpty { self.draft = text }
+        self.attachments.insert(contentsOf: submittedAttachments, at: 0)
+        throw error
+      }
       self.status = "Ready"
       self.didChange?()
+    }
+  }
+
+  func importAttachments(_ urls: [URL]) {
+    guard !importingAttachments, !urls.isEmpty else { return }
+    importingAttachments = true
+    let local = hostID == nil
+    Task {
+      defer { importingAttachments = false }
+      do {
+        let imported = try await Task.detached(priority: .userInitiated) {
+          try urls.map { try MacAttachment.load($0, allowsLocalReferences: local) }
+        }.value
+        attachments.append(contentsOf: imported)
+      } catch { self.error = error.localizedDescription }
     }
   }
 
