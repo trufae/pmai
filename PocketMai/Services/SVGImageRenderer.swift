@@ -89,7 +89,9 @@ final class SVGImageRenderer: NSObject, WKNavigationDelegate {
           canvas.width = Math.max(1, Math.round(width * scale));
           canvas.height = Math.max(1, Math.round(height * scale));
           if (canvas.width * canvas.height > 16777216) throw new Error('SVG is too large');
-          canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
+          // This canvas is only read back as PNG; avoid a GPU-backed surface.
+          const context = canvas.getContext('2d', { willReadFrequently: true });
+          context.drawImage(image, 0, 0, canvas.width, canvas.height);
           return canvas.toDataURL('image/png').split(',')[1];
           """,
           arguments: ["maxDimension": maxDimension.map { $0 as Any } ?? NSNull()],

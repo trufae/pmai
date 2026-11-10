@@ -295,6 +295,12 @@
       var output = MCPPartialOutput()
     }
 
+    private enum ProcessEvent: Sendable {
+      case output(Data)
+      case error(Data)
+      case terminated(Int32)
+    }
+
     private let configuration: MCPStdioServerConfiguration
     private var process: Process?
     private var inputHandle: FileHandle?
@@ -307,6 +313,10 @@
     private var nextRequestID = 1
     private var generation = 0
     private var failure: Error?
+    private var eventsTask: Task<Void, Never>?
+    private var outputEnded = false
+    private var errorEnded = false
+    private var exitStatus: Int32?
 
     init(configuration: MCPStdioServerConfiguration) {
       self.configuration = configuration
@@ -380,6 +390,8 @@
 
     func close() {
       generation += 1
+      eventsTask?.cancel()
+      eventsTask = nil
       let oldProcess = process
       process = nil
       try? inputHandle?.close()
@@ -399,7 +411,8 @@
     }
 
     private func startIfNeeded() throws {
-      if process?.isRunning == true { return }
+      // An exited process may still have unread replies in its pipes.
+      if process != nil { return }
       let child = Process()
       let input = Pipe()
       let output = Pipe()
@@ -418,28 +431,21 @@
 
       generation += 1
       let currentGeneration = generation
-      child.terminationHandler = { [weak self] terminated in
-        let status = terminated.terminationStatus
-        Task { await self?.processTerminated(status: status, generation: currentGeneration) }
+      let events = AsyncStream<ProcessEvent>.makeStream()
+      child.terminationHandler = { terminated in
+        events.continuation.yield(.terminated(terminated.terminationStatus))
       }
       let stdout = output.fileHandleForReading
-      stdout.readabilityHandler = { [weak self] handle in
+      stdout.readabilityHandler = { handle in
         let data = handle.availableData
         if data.isEmpty { handle.readabilityHandler = nil }
-        Task {
-          if data.isEmpty {
-            await self?.outputClosed(generation: currentGeneration)
-          } else {
-            await self?.receivedOutput(data, generation: currentGeneration)
-          }
-        }
+        events.continuation.yield(.output(data))
       }
       let stderr = errors.fileHandleForReading
-      stderr.readabilityHandler = { [weak self] handle in
+      stderr.readabilityHandler = { handle in
         let data = handle.availableData
         if data.isEmpty { handle.readabilityHandler = nil }
-        guard !data.isEmpty else { return }
-        Task { await self?.receivedError(data, generation: currentGeneration) }
+        events.continuation.yield(.error(data))
       }
       do {
         try child.run()
@@ -463,6 +469,17 @@
       outputBuffer.removeAll(keepingCapacity: false)
       errorBuffer.removeAll(keepingCapacity: false)
       failure = nil
+      outputEnded = false
+      errorEnded = false
+      exitStatus = nil
+      // A single consumer preserves each pipe's byte/EOF order. Independent
+      // Tasks can deliver EOF or process exit before earlier output under load.
+      eventsTask = Task { [weak self] in
+        for await event in events.stream {
+          guard !Task.isCancelled else { break }
+          await self?.receivedEvent(event, generation: currentGeneration)
+        }
+      }
     }
 
     private func write(_ value: JSONValue) throws {
@@ -567,13 +584,20 @@
       }
     }
 
-    private func outputClosed(generation: Int) {
+    private func receivedEvent(_ event: ProcessEvent, generation: Int) {
       guard generation == self.generation, failure == nil else { return }
-      fail(with: MCPStdioTransportError.closed, generation: generation)
-    }
-
-    private func processTerminated(status: Int32, generation: Int) {
-      guard generation == self.generation, failure == nil else { return }
+      switch event {
+      case .output(let data):
+        if data.isEmpty { outputEnded = true }
+        else { receivedOutput(data, generation: generation) }
+      case .error(let data):
+        if data.isEmpty { errorEnded = true }
+        else { receivedError(data, generation: generation) }
+      case .terminated(let status):
+        exitStatus = status
+      }
+      // Process termination does not mean stdout/stderr have been drained.
+      guard outputEnded, errorEnded, let status = exitStatus else { return }
       fail(
         with: MCPStdioTransportError.processExited(
           status: status,
@@ -616,6 +640,8 @@
     private func fail(with error: Error, generation: Int) {
       guard generation == self.generation, failure == nil else { return }
       failure = error
+      eventsTask?.cancel()
+      eventsTask = nil
       try? inputHandle?.close()
       if process?.isRunning == true { process?.terminate() }
       failPending(with: error)

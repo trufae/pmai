@@ -88,6 +88,7 @@
             ;;
           *tools*call*)
             printf '%s\n' '{"jsonrpc":"2.0","id":4,"result":{"content":[{"type":"text","text":"stdio result"}],"structuredContent":{"count":1}}}'
+            exit 0
             ;;
           *)
             printf 'unexpected input: %s\n' "$line" >&2
@@ -157,6 +158,10 @@
       #expect(result.text.contains("[server log] Read one matching email"))
       #expect(result.text.contains("Incomplete MCP output"))
       #expect(!result.text.contains("unrelated request"))
+      if exits {
+        #expect(result.text.contains("exited with status 7"))
+        #expect(result.text.contains("Mail server diagnostic"))
+      }
 
       if !exits {
         #expect(result.text.contains("timed out"))
@@ -264,7 +269,7 @@
               printf '%s\n' '{"jsonrpc":"2.0","method":"notifications/progress","params":{"progressToken":999,"progress":1,"message":"unrelated request"}}'
               printf '%s\n' '{"jsonrpc":"2.0","method":"notifications/message","params":{"level":"info","data":"Read one matching email"}}'
               printf '%s\n' 'Mail server diagnostic' >&2
-              if [ "$MCP_EXIT" = 1 ]; then sleep 0.1; exit 7; fi
+              if [ "$MCP_EXIT" = 1 ]; then exit 7; fi
             else
               printf '%s\n' '{"jsonrpc":"2.0","id":5,"result":{"content":[{"type":"text","text":"next request succeeded"}]}}'
             fi
@@ -279,7 +284,7 @@
     let client = MCPStdioClient(
       configuration: MCPStdioServerConfiguration(
         id: "fixture", command: "/bin/sh", args: ["-c", script], environment: environment,
-        timeout: 1, defaultApproval: .automatic))
+        timeout: exits ? 30 : 1, defaultApproval: .automatic))
     return (client, directory, capture)
   }
 #endif
