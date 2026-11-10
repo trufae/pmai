@@ -30,6 +30,7 @@ struct MacSettingsView: View {
   @AppStorage("mac.settings.pane") private var pane = "general"
   @State private var editor: MacSettingsEditor?
   @State private var removal: MacSettingsRemoval?
+  private var appearance = MacAppearance()
 
   init(workspace: MacWorkspace) {
     self.workspace = workspace
@@ -81,6 +82,13 @@ struct MacSettingsView: View {
 
   private var general: some View {
     Form {
+      Section("Appearance") {
+        ColorPicker("Accent color", selection: appearance.accentBinding, supportsOpacity: false)
+        Button("Use System Accent") { appearance.accentHex = "" }
+          .disabled(appearance.accentHex.isEmpty)
+        Text("Colors controls, your messages, bold text, and quotes. Pinch the trackpad over a conversation to resize its text.")
+          .foregroundStyle(.secondary)
+      }
       Section("pmai for Mac") {
         Text("Settings share the CLI’s configuration, saved hosts, and skills. Global settings apply unless a workspace has its own pmai.json.")
         LabeledContent("Data", value: workspace.home.rootURL.path)
@@ -100,7 +108,7 @@ struct MacSettingsView: View {
         LabeledContent("Send message", value: "Return")
         LabeledContent("New line", value: "Shift-Return")
         LabeledContent("Complete prompt or skill", value: "/ or $, then Tab / Shift-Tab")
-        LabeledContent("Resize chat text", value: "⌘+ / ⌘−; ⌘0 to reset")
+        LabeledContent("Resize chat text", value: "Pinch or ⌘+ / ⌘−; ⌘0 to reset")
         LabeledContent("Stop response", value: "⌘.")
       }
     }.formStyle(.grouped)

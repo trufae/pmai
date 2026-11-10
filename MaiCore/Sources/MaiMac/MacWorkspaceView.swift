@@ -77,7 +77,10 @@ struct MacWorkspaceView: View {
 struct MacChatView: View {
   @Bindable var conversation: MacConversation
   @State private var followsBottom = true
+  @State private var pinchBaseFontSize: Double?
+  @GestureState private var isPinching = false
   private var typography = MacChatTypography()
+  private var appearance = MacAppearance()
 
   var body: some View {
     VStack(spacing: 0) {
@@ -101,6 +104,20 @@ struct MacChatView: View {
           .frame(maxWidth: .infinity)
         }
         .defaultScrollAnchor(.bottom)
+        .simultaneousGesture(
+          MagnifyGesture()
+            .updating($isPinching) { _, active, _ in active = true }
+            .onChanged { value in
+              if pinchBaseFontSize == nil {
+                pinchBaseFontSize = typography.size
+                followsBottom = false
+              }
+              typography.resize(to: (pinchBaseFontSize ?? typography.size) * value.magnification)
+            }
+        )
+        .onChange(of: isPinching) { _, active in
+          if !active { pinchBaseFontSize = nil }
+        }
         .onScrollGeometryChange(for: Bool.self) { geometry in
           geometry.contentOffset.y + geometry.containerSize.height >= geometry.contentSize.height - 80
         } action: { _, bottom in followsBottom = bottom }
@@ -206,7 +223,7 @@ struct MacChatView: View {
     .font(typography.font())
     .padding(message.role == "user" ? 16 : 0)
     .background {
-      if message.role == "user" { RoundedRectangle(cornerRadius: 14).fill(Color.primary.opacity(0.045)) }
+      if message.role == "user" { RoundedRectangle(cornerRadius: 14).fill(appearance.accentColor.opacity(0.12)) }
     }
     .contextMenu {
       Button("Copy") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(message.text, forType: .string) }

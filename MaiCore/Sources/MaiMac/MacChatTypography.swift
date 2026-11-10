@@ -18,7 +18,12 @@ struct MacChatTypography: DynamicProperty {
   var editorFont: NSFont { .systemFont(ofSize: Self.defaultSize * scale) }
 
   func resize(by delta: Double) {
-    size = min(Self.sizeRange.upperBound, max(Self.sizeRange.lowerBound, size + delta))
+    resize(to: size + delta)
+  }
+
+  func resize(to newSize: Double) {
+    guard newSize.isFinite else { return }
+    size = min(Self.sizeRange.upperBound, max(Self.sizeRange.lowerBound, (newSize * 2).rounded() / 2))
   }
 }
 

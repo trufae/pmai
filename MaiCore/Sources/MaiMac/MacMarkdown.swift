@@ -6,6 +6,7 @@ import SwiftUI
 struct MacMarkdown: View {
   let text: String
   private var typography = MacChatTypography()
+  private var appearance = MacAppearance()
 
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
@@ -16,8 +17,11 @@ struct MacMarkdown: View {
   }
 
   private func inline(_ text: String) -> Text {
-    Text((try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
-      ?? AttributedString(text))
+    var attributed = (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(text)
+    for run in attributed.runs where run.inlinePresentationIntent?.contains(.stronglyEmphasized) == true {
+      attributed[run.range].foregroundColor = appearance.accentColor
+    }
+    return Text(attributed)
   }
 
   @ViewBuilder private func render(_ block: MarkdownBlock) -> some View {
@@ -27,7 +31,14 @@ struct MacMarkdown: View {
       inline(text).font(typography.font(level == 1 ? .title1 : level == 2 ? .title2 : .headline)
         .weight(level <= 2 ? .regular : .semibold))
     case .quote(let text):
-      HStack(alignment: .top) { Rectangle().fill(.secondary.opacity(0.3)).frame(width: 3); inline(text).foregroundStyle(.secondary) }
+      inline(text)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 10).padding(.leading, 16).padding(.trailing, 12)
+        .background(appearance.accentColor.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
+        .overlay(alignment: .leading) {
+          RoundedRectangle(cornerRadius: 2).fill(appearance.accentColor.opacity(0.7))
+            .frame(width: 3).padding(.vertical, 8)
+        }
     case .rule: Divider()
     case .code(let language, let code):
       VStack(alignment: .leading, spacing: 10) {
@@ -53,7 +64,9 @@ struct MacMarkdown: View {
     case .table(let table):
       ScrollView(.horizontal) {
         Grid(alignment: .leading, horizontalSpacing: 20, verticalSpacing: 10) {
-          GridRow { ForEach(Array(table.headers.enumerated()), id: \.offset) { _, cell in inline(cell).bold() } }
+          GridRow { ForEach(Array(table.headers.enumerated()), id: \.offset) { _, cell in
+            inline(cell).bold().foregroundStyle(appearance.accentColor)
+          } }
           Divider()
           ForEach(Array(table.rows.enumerated()), id: \.offset) { _, row in
             GridRow { ForEach(Array(row.enumerated()), id: \.offset) { _, cell in inline(cell) } }

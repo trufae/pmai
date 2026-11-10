@@ -19,10 +19,13 @@ enum MaiMacEntry {
 struct MaiMacApp: App {
   @NSApplicationDelegateAdaptor(MacAppDelegate.self) private var delegate
   @State private var backend = MacBackend()
+  private var appearance = MacAppearance()
 
   var body: some Scene {
     WindowGroup("pmai", id: "workspace") {
       MacWorkspaceWindow(backend: backend)
+        .tint(appearance.accentColor)
+        .accentColor(appearance.accentColor)
         .frame(minWidth: 780, minHeight: 520)
         .onAppear { delegate.backend = backend }
     }
@@ -33,6 +36,8 @@ struct MaiMacApp: App {
     }
     Settings {
       MacSettingsWindow(backend: backend)
+        .tint(appearance.accentColor)
+        .accentColor(appearance.accentColor)
     }
   }
 }
