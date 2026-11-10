@@ -27,6 +27,7 @@ final class MacWorkspace {
   }
   var selectedID: UUID?
   var search = ""
+  var focusConversationSearch = false
   var sidebarSection: MacSidebarSection? = .folders
   var showArchived = false
   var busy = false

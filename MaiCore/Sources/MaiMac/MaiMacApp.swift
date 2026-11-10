@@ -35,6 +35,7 @@ struct MaiMacApp: App {
     .commands {
       MacWorkspaceCommands(backend: backend, tabs: tabs)
       MacChatFontCommands()
+      MacFindCommands()
     }
     Settings {
       MacSettingsWindow(backend: backend)

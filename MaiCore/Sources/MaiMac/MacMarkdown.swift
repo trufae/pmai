@@ -5,11 +5,12 @@ import SwiftUI
 /// The same block parser as CLI output and document exports, rendered natively.
 struct MacMarkdown: View, @MainActor Equatable {
   let text: String
+  var searchQuery = ""
   @State private var document: MacMarkdownDocument?
   private var typography = MacChatTypography()
   private var appearance = MacAppearance()
 
-  static func == (lhs: Self, rhs: Self) -> Bool { lhs.text == rhs.text }
+  static func == (lhs: Self, rhs: Self) -> Bool { lhs.text == rhs.text && lhs.searchQuery == rhs.searchQuery }
 
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
@@ -33,7 +34,7 @@ struct MacMarkdown: View, @MainActor Equatable {
     for run in attributed.runs where run.inlinePresentationIntent?.contains(.stronglyEmphasized) == true {
       attributed[run.range].foregroundColor = appearance.accentColor
     }
-    return Text(attributed)
+    return Text(MacSearchHighlight.apply(to: attributed, query: searchQuery))
   }
 
   @ViewBuilder private func render(_ block: MarkdownBlock) -> some View {
@@ -61,7 +62,10 @@ struct MacMarkdown: View, @MainActor Equatable {
             NSPasteboard.general.clearContents(); NSPasteboard.general.setString(code, forType: .string)
           }.buttonStyle(.borderless).font(typography.font(.caption1))
         }
-        ScrollView(.horizontal) { Text(code).font(typography.font(design: .monospaced)).fixedSize(horizontal: true, vertical: false) }
+        ScrollView(.horizontal) {
+          Text(MacSearchHighlight.text(code, query: searchQuery))
+            .font(typography.font(design: .monospaced)).fixedSize(horizontal: true, vertical: false)
+        }
       }.padding(14).background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 10))
     case .bullets(let items):
       ForEach(Array(items.enumerated()), id: \.offset) { _, item in HStack(alignment: .top) { Text("•"); inline(item) } }

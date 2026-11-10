@@ -12,8 +12,9 @@ final class MacConversation: Identifiable {
   var sessionID: String?
   var title: String
   var messages: [ACPConversationMessage] = [] {
-    didSet { messageRuns = MacMessageRun.grouped(messages) }
+    didSet { messageRuns = MacMessageRun.grouped(messages); find.update(messages) }
   }
+  let find = MacConversationSearch()
   private(set) var messageRuns: [MacMessageRun] = []
   var options: [RemoteSessionOption] = []
   var modelName: String? {

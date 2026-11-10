@@ -24,20 +24,26 @@ struct MacMessageRun: Identifiable, Equatable {
 struct MacActivityRow: View, @MainActor Equatable {
   let run: MacMessageRun
   let conversation: MacConversation
+  var searchQuery = ""
+  var selectedSearchID: UUID?
   @State private var expanded = false
   private var typography = MacChatTypography()
 
   static func == (lhs: Self, rhs: Self) -> Bool {
     lhs.run == rhs.run && lhs.conversation === rhs.conversation
+      && lhs.searchQuery == rhs.searchQuery && lhs.selectedSearchID == rhs.selectedSearchID
   }
 
+  private var revealsSearch: Bool { run.messages.contains { $0.id == selectedSearchID } }
+
   var body: some View {
-    DisclosureGroup(isExpanded: $expanded) {
+    DisclosureGroup(isExpanded: Binding(get: { expanded || revealsSearch }, set: { expanded = $0 })) {
       // Do not instantiate or parse hidden tool output.
-      if expanded {
+      if expanded || revealsSearch {
         VStack(alignment: .leading, spacing: 8) {
           ForEach(run.messages) { message in
-            MacMessageRow(message: message, conversation: conversation).equatable()
+            MacMessageRow(message: message, conversation: conversation,
+              searchQuery: searchQuery, isSearchSelected: message.id == selectedSearchID).equatable()
           }
         }.padding(.top, 8)
       }
@@ -59,22 +65,26 @@ struct MacActivityRow: View, @MainActor Equatable {
 struct MacMessageRow: View, @MainActor Equatable {
   let message: ACPConversationMessage
   let conversation: MacConversation
+  var searchQuery = ""
+  var isSearchSelected = false
   @State private var expanded = false
   private var typography = MacChatTypography()
   private var appearance = MacAppearance()
 
   static func == (lhs: Self, rhs: Self) -> Bool {
     lhs.message == rhs.message && lhs.conversation === rhs.conversation
+      && lhs.searchQuery == rhs.searchQuery && lhs.isSearchSelected == rhs.isSearchSelected
   }
 
   var body: some View {
     VStack(alignment: .leading, spacing: 9) {
       if message.role == "tool" || message.role == "thought" {
-        DisclosureGroup(isExpanded: $expanded) {
-          if expanded { MacMessageDetails(message: message) }
+        DisclosureGroup(isExpanded: Binding(get: { expanded || isSearchSelected }, set: { expanded = $0 })) {
+          if expanded || isSearchSelected { MacMessageDetails(message: message, searchQuery: searchQuery) }
         } label: {
           HStack {
-            Text(message.toolName ?? (message.role == "thought" ? "Reasoning" : "Tool details"))
+            Text(MacSearchHighlight.text(
+              message.toolName ?? (message.role == "thought" ? "Reasoning" : "Tool details"), query: searchQuery))
               .lineLimit(1)
             Spacer()
             if let status = message.status {
@@ -87,7 +97,7 @@ struct MacMessageRow: View, @MainActor Equatable {
         Label(message.role == "user" ? "You" : message.role == "assistant" ? "pmai" : message.role.capitalized,
           systemImage: message.role == "user" ? "person.crop.circle" : "sparkle")
           .font(typography.font(.callout).weight(.semibold)).foregroundStyle(.secondary)
-        MacMarkdown(text: message.text).equatable()
+        MacMarkdown(text: message.text, searchQuery: searchQuery).equatable()
       }
     }
     .font(typography.font())
@@ -103,20 +113,23 @@ struct MacMessageRow: View, @MainActor Equatable {
         Button("Edit from Here…") { conversation.rewind(message) }.disabled(conversation.busy)
       }
     }
+    .id("message-\(message.id)")
   }
 }
 
 private struct MacMessageDetails: View {
   let message: ACPConversationMessage
+  let searchQuery: String
   @State private var inputText: String?
   private var typography = MacChatTypography()
 
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
       if let inputText {
-        Text(inputText).font(typography.font(.caption1, design: .monospaced)).textSelection(.enabled)
+        Text(MacSearchHighlight.text(inputText, query: searchQuery))
+          .font(typography.font(.caption1, design: .monospaced)).textSelection(.enabled)
       }
-      MacMarkdown(text: message.text).equatable()
+      MacMarkdown(text: message.text, searchQuery: searchQuery).equatable()
     }
     .task(id: message.toolInput) {
       let input = message.toolInput

@@ -72,6 +72,8 @@ struct MacChatView: View {
   @State private var followsBottom = true
   @State private var firstVisibleRunID: UUID?
   @State private var scrollPhase = ScrollPhase.idle
+  @State private var searchScrollTarget: UUID?
+  @FocusState private var findFocused: Bool
   @State private var pinchBaseFontSize: Double?
   @GestureState private var isPinching = false
   private var typography = MacChatTypography()
@@ -83,6 +85,7 @@ struct MacChatView: View {
 
   var body: some View {
     VStack(spacing: 0) {
+      if conversation.find.isPresented { findBar }
       ScrollViewReader { proxy in
         ScrollView {
           // A bounded eager stack avoids stale height estimates for streaming bubbles.
@@ -105,9 +108,13 @@ struct MacChatView: View {
             ForEach(conversation.messageRuns.suffix(from: firstVisibleIndex)) { run in
               Group {
                 if run.isActivity {
-                  MacActivityRow(run: run, conversation: conversation).equatable()
+                  MacActivityRow(run: run, conversation: conversation,
+                    searchQuery: conversation.find.activeQuery,
+                    selectedSearchID: conversation.find.isPresented ? conversation.find.selectedID : nil).equatable()
                 } else if let message = run.messages.first {
-                  MacMessageRow(message: message, conversation: conversation).equatable()
+                  MacMessageRow(message: message, conversation: conversation,
+                    searchQuery: conversation.find.activeQuery,
+                    isSearchSelected: conversation.find.isPresented && message.id == conversation.find.selectedID).equatable()
                 }
               }.id(run.id)
             }
@@ -143,13 +150,17 @@ struct MacChatView: View {
           // Follow layout, including asynchronously parsed Markdown and tool updates.
           // Content growth must never be mistaken for the user scrolling away.
           DispatchQueue.main.async {
-            if followsBottom, scrollPhase == .idle { proxy.scrollTo("bottom", anchor: .bottom) }
+            guard scrollPhase == .idle else { return }
+            if let target = searchScrollTarget, conversation.find.isPresented {
+              proxy.scrollTo("message-\(target)", anchor: .top)
+            } else if followsBottom { proxy.scrollTo("bottom", anchor: .bottom) }
           }
         }
         .onScrollPhaseChange { old, phase, context in
           scrollPhase = phase
           if phase == .interacting {
             followsBottom = false
+            searchScrollTarget = nil
           } else if phase == .idle, old == .interacting || old == .decelerating {
             followsBottom = context.geometry.visibleRect.maxY >= context.geometry.contentSize.height - 80
           }
@@ -157,14 +168,28 @@ struct MacChatView: View {
         .onChange(of: followsBottom) { _, follows in
           if follows { proxy.scrollTo("bottom", anchor: .bottom) }
         }
+        .onChange(of: conversation.find.navigationRequest) { _, _ in
+          searchScrollTarget = conversation.find.selectedID
+          guard let id = searchScrollTarget,
+            let index = conversation.messageRuns.firstIndex(where: { $0.messages.contains { $0.id == id } }) else { return }
+          followsBottom = false
+          if index < firstVisibleIndex { firstVisibleRunID = conversation.messageRuns[index].id }
+          DispatchQueue.main.async { proxy.scrollTo("message-\(id)", anchor: .top) }
+        }
         .overlay(alignment: .bottomTrailing) {
           if !followsBottom {
-            Button { followsBottom = true; proxy.scrollTo("bottom", anchor: .bottom) } label: {
+            Button { searchScrollTarget = nil; followsBottom = true; proxy.scrollTo("bottom", anchor: .bottom) } label: {
               Label("Latest", systemImage: "arrow.down")
             }.buttonStyle(.bordered).padding()
           }
         }
       }
+    }
+    .onChange(of: conversation.find.focusRequest) { _, _ in
+      DispatchQueue.main.async { findFocused = true }
+    }
+    .onChange(of: conversation.find.isPresented) { _, presented in
+      if !presented { searchScrollTarget = nil; findFocused = false }
     }
     .safeAreaInset(edge: .bottom, spacing: 0) {
       VStack(spacing: 0) {
@@ -183,6 +208,31 @@ struct MacChatView: View {
     .sheet(isPresented: Binding(get: { conversation.permission != nil }, set: {
       if !$0 { conversation.answerPermission(nil) }
     })) { MacPermissionSheet(conversation: conversation) }
+  }
+
+  private var findBar: some View {
+    @Bindable var find = conversation.find
+    return HStack(spacing: 8) {
+      Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+      TextField("Find in conversation", text: $find.query)
+        .textFieldStyle(.roundedBorder).focused($findFocused)
+        .onSubmit { conversation.find.advance() }
+        .onExitCommand { conversation.find.close() }
+      if conversation.find.searching {
+        ProgressView().controlSize(.small)
+      } else if !conversation.find.activeQuery.isEmpty {
+        Text(conversation.find.matches.isEmpty ? "No matches"
+          : "\(conversation.find.position) of \(conversation.find.matches.count) messages")
+          .font(.caption).foregroundStyle(.secondary).monospacedDigit()
+      }
+      Button { conversation.find.advance(backwards: true) } label: { Image(systemName: "chevron.up") }
+        .help("Previous matching message (⇧⌘G)").disabled(conversation.find.matches.isEmpty)
+      Button { conversation.find.advance() } label: { Image(systemName: "chevron.down") }
+        .help("Next matching message (⌘G)").disabled(conversation.find.matches.isEmpty)
+      Button { conversation.find.close() } label: { Image(systemName: "xmark") }
+        .help("Close search (Escape)")
+    }
+    .buttonStyle(.borderless).padding(10).background(.bar)
   }
 
   private var composer: some View {

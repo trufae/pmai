@@ -7,6 +7,7 @@ struct MacSidebar: View {
   @State private var rename: SidebarRename?
   @State private var confirmation: SidebarConfirmation?
   @State private var selectedSessionIDs = Set<String>()
+  @FocusState private var searchFocused: Bool
 
   var body: some View {
     VStack(spacing: 0) {
@@ -67,6 +68,13 @@ struct MacSidebar: View {
     }
     .onChange(of: selectionContext) { _, _ in syncSelection() }
     .onAppear { syncSelection() }
+    .onChange(of: workspace.focusConversationSearch, initial: true) { _, requested in
+      guard requested else { return }
+      DispatchQueue.main.async {
+        searchFocused = true
+        workspace.focusConversationSearch = false
+      }
+    }
   }
 
   private var selectedSessions: [ACPSessionInfo] {
@@ -206,6 +214,7 @@ struct MacSidebar: View {
         HStack(spacing: 8) {
           TextField("Find a conversation", text: $workspace.search)
             .textFieldStyle(.roundedBorder).frame(maxWidth: .infinity)
+            .focused($searchFocused)
           if workspace.snapshot.canOrganizeSessions == true {
             Toggle("Show archived conversations", isOn: $workspace.showArchived)
               .toggleStyle(.switch).controlSize(.mini).labelsHidden().fixedSize()
