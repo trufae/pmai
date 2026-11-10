@@ -53,7 +53,8 @@ the iOS app reads.
 ### Bare preset
 
 pmai installs an editable `bare` agent through the same setup as `plan`, including
-for existing configurations. Select it with `/agent use bare` or `--agent bare`.
+for existing configurations. Select it with `/agent use bare` or launch with
+`pmai -a bare` (`--agent bare` is equivalent).
 It starts with an empty named system prompt, no tools, skills, or delegation,
 and tool calling off. Unsolicited tool calls are ignored. Like `plan`, it uses
 `main`'s provider and model initially and rejects providers that run their own

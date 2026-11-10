@@ -51,6 +51,14 @@ def main():
         assert '/model -chat MODEL' in redirected, redirected
         assert '/model-' not in run(['/help']), 'removed commands still appear in help'
         original = config.read_bytes()
+        # Startup selection must use the requested agent without changing the default.
+        for flag in ('-a', '--agent'):
+            for agent, model in [('bare', 'hello::original'), ('cheap', 'local::org/small:latest')]:
+                output = run(['/agents', '/model'], [flag, agent])
+                assert f'* {agent} —' in output, output
+                assert f'Chat: {model}' in output, output
+                assert config.read_bytes() == original, 'agent override changed defaults'
+        assert '* main —' in run(['/agents'])
         special = json.loads(original)
         next(agent for agent in special['agents'] if agent['id'] == 'main')['model'] = 'a|*b*'
         config.write_text(json.dumps(special))

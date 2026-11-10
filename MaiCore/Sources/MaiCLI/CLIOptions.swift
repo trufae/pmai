@@ -106,7 +106,7 @@ struct CLIOptions {
         listProjects = true
       case "-l", "--list":
         listChats = true
-      case "--agent":
+      case "-a", "--agent":
         agentOverride = try Self.value(after: argument, in: arguments, index: &index)
       case "--provider":
         providerOverride = ProviderID(try Self.value(after: argument, in: arguments, index: &index))

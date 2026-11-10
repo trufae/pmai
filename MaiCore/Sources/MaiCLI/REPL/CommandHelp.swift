@@ -1066,7 +1066,7 @@ extension MaiCLI {
         --acp-sessions DIR  directory for persistent ACP sessions (default: PMAI_HOME/acp)
         tailcat ...         pair and serve remote agents; pmai tailcat --help
         acp-gateway ...     bridge WebSocket clients to an ACP agent; pmai acp-gateway --help
-        --agent ID          select a configured agent
+        -a, --agent ID      select a configured agent
         --api-key KEY       prefer an environment variable or config reference
         --base-url URL      ad-hoc OpenAI-compatible endpoint
         --config PATH       load plugins, providers, tools, MCPs, agents, and approvals
