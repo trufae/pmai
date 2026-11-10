@@ -14,10 +14,11 @@ struct MacComposer: View {
       .overlay(alignment: .topLeading) {
         if !completion.matches.isEmpty {
           MacPromptCompletionList(completion: completion)
-            // The editor proposes only one line of height. Measure the popup
-            // independently before aligning its bottom above that line.
+            // Anchor the popup's bottom above the editor without letting the
+            // conditional overlay discard a custom alignment guide.
             .fixedSize(horizontal: false, vertical: true)
-            .alignmentGuide(.top) { $0[.bottom] + 14 }
+            .padding(.bottom, 14)
+            .frame(height: 0, alignment: .bottom)
         }
       }
   }
