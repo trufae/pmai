@@ -36,9 +36,9 @@ final class MacWorkspace {
   private var restored = false
   private let inheritedLocation: Bool
 
-  init(backend: MacBackend) {
+  init(backend: MacBackend, inheriting source: MacWorkspace? = nil) {
     self.backend = backend
-    let source = backend.activeWorkspace
+    let source = source ?? backend.activeWorkspace
     inheritedLocation = source != nil
     if let source {
       hostID = source.hostID

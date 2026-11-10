@@ -102,6 +102,9 @@ struct MacSettingsView: View {
       }
       Section("Keyboard") {
         LabeledContent("New chat", value: "⌘N")
+        LabeledContent("New tab", value: "⌘T")
+        LabeledContent("Reopen closed tab", value: "⇧⌘T")
+        LabeledContent("Close tab or window", value: "⌘W")
         LabeledContent("Open workspace", value: "⇧⌘O")
         LabeledContent("Toggle left sidebar", value: "⌘S")
         LabeledContent("Toggle conversation options", value: "⌘O")

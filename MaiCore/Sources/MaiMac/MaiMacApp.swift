@@ -19,11 +19,12 @@ enum MaiMacEntry {
 struct MaiMacApp: App {
   @NSApplicationDelegateAdaptor(MacAppDelegate.self) private var delegate
   @State private var backend = MacBackend()
+  @State private var tabs = MacWindowTabs()
   private var appearance = MacAppearance()
 
   var body: some Scene {
-    WindowGroup("pmai", id: "workspace") {
-      MacWorkspaceWindow(backend: backend)
+    WindowGroup("pmai", id: "workspace", for: UUID.self) { $requestID in
+      MacWorkspaceWindow(backend: backend, tabs: tabs, requestID: requestID, delegate: delegate)
         .modifier(MacWritingToolsDisabled())
         .tint(appearance.accentColor)
         .accentColor(appearance.accentColor)
@@ -32,7 +33,7 @@ struct MaiMacApp: App {
     }
     .defaultSize(width: 1180, height: 780)
     .commands {
-      MacWorkspaceCommands()
+      MacWorkspaceCommands(backend: backend, tabs: tabs)
       MacChatFontCommands()
     }
     Settings {
@@ -55,17 +56,36 @@ private struct MacWritingToolsDisabled: ViewModifier {
 }
 
 private struct MacWorkspaceWindow: View {
-  @State private var workspace: MacWorkspace
+  let tabs: MacWindowTabs
+  let requestID: UUID?
+  let delegate: MacAppDelegate
+  @State private var launch: MacWindowLaunch
+  @Environment(\.openWindow) private var openWindow
   @Environment(\.appearsActive) private var appearsActive
 
-  init(backend: MacBackend) {
-    _workspace = State(initialValue: MacWorkspace(backend: backend))
+  private var workspace: MacWorkspace { launch.workspace }
+
+  init(backend: MacBackend, tabs: MacWindowTabs, requestID: UUID?, delegate: MacAppDelegate) {
+    self.tabs = tabs
+    self.requestID = requestID
+    self.delegate = delegate
+    _launch = State(initialValue: tabs.launch(for: requestID, backend: backend))
   }
 
   var body: some View {
     MacWorkspaceView(workspace: workspace)
+      .background {
+        MacWindowTabBridge(tabs: tabs, launch: launch, requestID: requestID,
+          title: workspace.selected?.title ?? "pmai")
+          .frame(width: 0, height: 0)
+      }
       .focusedSceneValue(\.macWorkspace, workspace)
       .task { await workspace.restore() }
+      .onAppear {
+        let backend = workspace.backend
+        let action = openWindow
+        delegate.newTab = { tabs.newTab(backend: backend) { action(id: "workspace", value: $0) } }
+      }
       .onChange(of: appearsActive, initial: true) { _, active in
         if active { workspace.backend.activeWorkspace = workspace }
       }
@@ -107,6 +127,8 @@ extension FocusedValues {
 }
 
 private struct MacWorkspaceCommands: Commands {
+  let backend: MacBackend
+  let tabs: MacWindowTabs
   @Environment(\.openWindow) private var openWindow
   @FocusedValue(\.macWorkspace) private var workspace
   @FocusedBinding(\.macSidebarVisibility) private var sidebarVisibility
@@ -117,6 +139,11 @@ private struct MacWorkspaceCommands: Commands {
         .disabled(workspace == nil || workspace?.cwd.isEmpty == true || workspace?.busy == true)
       Button("New Window") { openWindow(id: "workspace") }
         .keyboardShortcut("n", modifiers: [.command, .shift])
+      Button("New Tab") { tabs.newTab(backend: backend) { openWindow(id: "workspace", value: $0) } }
+        .keyboardShortcut("t", modifiers: .command)
+      Button("Reopen Closed Tab") { tabs.reopenLast { openWindow(id: "workspace", value: $0) } }
+        .keyboardShortcut("t", modifiers: [.command, .shift])
+        .disabled(!tabs.canReopen)
       Button("Open Workspace…") { workspace?.chooseFolder() }
         .keyboardShortcut("o", modifiers: [.command, .shift])
         .disabled(workspace == nil)
@@ -153,10 +180,12 @@ private struct MacWorkspaceCommands: Commands {
 @MainActor
 final class MacAppDelegate: NSObject, NSApplicationDelegate {
   weak var backend: MacBackend?
+  var newTab: (() -> Void)?
   private var terminating = false
   private var updateCheck: Task<Void, Never>?
 
   func applicationDidFinishLaunching(_ notification: Notification) {
+    NSWindow.allowsAutomaticWindowTabbing = false
     updateCheck = Task {
       // A failed background check should never interrupt startup or offline use.
       guard let update = try? await CLIUpdater.availableUpdate(), !Task.isCancelled else { return }
@@ -170,6 +199,8 @@ final class MacAppDelegate: NSObject, NSApplicationDelegate {
       }
     }
   }
+
+  @objc func newWindowForTab(_ sender: Any?) { newTab?() }
 
   func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
     updateCheck?.cancel()
