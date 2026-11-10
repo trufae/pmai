@@ -44,6 +44,7 @@ private struct MacComposerEditor: NSViewRepresentable {
     completion.choose = { [weak editor] index in editor?.applyCompletion(at: index, finish: true) }
     editor.delegate = context.coordinator
     editor.isRichText = false
+    editor.writingToolsBehavior = .none
     editor.allowsUndo = true
     editor.isAutomaticQuoteSubstitutionEnabled = false
     editor.isAutomaticDashSubstitutionEnabled = false

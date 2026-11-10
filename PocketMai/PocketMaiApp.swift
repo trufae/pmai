@@ -18,6 +18,7 @@ struct PocketMaiApp: App {
   var body: some Scene {
     WindowGroup {
       PocketMaiRootView(store: store, ttsPlayer: ttsPlayer)
+        .modifier(WritingToolsDisabled())
         .onOpenURL { url in
           if url.isFileURL {
             store.openImportFile(at: url)
@@ -25,6 +26,16 @@ struct PocketMaiApp: App {
             store.handleLaunchCommand(command)
           }
         }
+    }
+  }
+}
+
+private struct WritingToolsDisabled: ViewModifier {
+  func body(content: Content) -> some View {
+    if #available(iOS 18.4, *) {
+      content.writingToolsBehavior(.disabled).writingToolsAffordanceVisibility(.hidden)
+    } else {
+      content.writingToolsBehavior(.disabled)
     }
   }
 }

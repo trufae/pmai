@@ -3701,6 +3701,7 @@ private struct JustifiedMarkdownTextView: UIViewRepresentable {
 
   func makeUIView(context: Context) -> LinkHitTestingTextView {
     let textView = LinkHitTestingTextView()
+    textView.writingToolsBehavior = .none
     textView.backgroundColor = .clear
     textView.isEditable = false
     textView.isScrollEnabled = false

@@ -320,6 +320,7 @@ private struct SelectableMessageTextView: UIViewRepresentable {
   }
 
   private func applyBareTextInputTraits(to textView: UITextView) {
+    textView.writingToolsBehavior = .none
     textView.smartQuotesType = .no
     textView.smartDashesType = .no
     textView.smartInsertDeleteType = .no

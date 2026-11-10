@@ -24,6 +24,7 @@ struct MaiMacApp: App {
   var body: some Scene {
     WindowGroup("pmai", id: "workspace") {
       MacWorkspaceWindow(backend: backend)
+        .modifier(MacWritingToolsDisabled())
         .tint(appearance.accentColor)
         .accentColor(appearance.accentColor)
         .frame(minWidth: 780, minHeight: 520)
@@ -36,8 +37,19 @@ struct MaiMacApp: App {
     }
     Settings {
       MacSettingsWindow(backend: backend)
+        .modifier(MacWritingToolsDisabled())
         .tint(appearance.accentColor)
         .accentColor(appearance.accentColor)
+    }
+  }
+}
+
+private struct MacWritingToolsDisabled: ViewModifier {
+  func body(content: Content) -> some View {
+    if #available(macOS 15.4, *) {
+      content.writingToolsBehavior(.disabled).writingToolsAffordanceVisibility(.hidden)
+    } else {
+      content.writingToolsBehavior(.disabled)
     }
   }
 }
