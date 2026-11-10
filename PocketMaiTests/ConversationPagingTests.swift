@@ -45,6 +45,15 @@ final class ConversationPagingTests: XCTestCase {
     let exported = try PersistenceStore.conversationCoding.makeDecoder().decode(
       Conversation.self, from: Data(contentsOf: portable))
     XCTAssertEqual(exported, chat)
+    var withoutLength = attachment
+    withoutLength.storedDataLength = nil
+    let loadedWithoutLength = await AttachmentImageLoader.shared.data(for: withoutLength)
+    XCTAssertEqual(loadedWithoutLength, bytes)
+    // A warm image remains available without reopening its on-disk blob (for
+    // example, while cloud storage temporarily makes the file unavailable).
+    try FileManager.default.removeItem(at: XCTUnwrap(attachment.storageDataURL))
+    let cached = await AttachmentImageLoader.shared.data(for: attachment)
+    XCTAssertEqual(cached, bytes)
   }
 
   @MainActor

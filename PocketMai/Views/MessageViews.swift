@@ -1450,13 +1450,8 @@ actor AttachmentImageLoader {
   }
 
   func data(for attachment: ChatAttachment) async -> Data? {
-    guard attachment.kind == .image,
-      let encoded = attachment.resolvedDataBase64,
-      !encoded.isEmpty
-    else {
-      return nil
-    }
-    let key = AttachmentKey(id: attachment.id, encodedLength: encoded.count)
+    guard attachment.kind == .image else { return nil }
+    let key = AttachmentKey(id: attachment.id, encodedLength: attachment.imageDataLength)
     if var cached = dataCache[key] {
       cached.access = nextAccess()
       dataCache[key] = cached
@@ -1467,7 +1462,8 @@ actor AttachmentImageLoader {
     }
 
     let task = Task.detached(priority: .userInitiated) {
-      Data(base64Encoded: encoded)
+      guard let encoded = attachment.resolvedDataBase64, !encoded.isEmpty else { return nil as Data? }
+      return Data(base64Encoded: encoded)
     }
     dataTasks[key] = task
     let result = await task.value
@@ -1766,12 +1762,13 @@ enum MessageRenderCache {
   }
 
   private static let maxEntries = 160
-  @MainActor private static var preparedEntries: [UUID: PreparedEntry] = [:]
-  @MainActor private static var markdownEntries: [MarkdownCacheKey: MarkdownEntry] = [:]
+  @MainActor private static var preparedEntries = RenderCache<UUID, PreparedEntry>(
+    maximumCount: maxEntries, maximumCost: 8 * 1_024 * 1_024)
+  @MainActor private static var markdownEntries = RenderCache<MarkdownCacheKey, MarkdownEntry>(
+    maximumCount: maxEntries, maximumCost: 8 * 1_024 * 1_024)
   @MainActor private static var streamingMarkdownEntries:
-    [MarkdownCacheKey: StreamingMarkdownEntry] = [:]
-  @MainActor private static var preparedAccessOrder: [UUID] = []
-  @MainActor private static var markdownAccessOrder: [MarkdownCacheKey] = []
+    RenderCache<MarkdownCacheKey, StreamingMarkdownEntry> = .init(
+      maximumCount: maxEntries, maximumCost: 8 * 1_024 * 1_024)
 
   @MainActor
   static func partCount(for message: ChatMessage) -> Int {
@@ -1780,14 +1777,14 @@ enum MessageRenderCache {
 
   @MainActor
   fileprivate static func preparedContent(messageID: UUID, text: String) -> PreparedMessageContent {
-    if let entry = preparedEntries[messageID], entry.text == text {
-      markAccessed(messageID)
+    let entry = preparedEntries.value(for: messageID)
+    if let entry, entry.text == text {
       return entry.content
     }
 
     // Reasoning closed by a bare `</think>` reaches back into the prefix that was
     // already shown as prose, so that case re-parses the whole message instead.
-    if let entry = preparedEntries[messageID],
+    if let entry,
       let baseContent = entry.incrementalBaseContent,
       !entry.incrementalBaseText.isEmpty,
       text.hasPrefix(entry.incrementalBaseText),
@@ -1802,25 +1799,23 @@ enum MessageRenderCache {
         partIDOffset: baseContent.parts.count)
       let content = mergedPreparedContent(baseContent, suffixContent)
       let isBoundary = isPreparedIncrementalBoundary(text)
-      preparedEntries[messageID] = PreparedEntry(
+      preparedEntries.insert(PreparedEntry(
         text: text,
         content: content,
         incrementalBaseText: isBoundary ? text : entry.incrementalBaseText,
-        incrementalBaseContent: isBoundary ? content : baseContent)
-      markAccessed(messageID)
-      pruneIfNeeded()
+        incrementalBaseContent: isBoundary ? content : baseContent), for: messageID,
+        cost: text.utf8.count * 4 + content.parts.count * 128)
       return content
     }
 
     let content = buildPreparedContent(text: text)
     let isBoundary = isPreparedIncrementalBoundary(text)
-    preparedEntries[messageID] = PreparedEntry(
+    preparedEntries.insert(PreparedEntry(
       text: text,
       content: content,
       incrementalBaseText: isBoundary ? text : "",
-      incrementalBaseContent: isBoundary ? content : nil)
-    markAccessed(messageID)
-    pruneIfNeeded()
+      incrementalBaseContent: isBoundary ? content : nil), for: messageID,
+      cost: text.utf8.count * 4 + content.parts.count * 128)
     return content
   }
 
@@ -1876,18 +1871,18 @@ enum MessageRenderCache {
   ) -> [MarkdownBlock] {
     let key = MarkdownCacheKey(messageID: messageID, partID: partID)
     if isStreaming {
+      markdownEntries.removeValue(for: key)
       return streamingMarkdownBlocks(for: key, text: text)
     }
 
-    if let entry = markdownEntries[key], entry.text == text {
-      markAccessed(key)
+    streamingMarkdownEntries.removeValue(for: key)
+    if let entry = markdownEntries.value(for: key), entry.text == text {
       return entry.blocks
     }
 
     let blocks = MarkdownParser.blocks(from: text)
-    markdownEntries[key] = MarkdownEntry(text: text, blocks: blocks)
-    markAccessed(key)
-    pruneIfNeeded()
+    markdownEntries.insert(MarkdownEntry(text: text, blocks: blocks), for: key,
+      cost: text.utf8.count * 2 + blocks.count * 128)
     return blocks
   }
 
@@ -1896,8 +1891,8 @@ enum MessageRenderCache {
     for key: MarkdownCacheKey,
     text: String
   ) -> [MarkdownBlock] {
-    if let entry = streamingMarkdownEntries[key], text.hasPrefix(entry.text) {
-      let newStableEndOffset = streamingStableEndOffset(in: text)
+    if let entry = streamingMarkdownEntries.value(for: key), text.utf8.starts(with: entry.text.utf8) {
+      let newStableEndOffset = streamingStableEndOffset(in: text, fromUTF16Offset: entry.stableEndOffset)
       if newStableEndOffset >= entry.stableEndOffset {
         var stableBlocks = entry.stableBlocks
         if newStableEndOffset > entry.stableEndOffset {
@@ -1914,12 +1909,11 @@ enum MessageRenderCache {
           toUTF16Offset: text.utf16.count)
         let blocks =
           stableBlocks + visibleMarkdownBlocks(from: tail, idOffset: stableBlocks.count)
-        streamingMarkdownEntries[key] = StreamingMarkdownEntry(
+        streamingMarkdownEntries.insert(StreamingMarkdownEntry(
           text: text,
           stableEndOffset: newStableEndOffset,
-          stableBlocks: stableBlocks)
-        markAccessed(key)
-        pruneIfNeeded()
+          stableBlocks: stableBlocks), for: key,
+          cost: text.utf8.count * 2 + stableBlocks.count * 128)
         return blocks
       }
     }
@@ -1936,38 +1930,12 @@ enum MessageRenderCache {
     let stableBlocks = visibleMarkdownBlocks(from: stableText, idOffset: 0)
     let blocks =
       stableBlocks + visibleMarkdownBlocks(from: tailText, idOffset: stableBlocks.count)
-    streamingMarkdownEntries[key] = StreamingMarkdownEntry(
+    streamingMarkdownEntries.insert(StreamingMarkdownEntry(
       text: text,
       stableEndOffset: stableEndOffset,
-      stableBlocks: stableBlocks)
-    markAccessed(key)
-    pruneIfNeeded()
+      stableBlocks: stableBlocks), for: key,
+      cost: text.utf8.count * 2 + stableBlocks.count * 128)
     return blocks
-  }
-
-  @MainActor
-  private static func markAccessed(_ id: UUID) {
-    preparedAccessOrder.removeAll { $0 == id }
-    preparedAccessOrder.append(id)
-  }
-
-  @MainActor
-  private static func markAccessed(_ key: MarkdownCacheKey) {
-    markdownAccessOrder.removeAll { $0 == key }
-    markdownAccessOrder.append(key)
-  }
-
-  @MainActor
-  private static func pruneIfNeeded() {
-    while preparedAccessOrder.count > maxEntries, let oldest = preparedAccessOrder.first {
-      preparedAccessOrder.removeFirst()
-      preparedEntries.removeValue(forKey: oldest)
-    }
-    while markdownAccessOrder.count > maxEntries, let oldest = markdownAccessOrder.first {
-      markdownAccessOrder.removeFirst()
-      markdownEntries.removeValue(forKey: oldest)
-      streamingMarkdownEntries.removeValue(forKey: oldest)
-    }
   }
 
   private static func mergedPreparedContent(
@@ -2004,17 +1972,19 @@ enum MessageRenderCache {
     return MarkdownParser.blocks(from: text, idOffset: idOffset).filter { !$0.isVisiblyEmpty }
   }
 
-  private static func streamingStableEndOffset(in text: String) -> Int {
+  private static func streamingStableEndOffset(in text: String, fromUTF16Offset offset: Int = 0) -> Int {
     guard !text.isEmpty else { return 0 }
 
-    var lineStart = text.startIndex
-    var cursor = text.startIndex
+    // Stable blocks end at a blank line outside a fence. Their parser state
+    // is already known, so streaming only needs to scan the unfinished tail.
+    var lineStart = String.Index(utf16Offset: offset, in: text)
+    var cursor = lineStart
     var inCode = false
-    var stableEnd = text.startIndex
+    var stableEnd = lineStart
 
     while cursor < text.endIndex {
       var lineEnd = cursor
-      while lineEnd < text.endIndex, text[lineEnd] != "\n", text[lineEnd] != "\r" {
+      while lineEnd < text.endIndex, text[lineEnd] != "\n", text[lineEnd] != "\r", text[lineEnd] != "\r\n" {
         text.formIndex(after: &lineEnd)
       }
 
@@ -2031,12 +2001,12 @@ enum MessageRenderCache {
           if nextLineStart < text.endIndex, text[nextLineStart] == "\n" {
             text.formIndex(after: &nextLineStart)
           }
-        } else if text[nextLineStart] == "\n" {
+        } else if text[nextLineStart] == "\n" || text[nextLineStart] == "\r\n" {
           text.formIndex(after: &nextLineStart)
         }
       }
 
-      if !inCode, trimmed.isEmpty {
+      if !inCode, trimmed.isEmpty, lineEnd < text.endIndex {
         stableEnd = nextLineStart
       }
 
@@ -3543,12 +3513,13 @@ private struct MarkdownInlineImage: Equatable {
 }
 
 private enum MarkdownInlineImageScanner {
-  @MainActor private static var cachedSegments: [String: [MarkdownInlineSegment]] = [:]
+  @MainActor private static var cachedSegments = RenderCache<String, [MarkdownInlineSegment]>(
+    maximumCount: 128, maximumCost: 2 * 1_024 * 1_024)
 
   @MainActor
   static func segments(in value: String) -> [MarkdownInlineSegment] {
     guard value.contains("![") else { return [.text(value)] }
-    if let cached = cachedSegments[value] { return cached }
+    if let cached = cachedSegments.value(for: value) { return cached }
 
     let chars = Array(value)
     var segments: [MarkdownInlineSegment] = []
@@ -3574,10 +3545,7 @@ private enum MarkdownInlineImageScanner {
 
     appendText(chars, range: textStart..<chars.count, to: &segments)
     let result = segments.isEmpty ? [.text(value)] : segments
-    if cachedSegments.count >= 128 {
-      cachedSegments.removeAll(keepingCapacity: true)
-    }
-    cachedSegments[value] = result
+    cachedSegments.insert(result, for: value, cost: value.utf8.count * 2 + result.count * 64)
     return result
   }
 
@@ -3900,19 +3868,17 @@ extension AppearanceSettings {
 }
 
 private enum MarkdownInlineLinkScanner {
-  @MainActor private static var cachedResults: [String: Bool] = [:]
+  @MainActor private static var cachedResults = RenderCache<String, Bool>(
+    maximumCount: 384, maximumCost: 1_024 * 1_024)
 
   /// Reports whether the inline markdown resolves to one or more links.
   /// A cheap textual pre-check avoids parsing strings that cannot contain a
   /// markdown link or autolink.
   @MainActor
   static func containsLink(_ value: String) -> Bool {
-    if let cached = cachedResults[value] { return cached }
+    if let cached = cachedResults.value(for: value) { return cached }
     let result = containsUncachedLink(value)
-    if cachedResults.count >= 384 {
-      cachedResults.removeAll(keepingCapacity: true)
-    }
-    cachedResults[value] = result
+    cachedResults.insert(result, for: value, cost: value.utf8.count + 64)
     return result
   }
 
@@ -3929,13 +3895,11 @@ private enum MarkdownInlineLinkScanner {
 
 @MainActor
 private enum MarkdownInlineAttributedCache {
-  private static let maxEntries = 384
-  private static var entries: [String: AttributedString] = [:]
-  private static var accessOrder: [String] = []
+  private static var entries = RenderCache<String, AttributedString>(
+    maximumCount: 384, maximumCost: 4 * 1_024 * 1_024)
 
   static func baseAttributedString(for value: String) -> AttributedString {
-    if let cached = entries[value] {
-      markAccessed(value)
+    if let cached = entries.value(for: value) {
       return cached
     }
 
@@ -3957,18 +3921,8 @@ private enum MarkdownInlineAttributedCache {
 
     let result = MarkdownInlineStyleApplier.styled(
       MarkdownInlineTokenColorizer.colorized(attributed))
-    entries[value] = result
-    markAccessed(value)
-    if accessOrder.count > maxEntries, let oldest = accessOrder.first {
-      accessOrder.removeFirst()
-      entries.removeValue(forKey: oldest)
-    }
+    entries.insert(result, for: value, cost: value.utf8.count * 2 + result.runs.count * 128)
     return result
-  }
-
-  private static func markAccessed(_ value: String) {
-    accessOrder.removeAll { $0 == value }
-    accessOrder.append(value)
   }
 }
 

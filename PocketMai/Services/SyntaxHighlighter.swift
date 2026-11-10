@@ -1,6 +1,13 @@
 import SwiftUI
 
 enum SyntaxHighlighter {
+  private static let keywords: Set<String> = [
+    "actor", "as", "async", "await", "case", "catch", "class", "const", "default", "defer", "do",
+    "else", "enum", "export", "false", "final", "for", "func", "function", "guard", "if", "import", "in",
+    "let", "nil", "null", "private", "public", "return", "self", "static", "struct", "switch", "throw",
+    "throws", "true", "try", "var", "while",
+  ]
+
   static func highlight(_ code: String, language: String) -> AttributedString {
     let language =
       language
@@ -18,13 +25,27 @@ enum SyntaxHighlighter {
 
     var output = AttributedString()
     var token = ""
+    var plain = ""
+
+    func appendPlain() {
+      guard !plain.isEmpty else { return }
+      var part = AttributedString(plain)
+      part.foregroundColor = .primary
+      output.append(part)
+      plain.removeAll(keepingCapacity: true)
+    }
 
     func appendToken() {
       guard !token.isEmpty else { return }
-      var part = AttributedString(token)
-      part.foregroundColor = color(for: token, language: language)
-      output.append(part)
-      token.removeAll()
+      if let color = color(for: token) {
+        appendPlain()
+        var part = AttributedString(token)
+        part.foregroundColor = color
+        output.append(part)
+      } else {
+        plain += token
+      }
+      token.removeAll(keepingCapacity: true)
     }
 
     for character in code {
@@ -32,12 +53,11 @@ enum SyntaxHighlighter {
         token.append(character)
       } else {
         appendToken()
-        var part = AttributedString(String(character))
-        part.foregroundColor = .primary
-        output.append(part)
+        plain.append(character)
       }
     }
     appendToken()
+    appendPlain()
     return output
   }
 
@@ -234,16 +254,7 @@ enum SyntaxHighlighter {
       || character == "?"
   }
 
-  private static func color(for token: String, language: String) -> Color {
-    let keywords: Set<String> = [
-      "actor", "as", "async", "await", "case", "catch", "class", "const", "default", "defer", "do",
-      "else",
-      "enum", "export", "false", "final", "for", "func", "function", "guard", "if", "import", "in",
-      "let",
-      "nil", "null", "private", "public", "return", "self", "static", "struct", "switch", "throw",
-      "throws",
-      "true", "try", "var", "while",
-    ]
+  private static func color(for token: String) -> Color? {
     if keywords.contains(token) {
       return .purple
     }
@@ -253,6 +264,6 @@ enum SyntaxHighlighter {
     if token.hasPrefix("//") || token.hasPrefix("#") {
       return .secondary
     }
-    return .primary
+    return nil
   }
 }

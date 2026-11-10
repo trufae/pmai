@@ -77,6 +77,30 @@ rows. Style runs retain contiguous text together; ordinary ASCII appends and
 cache invalidations now happen per line. These figures measure transcript
 loading and scrolling locally; Linux server RSS should be measured separately.
 
+The iOS rendering components also have an opt-in macOS harness, compiled from
+the same Swift sources used by the app:
+
+```sh
+swiftc -O PocketMai/Services/SyntaxHighlighter.swift PocketMai/Services/RenderCache.swift test/bench/ios-rendering.swift -o /tmp/pmai-ios-render
+/usr/bin/time -l /tmp/pmai-ios-render highlight
+/usr/bin/time -l /tmp/pmai-ios-render count-only
+/usr/bin/time -l /tmp/pmai-ios-render bounded
+```
+
+On 2026-11-10 (macOS 27.0.1 arm64, Swift 6.4, `-O`), highlighting 294,912 bytes
+with identical text and style runs used 0.92 s of CPU before the change
+(`cc6e8c3b`'s `SyntaxHighlighter.swift`) and 0.21 s afterward. For a repeatable
+baseline, extract that file with `git show` and compile it in place of the
+current highlighter above.
+
+The cache modes insert 384 growing snapshots starting at 250 KB. They compare
+the former count-only policy with a 4 MiB estimated-cost budget using the same
+cache implementation: peak RSS was 239.66 MiB versus 13.73 MiB, and accounted
+retained cost was 184.56 MiB versus 3.87 MiB. The six app text-rendering caches
+now have individual byte-cost budgets totaling 31 MiB; costs estimate text and
+rendered storage rather than measuring heap allocations. These are component
+stress measurements, not whole-app iOS memory figures or required CI checks.
+
 Live-provider checks and coding benchmarks remain explicit commands below.
 `python3 test/repl-history-smoke.py MaiCore/.build/debug/pmai` checks input
 history listing, search, deletion, clearing, persistence, path overrides,

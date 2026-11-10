@@ -31,6 +31,47 @@ func remoteHistoryCountsVisibleGroups() {
 
 final class ConversationMessageRenderingTests: XCTestCase {
   @MainActor
+  func testStreamingMarkdownMatchesFreshParsingAcrossStableBoundariesAndEdits() {
+    func rendered(_ blocks: [MarkdownBlock]) -> [String] {
+      blocks.flatMap { block -> [String] in
+        switch block.kind {
+        case .text(let text):
+          // Streaming deliberately separates settled paragraphs into widgets.
+          // Compare visible lines, not the parser's internal block partition.
+          return text.components(separatedBy: .newlines)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }.map { "text: " + $0 }
+        case .code(let language, let code): return ["code \(language): " + code]
+        default:
+          XCTFail("Unexpected block in text/code fixture")
+          return []
+        }
+      }
+    }
+    for chunks in [
+      ["Intro 👩‍💻\n\n", "```swift\nlet café = 1\n", "\nlet y = 2\n```\n\n", "Last paragraph"],
+      ["Intro\n\n    ", "continued\n\n", "Last paragraph"],
+      ["Intro\r\n\r\n", "```swift\r\nlet x = 1\r\n", "\r\n```\r\n\r\n", "Last paragraph"],
+    ] {
+      let id = UUID()
+      var text = ""
+      for chunk in chunks {
+        text += chunk
+        XCTAssertEqual(rendered(MessageRenderCache.markdownBlocks(
+          messageID: id, text: text, isStreaming: true)), rendered(MarkdownParser.blocks(from: text)))
+      }
+      XCTAssertEqual(rendered(MessageRenderCache.markdownBlocks(messageID: id, text: text)),
+        rendered(MarkdownParser.blocks(from: text)))
+      let replacement = "Edited prefix\n\nReplacement"
+      XCTAssertEqual(rendered(MessageRenderCache.markdownBlocks(
+        messageID: id, text: replacement, isStreaming: true)), rendered(MarkdownParser.blocks(from: replacement)))
+      for normalized in ["e\u{301}\n\n", "é\n\n"] {
+        let actual = rendered(MessageRenderCache.markdownBlocks(messageID: id, text: normalized, isStreaming: true))
+        XCTAssertEqual(actual.map { Array($0.utf8) }, rendered(MarkdownParser.blocks(from: normalized)).map { Array($0.utf8) })
+      }
+    }
+  }
+
+  @MainActor
   func testBalancedTablesWrapAndScrollAcrossAllColumnsAtDifferentWidths() async throws {
     let headers = ["First", "Second", "Third", "Fourth"]
     let text = "A longer cell with enough text to wrap across multiple lines and remain fully readable."
