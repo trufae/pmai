@@ -25,10 +25,6 @@ struct MaiMacApp: App {
   var body: some Scene {
     WindowGroup("pmai", id: "workspace", for: UUID.self) { $requestID in
       MacWorkspaceWindow(backend: backend, tabs: tabs, requestID: requestID, delegate: delegate)
-        .modifier(MacWritingToolsDisabled())
-        .tint(appearance.accentColor)
-        .accentColor(appearance.accentColor)
-        .frame(minWidth: 780, minHeight: 520)
         .onAppear { delegate.backend = backend }
     }
     .defaultSize(width: 1180, height: 780)
@@ -60,18 +56,34 @@ private struct MacWorkspaceWindow: View {
   let tabs: MacWindowTabs
   let requestID: UUID?
   let delegate: MacAppDelegate
-  @State private var launch: MacWindowLaunch
+  @StateObject private var launch: MacWindowLaunch
   @Environment(\.openWindow) private var openWindow
-  @Environment(\.appearsActive) private var appearsActive
-
-  private var workspace: MacWorkspace { launch.workspace }
 
   init(backend: MacBackend, tabs: MacWindowTabs, requestID: UUID?, delegate: MacAppDelegate) {
     self.tabs = tabs
     self.requestID = requestID
     self.delegate = delegate
-    _launch = State(initialValue: tabs.launch(for: requestID, backend: backend))
+    // Create the workspace once, lazily, even when the scene redraws.
+    _launch = StateObject(wrappedValue: tabs.launch(for: requestID, backend: backend))
   }
+
+  var body: some View {
+    MacWorkspaceContent(tabs: tabs, launch: launch, requestID: requestID)
+      .onAppear {
+        let backend = launch.workspace.backend
+        let action = openWindow
+        delegate.newTab = { tabs.newTab(backend: backend) { action(id: "workspace", value: $0) } }
+      }
+  }
+}
+
+struct MacWorkspaceContent: View {
+  let tabs: MacWindowTabs
+  let launch: MacWindowLaunch
+  let requestID: UUID?
+  @Environment(\.appearsActive) private var appearsActive
+  private var appearance = MacAppearance()
+  private var workspace: MacWorkspace { launch.workspace }
 
   var body: some View {
     MacWorkspaceView(workspace: workspace)
@@ -80,13 +92,12 @@ private struct MacWorkspaceWindow: View {
           title: workspace.selected?.title ?? "pmai")
           .frame(width: 0, height: 0)
       }
+      .modifier(MacWritingToolsDisabled())
+      .tint(appearance.accentColor)
+      .accentColor(appearance.accentColor)
+      .frame(minWidth: 780, minHeight: 520)
       .focusedSceneValue(\.macWorkspace, workspace)
       .task { await workspace.restore() }
-      .onAppear {
-        let backend = workspace.backend
-        let action = openWindow
-        delegate.newTab = { tabs.newTab(backend: backend) { action(id: "workspace", value: $0) } }
-      }
       .onChange(of: appearsActive, initial: true) { _, active in
         if active { workspace.backend.activeWorkspace = workspace }
       }

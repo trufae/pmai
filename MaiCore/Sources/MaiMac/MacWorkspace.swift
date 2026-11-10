@@ -79,6 +79,13 @@ final class MacWorkspace {
   func restore() async {
     guard !restored else { return }
     restored = true
+    // A new tab inherits a loaded location; its folders and sessions are shared.
+    // Avoid a disk scan or a separate remote connection just to show them again.
+    if inheritedLocation, !cwd.isEmpty, hostID == nil || host != nil,
+      backend.snapshots[hostID]?.folders.contains(where: { $0.cwd == cwd }) == true {
+      newChat()
+      return
+    }
     busy = true
     defer { busy = false }
     do {

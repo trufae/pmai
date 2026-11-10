@@ -3,13 +3,11 @@ import Observation
 import SwiftUI
 
 @MainActor
-final class MacWindowLaunch {
+final class MacWindowLaunch: ObservableObject {
   let workspace: MacWorkspace
-  weak var parent: NSWindow?
 
-  init(workspace: MacWorkspace, parent: NSWindow? = nil) {
+  init(workspace: MacWorkspace) {
     self.workspace = workspace
-    self.parent = parent
   }
 }
 
@@ -19,10 +17,11 @@ final class MacWindowTabs: NSObject {
   private struct Entry {
     weak var window: NSWindow?
     let workspace: MacWorkspace
+    let controller: NSWindowController?
   }
 
-  private var windows: [ObjectIdentifier: Entry] = [:]
-  private var pending: [UUID: MacWindowLaunch] = [:]
+  @ObservationIgnored private var windows: [ObjectIdentifier: Entry] = [:]
+  @ObservationIgnored private var pending: [UUID: MacWindowLaunch] = [:]
   private var closed: [MacWorkspace] = []
 
   var canReopen: Bool { !closed.isEmpty }
@@ -64,23 +63,37 @@ final class MacWindowTabs: NSObject {
   }
 
   private func open(_ workspace: MacWorkspace, beside parent: NSWindow?, openWindow: (UUID) -> Void) {
+    if let parent {
+      // Join the native group before showing the tab. SwiftUI's openWindow
+      // presents a standalone window before its content mounts.
+      let launch = MacWindowLaunch(workspace: workspace)
+      let window = NSWindow(contentRect: parent.contentRect(forFrameRect: parent.frame),
+        styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+        backing: .buffered, defer: true)
+      window.contentMinSize = NSSize(width: 780, height: 520)
+      window.collectionBehavior = .fullScreenPrimary
+      window.toolbarStyle = .unified
+      let controller = NSWindowController(window: window)
+      attach(window, launch: launch, requestID: nil, controller: controller)
+      window.contentViewController = NSHostingController(rootView:
+        MacWorkspaceContent(tabs: self, launch: launch, requestID: nil))
+      parent.addTabbedWindow(window, ordered: .above)
+      window.makeKeyAndOrderFront(nil)
+      return
+    }
     let id = UUID()
-    pending[id] = MacWindowLaunch(workspace: workspace, parent: parent)
+    pending[id] = MacWindowLaunch(workspace: workspace)
     openWindow(id)
   }
 
-  func attach(_ window: NSWindow, launch: MacWindowLaunch, requestID: UUID?) {
+  func attach(_ window: NSWindow, launch: MacWindowLaunch, requestID: UUID?,
+    controller: NSWindowController? = nil) {
     let key = ObjectIdentifier(window)
     guard windows[key] == nil else { return }
     window.tabbingIdentifier = "pmai-workspace"
     window.tabbingMode = .automatic
-    windows[key] = Entry(window: window, workspace: launch.workspace)
+    windows[key] = Entry(window: window, workspace: launch.workspace, controller: controller)
     if let requestID { pending[requestID] = nil }
-    if let parent = launch.parent, windows[ObjectIdentifier(parent)] != nil {
-      parent.addTabbedWindow(window, ordered: .above)
-      window.makeKeyAndOrderFront(nil)
-    }
-    launch.parent = nil
   }
 
   @objc private func windowClosed(_ notification: Notification) {
@@ -103,7 +116,8 @@ struct MacWindowTabBridge: NSViewRepresentable {
   func updateNSView(_ view: WindowProbe, context: Context) {
     view.attach = { window in
       tabs.attach(window, launch: launch, requestID: requestID)
-      window.tab.title = title
+      if window.title != title { window.title = title }
+      if window.tab.title != title { window.tab.title = title }
     }
     view.updateWindow()
   }
@@ -115,11 +129,9 @@ struct MacWindowTabBridge: NSViewRepresentable {
       updateWindow()
     }
     func updateWindow() {
-      // Registration can publish state; run after SwiftUI's view update.
-      Task { @MainActor [weak self] in
-        guard let self, let window else { return }
-        attach?(window)
-      }
+      // The registry is not observed; registration need not schedule another render.
+      guard let window else { return }
+      attach?(window)
     }
   }
 }
