@@ -1,3 +1,4 @@
+import Combine
 import CoreLocation
 import XCTest
 
@@ -5,7 +6,18 @@ import XCTest
 
 @MainActor
 final class LocationServiceTests: XCTestCase {
-  func testSentMessageIsVisibleAndSavedWhileGPSContextIsPending() async throws {
+  func testSentMessageCanQueueAndStopWhileGPSContextIsPending() async throws {
+    try await checkSubmissionWhileGPSContextIsPending(stop: true)
+  }
+
+  func testQueuedMessageRunsAfterGPSContextCompletes() async throws {
+    try await checkSubmissionWhileGPSContextIsPending(stop: false)
+  }
+
+  private func checkSubmissionWhileGPSContextIsPending(stop: Bool) async throws {
+    StubChatEndpoint.install()
+    defer { StubChatEndpoint.uninstall() }
+    StubChatEndpoint.script = { _ in (StubChatEndpoint.completion(content: "Done"), 0) }
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let persistence = PersistenceStore(localBaseURL: root)
@@ -16,16 +28,21 @@ final class LocationServiceTests: XCTestCase {
       try await Task.sleep(for: .milliseconds(20))
     }
     await store.loadStoredConversationsForSearch()
-    let endpoint = OpenAIEndpoint(name: "Unused", baseURL: "https://example.invalid/v1")
+    let endpoint = OpenAIEndpoint(name: "Fixture", baseURL: "https://\(StubChatEndpoint.host)/v1")
     store.settings.openAIEndpoints = [endpoint]
     store.settings.toolSettings.useGPSLocation = true
+    store.settings.agents[0].canSpawnSubagents = false
+    store.settings.followUps.autoGenerate = false
+    store.settings.background.liveActivityEnabled = false
     store.newConversation()
     store.updateCurrentConversation {
       $0.provider = .openAICompatible
       $0.endpointID = endpoint.id
       $0.modelID = "test"
+      $0.usesStreaming = false
       $0.toolsEnabled = true
       $0.enabledTools = [.location]
+      $0.enabledMCPServers = []
     }
     let id = try XCTUnwrap(store.currentConversation?.id)
     let manager = StubLocationManager(status: .authorizedWhenInUse)
@@ -33,25 +50,52 @@ final class LocationServiceTests: XCTestCase {
     let requested = expectation(description: "GPS context requested")
     manager.onLocationRequest = { requested.fulfill() }
     let attachment = ChatAttachment.textFile(filename: "note.txt", text: "Attached note")
-    let send = Task { await store.send(prompt: "Hello", attachments: [attachment]) }
-    defer { send.cancel() }
+    let accepted = await store.send(prompt: "Hello", attachments: [attachment])
+    defer { store.cancelResponse(in: id) }
+    XCTAssertTrue(accepted)
+    // The composer must offer queue/stop as soon as submission returns, even
+    // before the background task has started requesting context.
+    XCTAssertTrue(store.isResponding(in: id))
+    XCTAssertTrue(store.enqueueUserMessage(prompt: "Next", attachments: [attachment], in: id))
     await fulfillment(of: [requested], timeout: 10)
 
     let message = try XCTUnwrap(store.currentConversation?.messages.last)
     XCTAssertEqual(message.role, .user)
     XCTAssertEqual(message.text, "Hello")
     XCTAssertEqual(message.attachments, [attachment])
-    XCTAssertFalse(store.isResponding(in: id))
+    XCTAssertTrue(store.isResponding(in: id))
+    let queued = try XCTUnwrap(store.queuedUserMessages(in: id).first)
+    XCTAssertEqual(queued.text, "Next")
+    XCTAssertEqual(queued.attachments, [attachment])
     persistence.flushPendingWrites()
     let saved = try XCTUnwrap(persistence.loadConversation(id: id)?.messages)
     XCTAssertEqual(saved.map(\.id), [message.id])
     XCTAssertEqual(saved.first?.text, message.text)
     XCTAssertEqual(saved.first?.attachments, [attachment])
 
-    send.cancel()
-    _ = await send.value
-    XCTAssertEqual(store.currentConversation?.messages, [message])
+    let finished = expectation(description: "Response finished")
+    let observation = store.$respondingConversationIDs
+      .filter { !$0.contains(id) }.prefix(1).sink { _ in finished.fulfill() }
+    defer { observation.cancel() }
+    if stop {
+      store.cancelResponse(in: id)
+    } else {
+      manager.deliver(latitude: 41, longitude: 2)
+    }
+    await fulfillment(of: [finished], timeout: 15)
     XCTAssertFalse(store.isResponding(in: id))
+    if stop {
+      XCTAssertEqual(store.currentConversation?.messages, [message])
+      XCTAssertEqual(store.queuedUserMessages(in: id), [queued])
+      XCTAssertTrue(StubChatEndpoint.requests.isEmpty)
+    } else {
+      let messages = try XCTUnwrap(store.currentConversation?.messages)
+      XCTAssertEqual(messages.filter { $0.role == .user }.map(\.text), ["Hello", "Next"])
+      XCTAssertEqual(messages.filter { $0.role == .user }.last?.attachments, [attachment])
+      XCTAssertEqual(messages.last?.role, .assistant)
+      XCTAssertEqual(messages.last?.text, "Done")
+      XCTAssertTrue(store.queuedUserMessages(in: id).isEmpty)
+    }
   }
 
   func testPrefetchedLocationIsReusedUntilItsMeasuredPositionExpires() async {

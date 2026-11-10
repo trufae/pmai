@@ -235,7 +235,6 @@ final class AppStore: ObservableObject {
   private var thenActions: [ThenAction] = []
   private var thenDrainTask: Task<Void, Never>?
   private var thenDrainRequested = false
-  private var preparingConversationIDs: Set<UUID> = []
   @Published var commandOutput: String?
   @Published var btwQuestions: [BTWQuestion] = []
   @Published var showingVersion = false
@@ -360,7 +359,7 @@ final class AppStore: ObservableObject {
 
   private var canRunThen: Bool {
     !isInBackground && !isResponding && btwTasks.isEmpty && !isCompacting && !isUpdatingMemory
-      && followUpTasks.isEmpty && preparingConversationIDs.isEmpty
+      && followUpTasks.isEmpty
   }
 
   func drainThenQueue() {
@@ -2443,8 +2442,7 @@ final class AppStore: ObservableObject {
     }
     guard let index = indexedConversationIndex(for: conversationID) else { return false }
     normalizeCurrentAppleConversationIfNeeded(index: index)
-    guard !respondingConversationIDs.contains(conversationID),
-      !preparingConversationIDs.contains(conversationID) else { return false }
+    guard !respondingConversationIDs.contains(conversationID) else { return false }
     if let systemPromptID = resolved.systemPromptID {
       conversations[index].systemPromptID = systemPromptID
       conversations[index].updatedAt = Date()
@@ -2460,12 +2458,7 @@ final class AppStore: ObservableObject {
     }
 
     errorMessage = nil
-    preparingConversationIDs.insert(conversationID)
-    defer {
-      preparingConversationIDs.remove(conversationID)
-      drainThenQueue()
-    }
-    await composeUserTurn(
+    composeUserTurn(
       prompt: resolved.prompt,
       displayText: resolved.displayText,
       conversationID: conversationID,
@@ -2975,7 +2968,7 @@ final class AppStore: ObservableObject {
     }
 
     errorMessage = nil
-    await composeUserTurn(
+    composeUserTurn(
       prompt: prompt,
       displayText: last.displayText,
       conversationID: conversationID,
@@ -2997,7 +2990,7 @@ final class AppStore: ObservableObject {
     voiceRecordingFilename: String? = nil,
     attachments: [ChatAttachment] = [],
     carPlay: Bool = false
-  ) async {
+  ) {
     guard !Task.isCancelled, let i = indexedConversationIndex(for: conversationID) else { return }
     clearFollowUpSuggestions(in: conversationID)
     let conversation = conversations[i]
@@ -3030,17 +3023,10 @@ final class AppStore: ObservableObject {
     upsertSummary(for: conversations[i])
     saveConversations()
 
-    // Show and save the user turn before context sources such as GPS can suspend it.
-    let context = await ContextBuilder.build(
-      input: prompt,
-      conversation: conversation,
-      settings: settings,
-      locationService: { self.locationService }
-    )
-    guard !Task.isCancelled, let index = indexedConversationIndex(for: conversationID) else { return }
-    conversations[index].lastContextSignature = context.signature
+    // Context preparation belongs to the cancellable response task, so queue
+    // and stop are available even while sources such as GPS are still pending.
     dispatchAssistantTurn(
-      conversationID: conversationID, context: context.text, carPlay: carPlay)
+      conversation: conversation, prompt: prompt, carPlay: carPlay)
   }
 
   func autoCompactIfNeeded(conversationID: UUID) async -> Bool {
@@ -3159,8 +3145,9 @@ final class AppStore: ObservableObject {
   }
 
   private func dispatchAssistantTurn(
-    conversationID: UUID, context: String, carPlay: Bool = false
+    conversation initialConversation: Conversation, prompt: String, carPlay: Bool = false
   ) {
+    let conversationID = initialConversation.id
     cancelVoiceover(in: conversationID)
     let responseTaskToken = UUID()
     respondingConversationIDs.insert(conversationID)
@@ -3187,6 +3174,20 @@ final class AppStore: ObservableObject {
           drainThenQueue()
         }
       }
+      guard !Task.isCancelled else {
+        responseOutcomes[conversationID] = .stopped
+        return
+      }
+      let context = await ContextBuilder.build(
+        input: prompt, conversation: initialConversation, settings: settings,
+        locationService: { self.locationService })
+      guard responseTaskTokens[conversationID] == responseTaskToken else { return }
+      guard !Task.isCancelled else {
+        responseOutcomes[conversationID] = .stopped
+        return
+      }
+      guard let index = indexedConversationIndex(for: conversationID) else { return }
+      conversations[index].lastContextSignature = context.signature
       let canRun = await CarPlayTurn.$active.withValue(carPlay) {
         await autoCompactIfNeeded(conversationID: conversationID)
       }
@@ -3219,7 +3220,7 @@ final class AppStore: ObservableObject {
       await CarPlayTurn.$active.withValue(carPlay) {
         await AssistantTurnRunner.run(
           conversationID: conversationID,
-          context: context,
+          context: context.text,
           store: self
         )
       }
@@ -4805,7 +4806,7 @@ final class AppStore: ObservableObject {
   private func releaseSavedConversationHistories(_ saved: [(UUID, Date, Data)]) {
     for (id, date, metadata) in saved {
       guard let index = indexedConversationIndex(for: id), conversations[index].updatedAt == date,
-        !respondingConversationIDs.contains(id), !preparingConversationIDs.contains(id), !voiceover.isGenerating(in: id),
+        !respondingConversationIDs.contains(id), !voiceover.isGenerating(in: id),
         conversations[index].historyWindow == nil,
         conversations[index].historyChanges.isCommitted(count: conversations[index].messages.count),
         (try? conversations[index].historyMetadata(coding: PersistenceStore.conversationCoding))
@@ -4818,7 +4819,7 @@ final class AppStore: ObservableObject {
         }.value
         guard let page, page.updatedAt == date, let index = indexedConversationIndex(for: id),
           conversations[index].updatedAt == date, !respondingConversationIDs.contains(id),
-          !preparingConversationIDs.contains(id), !voiceover.isGenerating(in: id),
+          !voiceover.isGenerating(in: id),
           conversations[index].historyChanges.isCommitted(
             count: conversations[index].messages.count),
           (try? conversations[index].historyMetadata(coding: PersistenceStore.conversationCoding))
@@ -5213,7 +5214,6 @@ final class AppStore: ObservableObject {
       && !respondingConversationIDs.contains(conversation.id)
       && !btwQuestions.contains { $0.conversationID == conversation.id }
       && !thenActions.contains { $0.conversationID == conversation.id }
-      && !preparingConversationIDs.contains(conversation.id)
       && conversation.isDisposable
   }
 
