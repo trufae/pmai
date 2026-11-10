@@ -89,6 +89,9 @@ struct MacSettingsView: View {
         Text("Colors controls, your messages, bold text, and quotes. Pinch the trackpad over a conversation to resize its text.")
           .foregroundStyle(.secondary)
       }
+      Section("Chat Fonts") {
+        MacChatFontSettings()
+      }
       Section("pmai for Mac") {
         Text("Settings share the CLI’s configuration, saved hosts, and skills. Global settings apply unless a workspace has its own pmai.json.")
         LabeledContent("Data", value: workspace.home.rootURL.path)

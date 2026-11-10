@@ -6,11 +6,14 @@ import SwiftUI
 struct MacMarkdown: View, @MainActor Equatable {
   let text: String
   var searchQuery = ""
+  var role = "assistant"
   @State private var document: MacMarkdownDocument?
   private var typography = MacChatTypography()
   private var appearance = MacAppearance()
 
-  static func == (lhs: Self, rhs: Self) -> Bool { lhs.text == rhs.text && lhs.searchQuery == rhs.searchQuery }
+  static func == (lhs: Self, rhs: Self) -> Bool {
+    lhs.text == rhs.text && lhs.searchQuery == rhs.searchQuery && lhs.role == rhs.role
+  }
 
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
@@ -21,7 +24,7 @@ struct MacMarkdown: View, @MainActor Equatable {
       } else if !text.isEmpty {
         ProgressView().controlSize(.small)
       }
-    }.font(typography.font()).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+    }.font(typography.messageFont(for: role)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
       .task(id: text) {
         guard document?.source != text else { return }
         guard let prepared = try? await MacMarkdownParser.shared.parse(text), !Task.isCancelled else { return }
@@ -41,7 +44,7 @@ struct MacMarkdown: View, @MainActor Equatable {
     switch block {
     case .paragraph(let text): inline(text)
     case .heading(let level, let text):
-      inline(text).font(typography.font(level == 1 ? .title1 : level == 2 ? .title2 : .headline)
+      inline(text).font(typography.messageFont(for: role, style: level == 1 ? .title1 : level == 2 ? .title2 : .headline)
         .weight(level <= 2 ? .regular : .semibold))
     case .quote(let text):
       inline(text)
@@ -76,7 +79,9 @@ struct MacMarkdown: View, @MainActor Equatable {
         HStack(alignment: .top) { Image(systemName: item.checked ? "checkmark.square" : "square"); inline(item.text) }
       }
     case .footnotes(let items):
-      ForEach(Array(items.enumerated()), id: \.offset) { _, item in inline("[\(item.key)] \(item.text)").font(typography.font(.caption1)) }
+      ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+        inline("[\(item.key)] \(item.text)").font(typography.messageFont(for: role, style: .caption1))
+      }
     case .table(let table):
       ScrollView(.horizontal) {
         Grid(alignment: .leading, horizontalSpacing: 20, verticalSpacing: 10) {

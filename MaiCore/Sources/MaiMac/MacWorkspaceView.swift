@@ -275,7 +275,7 @@ struct MacChatView: View {
           .zIndex(1)
           .overlay(alignment: .topLeading) {
             if conversation.draft.isEmpty {
-              Text("Message pmai…").font(typography.font()).foregroundStyle(.tertiary)
+              Text("Message pmai…").font(typography.messageFont(for: "user")).foregroundStyle(.tertiary)
                 .padding(.top, 6).allowsHitTesting(false)
             }
           }

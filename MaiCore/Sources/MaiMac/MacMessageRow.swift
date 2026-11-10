@@ -97,7 +97,7 @@ struct MacMessageRow: View, @MainActor Equatable {
         Label(message.role == "user" ? "You" : message.role == "assistant" ? "pmai" : message.role.capitalized,
           systemImage: message.role == "user" ? "person.crop.circle" : "sparkle")
           .font(typography.font(.callout).weight(.semibold)).foregroundStyle(.secondary)
-        MacMarkdown(text: message.text, searchQuery: searchQuery).equatable()
+        MacMarkdown(text: message.text, searchQuery: searchQuery, role: message.role).equatable()
       }
     }
     .font(typography.font())
@@ -129,7 +129,7 @@ private struct MacMessageDetails: View {
         Text(MacSearchHighlight.text(inputText, query: searchQuery))
           .font(typography.font(.caption1, design: .monospaced)).textSelection(.enabled)
       }
-      MacMarkdown(text: message.text, searchQuery: searchQuery).equatable()
+      MacMarkdown(text: message.text, searchQuery: searchQuery, role: message.role).equatable()
     }
     .task(id: message.toolInput) {
       let input = message.toolInput

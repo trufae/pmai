@@ -1,21 +1,32 @@
 import AppKit
 import SwiftUI
 
-/// One saved size for conversation text, including Markdown and the composer.
+/// Saved message fonts and a shared size for Markdown and the composer.
 struct MacChatTypography: DynamicProperty {
-  static let defaultSize = NSFont.preferredFont(forTextStyle: .body).pointSize
+  // Match PocketMai's AppearanceSettings defaults.
+  static let defaultSize = 17.0
   static let sizeRange = 10.0...36.0
   @AppStorage("mac.chat.fontSize") var size = defaultSize
+  @AppStorage("mac.chat.userFont") var userFont = MacChatFont.rounded
+  @AppStorage("mac.chat.assistantFont") var assistantFont = MacChatFont.serif
 
   private var scale: CGFloat {
-    min(Self.sizeRange.upperBound, max(Self.sizeRange.lowerBound, size)) / Self.defaultSize
+    min(Self.sizeRange.upperBound, max(Self.sizeRange.lowerBound, size))
+      / NSFont.preferredFont(forTextStyle: .body).pointSize
   }
 
   func font(_ style: NSFont.TextStyle = .body, design: Font.Design = .default) -> Font {
     .system(size: NSFont.preferredFont(forTextStyle: style).pointSize * scale, design: design)
   }
 
-  var editorFont: NSFont { .systemFont(ofSize: Self.defaultSize * scale) }
+  func messageFont(for role: String, style: NSFont.TextStyle = .body) -> Font {
+    let family = role == "user" ? userFont : assistantFont
+    return family.font(size: NSFont.preferredFont(forTextStyle: style).pointSize * scale)
+  }
+
+  var editorFont: NSFont {
+    userFont.nsFont(size: NSFont.preferredFont(forTextStyle: .body).pointSize * scale)
+  }
 
   func resize(by delta: Double) {
     resize(to: size + delta)

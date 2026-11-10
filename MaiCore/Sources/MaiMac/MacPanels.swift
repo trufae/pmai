@@ -40,7 +40,7 @@ struct MacInspector: View {
               ForEach(Array(agent.messages.enumerated()), id: \.offset) { _, message in
                 VStack(alignment: .leading, spacing: 6) {
                   Text(message.role.rawValue.capitalized).font(.caption).foregroundStyle(.secondary)
-                  MacMarkdown(text: message.text)
+                  MacMarkdown(text: message.text, role: message.role.rawValue)
                 }.padding(.vertical, 5)
               }
               if let failure = agent.failure { Text(failure).foregroundStyle(.red).textSelection(.enabled) }
