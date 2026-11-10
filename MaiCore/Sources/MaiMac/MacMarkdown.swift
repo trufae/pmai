@@ -25,6 +25,19 @@ struct MacMarkdown: View, @MainActor Equatable {
         ProgressView().controlSize(.small)
       }
     }.font(typography.messageFont(for: role)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+      .overlayPreferenceValue(Text.LayoutKey.self) { layouts in
+        GeometryReader { geometry in
+          MacMarkdownLinkCursor(rects: layouts.flatMap { anchored in
+            let origin = geometry[anchored.origin]
+            return anchored.layout.flatMap { line in
+              line.compactMap { run -> CGRect? in
+                guard run[MacMarkdownLink.self] != nil else { return nil }
+                return run.typographicBounds.rect.offsetBy(dx: origin.x, dy: origin.y)
+              }
+            }
+          })
+        }.allowsHitTesting(false)
+      }
       .task(id: text) {
         guard document?.source != text else { return }
         guard let prepared = try? await MacMarkdownParser.shared.parse(text), !Task.isCancelled else { return }
@@ -37,7 +50,15 @@ struct MacMarkdown: View, @MainActor Equatable {
     for run in attributed.runs where run.inlinePresentationIntent?.contains(.stronglyEmphasized) == true {
       attributed[run.range].foregroundColor = appearance.accentColor
     }
-    return Text(MacSearchHighlight.apply(to: attributed, query: searchQuery))
+    for run in attributed.runs where run.link != nil {
+      attributed[run.range].underlineStyle = .single
+    }
+    attributed = MacSearchHighlight.apply(to: attributed, query: searchQuery)
+    return attributed.runs.reduce(Text("")) { result, run in
+      let part = Text(AttributedString(attributed[run.range]))
+      let marked = run.link == nil ? part : part.customAttribute(MacMarkdownLink())
+      return Text("\(result)\(marked)")
+    }
   }
 
   @ViewBuilder private func render(_ block: MarkdownBlock) -> some View {
@@ -95,6 +116,45 @@ struct MacMarkdown: View, @MainActor Equatable {
         }.padding(12)
       }.background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
     }
+  }
+}
+
+private struct MacMarkdownLink: TextAttribute {}
+
+/// Tracking areas follow SwiftUI's actual text layout, including wrapped links,
+/// and override the selectable text's I-beam without intercepting clicks.
+private struct MacMarkdownLinkCursor: NSViewRepresentable {
+  var rects: [CGRect]
+
+  func makeNSView(context: Context) -> CursorView { CursorView() }
+
+  func updateNSView(_ view: CursorView, context: Context) {
+    guard view.rects != rects else { return }
+    view.rects = rects
+    view.updateTrackingAreas()
+  }
+
+  final class CursorView: NSView {
+    var rects: [CGRect] = []
+    override var isFlipped: Bool { true }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func updateTrackingAreas() {
+      super.updateTrackingAreas()
+      for area in trackingAreas { removeTrackingArea(area) }
+      for rect in rects {
+        let visible = rect.intersection(visibleRect)
+        if !visible.isEmpty {
+          addTrackingArea(NSTrackingArea(rect: visible,
+            options: [.cursorUpdate, .mouseEnteredAndExited, .mouseMoved, .activeInKeyWindow],
+            owner: self, userInfo: nil))
+        }
+      }
+    }
+
+    override func cursorUpdate(with event: NSEvent) { NSCursor.pointingHand.set() }
+    override func mouseEntered(with event: NSEvent) { NSCursor.pointingHand.set() }
+    override func mouseMoved(with event: NSEvent) { NSCursor.pointingHand.set() }
   }
 }
 
