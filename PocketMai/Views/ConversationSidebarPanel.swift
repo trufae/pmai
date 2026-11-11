@@ -57,15 +57,20 @@ struct SidebarPanel<Rows: View, Actions: View>: View {
   var body: some View {
     GeometryReader { proxy in
       ZStack(alignment: .bottom) {
-        List { rows().listRowBackground(Color.clear) }
-          .environment(\.defaultMinListRowHeight, 0)
-          .listStyle(.plain)
-          .scrollContentBackground(.hidden)
-          .contentMargins(.horizontal, 16, for: .scrollContent)
-          .scrollIndicators(.hidden)
-          .safeAreaInset(edge: .bottom, spacing: 0) {
-            Color.clear.frame(height: 100)
-          }
+        List {
+          // Keep row content aligned as the drawer moves across the window.
+          rows()
+            .listRowInsets(EdgeInsets(top: 14, leading: 16, bottom: 14, trailing: 16))
+            .listRowBackground(Color.clear)
+        }
+        .environment(\.defaultMinListRowHeight, 0)
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .contentMargins(.horizontal, 16, for: .scrollContent)
+        .scrollIndicators(.hidden)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+          Color.clear.frame(height: 100)
+        }
         SidebarEdgeFades()
         actions(proxy.size.width - 36 < 300)
           .frame(maxWidth: .infinity, minHeight: 56)

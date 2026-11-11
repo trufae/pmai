@@ -1555,7 +1555,8 @@ struct SidebarRowBackground: View {
   let isSelected: Bool
 
   var body: some View {
-    (isSelected ? Color.accentColor.opacity(0.22) : Color.clear)
+    RoundedRectangle(cornerRadius: 16, style: .continuous)
+      .fill(isSelected ? Color.accentColor.opacity(0.22) : Color.clear)
   }
 }
 
