@@ -32,6 +32,21 @@ private struct MessageReplyDraft: Identifiable {
   let text: String
 }
 
+private extension View {
+  func messageActionsMenu<MenuItems: View>(@ViewBuilder menuItems: () -> MenuItems) -> some View {
+    self
+      .background {
+        // Lift only this transparent layer, leaving the message in the chat.
+        Color.clear.contentShape(.contextMenuPreview, Rectangle())
+      }
+      .contextMenu(menuItems: menuItems) {
+        Color.clear
+          .frame(width: 1, height: 1)
+          .accessibilityHidden(true)
+      }
+  }
+}
+
 private extension Error {
   var imageSaveMessage: String {
     (self as? LocalizedError)?.errorDescription ?? localizedDescription
@@ -321,7 +336,7 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
       }
     }
     .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
-    .contextMenu { messageContextMenu(visibleText: prepared.visibleText, rawText: displayText) }
+    .messageActionsMenu { messageContextMenu(visibleText: prepared.visibleText, rawText: displayText) }
     .preference(
       key: ResponseScrollTargetsKey.self,
       value: responseScrollTarget(in: prepared).map { [message.id: $0] } ?? [:])
@@ -585,12 +600,8 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
       .toast($imageSaveNotice)
     if !isLiveAssistantResponse {
       bubbleWithSheet
-        .contextMenu {
+        .messageActionsMenu {
           messageContextMenu(visibleText: messageText, rawText: rawText)
-        } preview: {
-          Color.clear
-            .frame(width: 1, height: 1)
-            .accessibilityHidden(true)
         }
     } else {
       bubbleWithSheet
