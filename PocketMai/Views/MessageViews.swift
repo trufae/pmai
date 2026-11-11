@@ -44,6 +44,7 @@ private extension View {
           .frame(width: 1, height: 1)
           .accessibilityHidden(true)
       }
+      .menuOrder(.fixed)
   }
 }
 
@@ -808,26 +809,29 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
 
   @ViewBuilder
   private func messageContextMenu(visibleText: String, rawText: String) -> some View {
-    if let onBeginSelection = actions.onBeginSelection {
-      Button("Select...", systemImage: "checkmark.circle", action: onBeginSelection)
-    }
-
-    if actions.onToggleBookmark != nil || actions.onTogglePin != nil {
-      Section {
-        if let onToggleBookmark = actions.onToggleBookmark {
-          Button(
-            isBookmarked ? "Unbookmark" : "Bookmark",
-            systemImage: isBookmarked ? "bookmark.slash" : "bookmark", action: onToggleBookmark
-          )
-          .disabled(!actions.allowsConversationMutation)
-        }
-        if let onTogglePin = actions.onTogglePin {
-          Button(
-            message.isPinned ? "Unpin Message" : "Pin Message",
-            systemImage: message.isPinned ? "pin.slash" : "pin", action: onTogglePin)
-        }
+    ControlGroup {
+      if let onBeginSelection = actions.onBeginSelection {
+        Button("Select...", systemImage: "checkmark.circle", action: onBeginSelection)
+      }
+      if let onToggleBookmark = actions.onToggleBookmark {
+        Button(
+          isBookmarked ? "Unbookmark" : "Bookmark",
+          systemImage: isBookmarked ? "bookmark.slash" : "bookmark", action: onToggleBookmark
+        )
+        .disabled(!actions.allowsConversationMutation)
+      }
+      if let onTogglePin = actions.onTogglePin {
+        Button(
+          message.isPinned ? "Unpin Message" : "Pin Message",
+          systemImage: message.isPinned ? "pin.slash" : "pin", action: onTogglePin)
+      }
+      Button("Details…", systemImage: "info.circle") {
+        showingDetails = true
       }
     }
+    .controlGroupStyle(.compactMenu)
+
+    Divider()
 
     ForEach(Array(imageAttachments.enumerated()), id: \.element.id) { index, attachment in
       Button(imageSaveMenuTitle(at: index), systemImage: "square.and.arrow.down") {
@@ -868,13 +872,9 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
       showingSpeechOptions = true
     }
 
-    Button("Details…", systemImage: "info.circle") {
-      showingDetails = true
-    }
-
     if message.role != .assistant {
       if let resend = actions.onTrimFromHere {
-        Button("Retry From Here", systemImage: "arrow.clockwise", action: resend)
+        Button("Rewind", systemImage: "arrow.uturn.backward", action: resend)
           .disabled(!actions.canRetry)
       }
       if let onRestartFresh = actions.onRestartFresh {

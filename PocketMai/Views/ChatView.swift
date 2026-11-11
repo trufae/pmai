@@ -269,14 +269,14 @@ struct ChatView: View {
         Text(deletion.message)
       }
       .alert(
-        "Retry from here?",
+        "Rewind?",
         isPresented: confirmationBinding($messagePendingTrimAndResubmit),
         presenting: messagePendingTrimAndResubmit
       ) { message in
         Button("Cancel", role: .cancel) {
           messagePendingTrimAndResubmit = nil
         }
-        Button("Retry From Here", role: .destructive) {
+        Button("Rewind", role: .destructive) {
           if let remoteChat {
             remoteChat.retry(message.id)
           } else {
