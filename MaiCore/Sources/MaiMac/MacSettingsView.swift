@@ -42,6 +42,8 @@ struct MacSettingsView: View {
       TabView(selection: $pane) {
         general.tabItem { Label("General", systemImage: "gearshape") }.tag("general")
         hosts.tabItem { Label("Hosts", systemImage: "network") }.tag("hosts")
+        MacServersView(server: workspace.backend.servers)
+          .tabItem { Label("Servers", systemImage: "server.rack") }.tag("servers")
         providers.tabItem { Label("Providers", systemImage: "cpu") }.tag("providers")
         mcps.tabItem { Label("MCP Servers", systemImage: "puzzlepiece.extension") }.tag("mcps")
         prompts.tabItem { Label("Prompts", systemImage: "text.bubble") }.tag("prompts")
@@ -58,6 +60,7 @@ struct MacSettingsView: View {
     }
     .frame(width: 760, height: 620)
     .task {
+      workspace.backend.servers.prepare(cwd: workspace.hostID == nil ? workspace.cwd : nil)
       store.prepare(cwd: workspace.hostID == nil ? workspace.cwd : nil)
       do { workspace.hosts = try workspace.hostStore.hosts() }
       catch { store.error = error.localizedDescription }

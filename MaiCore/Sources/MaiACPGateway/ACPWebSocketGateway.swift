@@ -9,6 +9,31 @@ import NIOWebSocket
 /// Authenticated WebSocket -> ACP stdio bridge. Resumable pmai connections
 /// retain their worker; standard ACP connections own a child until disconnect.
 public enum ACPWebSocketGateway {
+  /// Tracks authenticated ACP sockets, excluding invitation/pairing connections.
+  public final class Connections: @unchecked Sendable {
+    private let lock = NSLock()
+    private var channels: [UUID: (String, Channel)] = [:]
+
+    public init() {}
+
+    public func count(token: String) -> Int {
+      lock.withLock { channels.values.filter { $0.0 == token }.count }
+    }
+
+    public func disconnect(token: String) {
+      let matches = lock.withLock { channels.values.filter { $0.0 == token }.map(\.1) }
+      for channel in matches { channel.close(promise: nil) }
+    }
+
+    fileprivate func connected(token: String, channel: Channel) {
+      let id = UUID()
+      lock.withLock { channels[id] = (token, channel) }
+      channel.closeFuture.whenComplete { [self] _ in
+        lock.withLock { _ = channels.removeValue(forKey: id) }
+      }
+    }
+  }
+
   public struct Pairing: Sendable {
     public var authorizes: @Sendable (String) -> Bool
     public var request: @Sendable (String, String, String) async throws -> String
@@ -30,11 +55,12 @@ public enum ACPWebSocketGateway {
     public var maximumConnections: Int
     public var pairing: Pairing?
     public var resumable: Bool
+    public var connections: Connections?
 
     public init(
       host: String = "127.0.0.1", port: Int = 19283, tokenFile: URL,
       command: String, arguments: [String], workingDirectory: URL, maximumConnections: Int = 16,
-      pairing: Pairing? = nil, resumable: Bool = false
+      pairing: Pairing? = nil, resumable: Bool = false, connections: Connections? = nil
     ) {
       self.host = host
       self.port = port
@@ -45,6 +71,7 @@ public enum ACPWebSocketGateway {
       self.maximumConnections = maximumConnections
       self.pairing = pairing
       self.resumable = resumable
+      self.connections = connections
     }
 
     func authorizesSession(_ token: String) -> Bool {
@@ -210,6 +237,7 @@ private final class AgentBridge: ChannelInboundHandler, @unchecked Sendable {
       pairingOnly = true
       return
     }
+    configuration.connections?.connected(token: token, channel: context.channel)
     if configuration.resumable {
       let channel = context.channel
       writer = Task { [agents, token, configuration, outbound] in

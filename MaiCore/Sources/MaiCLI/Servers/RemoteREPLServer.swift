@@ -79,6 +79,11 @@ actor RemoteREPLServer {
   private var profile: ACPRemoteConnection?
   private var openAIStatus: String?
   private var failure: String?
+  private var pairingURI: String?
+  private var pairingExpiresAt: Date?
+  private var openAIEndpoint: String?
+  private var openAIToken: String?
+  private let connections = ACPWebSocketGateway.Connections()
   private var generation = 0
   private var lease: ACPFileLock?
   private var publisher: RemoteOpenTunnel?
@@ -88,6 +93,7 @@ actor RemoteREPLServer {
   private struct PendingClient {
     var clientID: String
     var name: String
+    var source: String
     var reply: CheckedContinuation<String, any Error>
   }
   private var pending: [String: PendingClient] = [:]
@@ -103,18 +109,20 @@ actor RemoteREPLServer {
 
   func start(
     _ arguments: [String], configuration: MaiConfiguration, agent: AgentDefinition,
-    runtime: AgentRuntime, cwd: URL, terminal: TerminalWriter
+    runtime: AgentRuntime? = nil, cwd: URL, terminal: TerminalWriter? = nil
   ) async throws {
     if task != nil {
       guard arguments.isEmpty else {
         throw JSONRPCError.invalidParams(
           "Already serving. Run /remote stop before changing paths or options.")
       }
-      await showPairing(terminal: terminal)
+      if let terminal { await showPairing(terminal: terminal) }
+      else { try await renewPairing() }
       return
     }
     if let index = arguments.firstIndex(of: "--protocol"),
       index + 1 < arguments.count, arguments[index + 1] == "openai" {
+      guard let runtime else { throw JSONRPCError.internalError("OpenAI serving requires a runtime") }
       try await startOpenAI(OpenAIRemoteOptions(arguments), configuration: configuration,
         agent: agent, runtime: runtime, terminal: terminal)
       return
@@ -241,7 +249,7 @@ actor RemoteREPLServer {
     let gateway = ACPWebSocketGateway.Configuration(
       host: bindAddress, port: port,
       tokenFile: tokenFile, command: executable, arguments: childArguments, workingDirectory: cwd,
-      pairing: pairing, resumable: true)
+      pairing: pairing, resumable: true, connections: connections)
     let tunnel =
       try connectionProtocol == .opentunnel && flags["--url"] == nil
       ? RemoteOpenTunnel(directory: directory) : nil
@@ -274,7 +282,7 @@ actor RemoteREPLServer {
     servingTerminal = terminal
     do {
       if let tunnel {
-        await terminal.line(
+        await terminal?.line(
           "Connecting OpenTunnel; first-time certificate provisioning can take a few minutes…")
         connection.url = try await tunnel.start(port: port)
       }
@@ -289,7 +297,7 @@ actor RemoteREPLServer {
             do {
               let requests = try await node.pending()
               for request in requests where seen.insert(request.id).inserted {
-                await terminal.line(
+                await terminal?.line(
                   "Forwiroh pairing: \(request.name) · /remote accept fw-\(request.id) or /remote reject fw-\(request.id). After accepting, approve the ACP request too."
                 )
               }
@@ -308,10 +316,11 @@ actor RemoteREPLServer {
       connection.connectionProtocol = connectionProtocol
       try connection.validate()
       profile = connection
-      await terminal.line(
+      await terminal?.line(
         "Serving \(connection.url.absoluteString) via \(connectionProtocol.rawValue) · \(paths.isEmpty ? "all indexed projects" : paths.joined(separator: ", "))"
       )
-      await showPairing(terminal: terminal)
+      if let terminal { await showPairing(terminal: terminal) }
+      else { try await renewPairing() }
     } catch {
       let publisherAlreadyEnded = publisher == nil
       await stop()
@@ -323,7 +332,7 @@ actor RemoteREPLServer {
 
   private func startOpenAI(
     _ options: OpenAIRemoteOptions, configuration: MaiConfiguration, agent: AgentDefinition,
-    runtime: AgentRuntime, terminal: TerminalWriter
+    runtime: AgentRuntime, terminal: TerminalWriter?
   ) async throws {
     let directory = home.rootURL.appendingPathComponent("remote-server")
     try ACPStateFiles.createDirectory(directory)
@@ -370,36 +379,36 @@ actor RemoteREPLServer {
     lease = serverLease
     let address = options.host.contains(":") ? "[\(options.host)]" : options.host
     let status = "Serving http://\(address):\(options.port)/v1 via OpenAI · tools \(options.allowTools ? "enabled" : "disabled")" + tokenNote
+    openAIEndpoint = "http://\(address):\(options.port)/v1"
+    openAIToken = serverEnvironment["PMAI_HTTP_TOKEN"]
     openAIStatus = status
-    await terminal.line(status)
+    await terminal?.line(status)
   }
 
-  private func ended(_ attempt: Int, error: String, terminal: TerminalWriter) async {
+  private func ended(_ attempt: Int, error: String, terminal: TerminalWriter?) async {
     guard generation == attempt else { return }
+    let running = task
     task = nil
+    running?.cancel()
     profile = nil
     openAIStatus = nil
+    openAIEndpoint = nil
+    openAIToken = nil
+    pairingURI = nil
+    pairingExpiresAt = nil
     failure = error
     for code in Array(pending.keys) { cancelPairing(code) }
     await stopPublisher()
     lease = nil
-    await terminal.line("error: Remote server stopped: \(error)", to: .standardError)
+    await terminal?.line("error: Remote server stopped: \(error)", to: .standardError)
   }
 
-  func showPairing(terminal: TerminalWriter) async {
-    if let openAIStatus { await terminal.line(openAIStatus); return }
-    guard var profile else {
-      await terminal.line(
-        failure.map { "Remote server stopped: " + $0 }
-          ?? "Remote server is stopped. /remote serve starts it.")
-      return
-    }
+  func showPairing(terminal: TerminalWriter?) async {
+    if let openAIStatus { await terminal?.line(openAIStatus); return }
     do {
-      if let forwiroh { profile.forwirohInvitation = try await forwiroh.invite() }
-      let uri = try profile.uri()
+      let uri = try await renewPairing()
+      guard let terminal else { return }
       let file = home.rootURL.appendingPathComponent("remote-server/connection.txt")
-      try Data((uri + "\n").utf8).write(to: file, options: .atomic)
-      try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
       await terminal.line(
         "Scan this QR in PocketMai → Hosts, or use /remote pair on another pmai. Accept the client here with /remote accept:"
       )
@@ -409,7 +418,7 @@ actor RemoteREPLServer {
       await terminal.line(uri)
       await terminal.line("Connection profile: \(file.path) · /remote stop stops sharing.")
     } catch {
-      await terminal.line("error: \(error.localizedDescription)", to: .standardError)
+      await terminal?.line("error: \(error.localizedDescription)", to: .standardError)
     }
   }
 
@@ -422,7 +431,46 @@ actor RemoteREPLServer {
       ?? "Remote server is stopped."
   }
 
-  private func requestPairing(id: String, name: String, source: String, terminal: TerminalWriter)
+  @discardableResult
+  func renewPairing() async throws -> String {
+    guard var profile else { throw JSONRPCError.invalidParams("Start a remote host before creating a pairing link.") }
+    let attempt = generation
+    if let forwiroh { profile.forwirohInvitation = try await forwiroh.invite() }
+    guard attempt == generation, task != nil else { throw CancellationError() }
+    let uri = try profile.uri()
+    let file = home.rootURL.appendingPathComponent("remote-server/connection.txt")
+    try Data((uri + "\n").utf8).write(to: file, options: .atomic)
+    try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+    pairingURI = uri
+    pairingExpiresAt = profile.forwirohInvitation == nil ? nil : Date().addingTimeInterval(300)
+    return uri
+  }
+
+  func snapshot() async throws -> RemoteHostingSnapshot {
+    let attempt = generation
+    var requests = pending.sorted { $0.key < $1.key }.map {
+      RemoteHostingRequest(id: $0.key, name: $0.value.name, kind: "Chat access", source: $0.value.source)
+    }
+    var clients = try pairingStore.clients().map {
+      RemoteHostingClient(id: $0.id, name: $0.name, kind: "Chat access", connections: connections.count(token: $0.token))
+    }
+    if let forwiroh {
+      requests += try await forwiroh.pending().map {
+        RemoteHostingRequest(id: "fw-" + $0.id, name: $0.name, kind: "Forwiroh device", source: "")
+      }
+      guard attempt == generation else { throw CancellationError() }
+      clients += try await forwiroh.peers().map {
+        RemoteHostingClient(id: "fw-" + $0.id, name: $0.name, kind: "Forwiroh device", connections: $0.connected ? 1 : 0)
+      }
+    }
+    guard attempt == generation else { throw CancellationError() }
+    return RemoteHostingSnapshot(running: task != nil, status: status(),
+      endpoint: openAIEndpoint ?? profile?.url.absoluteString,
+      pairingURI: pairingURI, pairingExpiresAt: pairingExpiresAt,
+      bearerToken: openAIToken, requests: requests, clients: clients, failure: failure)
+  }
+
+  private func requestPairing(id: String, name: String, source: String, terminal: TerminalWriter?)
     async throws -> String
   {
     let code = String(UUID().uuidString.lowercased().prefix(8))
@@ -432,9 +480,9 @@ actor RemoteREPLServer {
           reply.resume(throwing: CancellationError())
           return
         }
-        pending[code] = .init(clientID: id, name: name, reply: reply)
+        pending[code] = .init(clientID: id, name: name, source: source, reply: reply)
         Task {
-          await terminal.line(
+          await terminal?.line(
             "Pairing request \(code): \(name) from \(source). /remote accept \(code) or /remote reject \(code)."
           )
         }
@@ -494,6 +542,10 @@ actor RemoteREPLServer {
     task = nil
     profile = nil
     openAIStatus = nil
+    openAIEndpoint = nil
+    openAIToken = nil
+    pairingURI = nil
+    pairingExpiresAt = nil
     for code in Array(pending.keys) { cancelPairing(code) }
     running?.cancel()
     await running?.value
@@ -514,7 +566,9 @@ actor RemoteREPLServer {
       }
       try await forwiroh.revoke(id: String(id.dropFirst(3)))
     } else {
+      let client = try pairingStore.clients().first { $0.id == id }
       try pairingStore.revoke(id: id)
+      if let client { connections.disconnect(token: client.token) }
     }
   }
 

@@ -5,7 +5,7 @@ import Foundation
 // The core profile omits executable and platform dependency graphs entirely;
 // --filter only selects tests after SwiftPM has built every test target.
 let testProfile = Context.environment["PMAI_TEST_PROFILE"]
-let focusedTests = ["core", "chat", "documents", "voice", "mobile", "acp"].contains(testProfile ?? "")
+let focusedTests = ["core", "chat", "documents", "voice", "mobile", "acp", "http"].contains(testProfile ?? "")
 let xmlPackage = Package.Dependency.package(
   url: "https://github.com/compnerd/xylem", revision: "9881c95ce3a139f4ccfa584676201516c2a5751d")
 let cliDependencies: [Target.Dependency] = [
@@ -206,14 +206,17 @@ if !focusedTests {
 #endif
 
 if focusedTests {
-  let names = testProfile == "core" ? ["MaiCore", "MaiCoreTests", "MaiTestSupport"]
+  let names = testProfile == "http" ? package.targets.filter {
+    $0.type != .executable && ($0.type != .test || $0.name == "MaiCLIHTTPTests")
+  }.map(\.name)
+    : testProfile == "core" ? ["MaiCore", "MaiCoreTests", "MaiTestSupport"]
     : testProfile == "acp" ? ["MaiCore", "MaiVoice", "MaiOpenAI", "MaiACP", "CMaiTerminal", "MaiStandardTools", "MaiDocuments", "MaiMarkdown", "MaiVisionOCR", "MaiACPTests", "MaiTestSupport"]
     : testProfile == "mobile" ? ["MaiCore", "MaiVoice", "MaiChat", "MaiOpenAI", "MaiMCP", "MaiACP", "CMaiTerminal", "MaiStandardTools", "MaiDocuments", "MaiMarkdown", "MaiVisionOCR", "MaiMobile", "MaiMobileTests"]
     : testProfile == "voice" ? ["MaiCore", "MaiVoice", "MaiOpenAI", "MaiVoiceTests"]
     : testProfile == "documents" ? ["MaiCore", "MaiMarkdown", "MaiDocuments", "MaiDocumentsTests"]
     : ["MaiCore", "MaiOpenAI", "MaiChat", "MaiChatTests"]
   package.products = package.products.filter { names.contains($0.name) }
-  package.dependencies = ["mobile", "acp"].contains(testProfile ?? "") ? packageDependencies : testProfile == "core" ? []
+  package.dependencies = ["mobile", "acp", "http"].contains(testProfile ?? "") ? packageDependencies : testProfile == "core" ? []
     : testProfile == "documents" ? [xmlPackage] : Array(packageDependencies.prefix(1))
   package.targets = package.targets.filter { names.contains($0.name) || $0.name == "CMaiWinHTTP" }
 }

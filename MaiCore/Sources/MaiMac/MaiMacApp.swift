@@ -40,6 +40,16 @@ struct MaiMacApp: App {
         .tint(appearance.accentColor)
         .accentColor(appearance.accentColor)
     }
+    Window("Servers", id: "servers") {
+      MacServersView(server: backend.servers)
+        .frame(minWidth: 660, minHeight: 560)
+        .tint(appearance.accentColor)
+        .onAppear {
+          delegate.backend = backend
+          backend.servers.prepare(cwd: backend.activeWorkspace?.hostID == nil ? backend.activeWorkspace?.cwd : nil)
+        }
+    }
+    .defaultSize(width: 760, height: 720)
   }
 }
 
@@ -194,6 +204,14 @@ private struct MacWorkspaceCommands: Commands {
         .disabled(workspace == nil)
       Button("Open in Terminal") { workspace?.openTerminal() }
         .disabled(workspace == nil || workspace?.hostID != nil || workspace?.cwd.isEmpty == true)
+    }
+    CommandMenu("Servers") {
+      Button("Manage Servers…") { openWindow(id: "servers") }
+      if backend.servers.attentionCount > 0 {
+        Button("Review \(backend.servers.attentionCount) Pending Requests…") { openWindow(id: "servers") }
+      }
+      Button("Stop Server") { backend.servers.stop() }
+        .disabled(!backend.servers.snapshot.running && !backend.servers.busy)
     }
   }
 }

@@ -11,6 +11,7 @@ enum OpenAIProxy {
     allowTools: Bool, onListening: @escaping @Sendable () -> Void = {}
   ) async throws {
     let token = environment[tokenEnvironment] ?? ""
+    let workingDirectory = AgentExecutionScope.directory
     guard ["127.0.0.1", "::1", "localhost"].contains(host) || !token.isEmpty else {
       throw AudioAPIError.invalidRequest(
         "Set \(tokenEnvironment) before binding the tool server to a LAN interface.")
@@ -28,9 +29,13 @@ enum OpenAIProxy {
           }
         }
         do {
-          return try await respond(
-            request, runtime: runtime, agent: agent,
-            configuration: configuration, environment: environment, allowTools: allowTools)
+          // NIO creates request tasks outside the serving task's local values.
+          // Carry the selected workspace explicitly, with an isolated request ID.
+          return try await AgentExecutionScope.$current.withValue(
+            .init(sessionID: UUID().uuidString, workingDirectory: workingDirectory)) {
+              try await respond(request, runtime: runtime, agent: agent,
+                configuration: configuration, environment: environment, allowTools: allowTools)
+            }
         } catch let error as OpenAICompatibleProviderError {
           if case .httpError(let statusCode, let message) = error {
             return .error(message, status: statusCode)

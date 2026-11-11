@@ -59,6 +59,28 @@ new chats and copying paths; local folders also support display-name changes,
 Finder/terminal access, and removal from the sidebar. Removing a folder keeps
 its files and chats. Removing a host only forgets this Mac's connection.
 
+**Servers → Manage Servers…** (also **Settings → Servers** and the toolbar's
+server button) exposes this Mac to other clients. Choose **OpenAI-compatible
+HTTP** for a local `/v1` endpoint, then copy its base URL into your client.
+It defaults to `127.0.0.1:11435` with tools disabled. Network bindings require
+a bearer key, generated when needed; **Copy API Key** copies it. Enabling agent
+tools sends approval requests to the Servers panel. The selected working
+directory supplies `pmai.json`, falling back to the global configuration.
+
+Choose **Forwiroh** to share projects and saved chats, or select **Local Network
+(ACP)** or **OpenTunnel** for the other `/remote serve` transports. Share all
+indexed projects or choose specific folders. **Start Server** shows a QR code
+and a pairing link; **New QR Code** renews Forwiroh's single-use, five-minute
+invitation. Accept or reject each pending device request, then its separate
+chat-access request. The client list distinguishes active connections from
+offline credentials. **Revoke** removes access and disconnects that client.
+The toolbar and Servers menu indicate pending pairing and tool requests.
+
+Hosting is shared across app windows and continues when its panel is closed.
+**Stop Server** or quitting the app closes the listener and its tunnel. Stop
+before changing protocols or settings. The app and CLI use the same host
+identity and client store, so only one can serve from a given pmai home at a time.
+
 **⌘S** toggles the left sidebar in the active window, also available as
 **View → Toggle Sidebar**. **⌘O** toggles the right conversation options sidebar,
 also available as **View → Toggle Conversation Details** when a chat is selected.

@@ -11,6 +11,11 @@ Real speech playback tests require a working audio service and explicit opt-in:
 set `PMAI_TEST_AUDIO_PLAYBACK=1` in Xcode's Test environment. They are skipped in default CI;
 speech chunking, provider requests, cancellation, and errors remain covered offline.
 
+`python3 test/run-tests.py http` builds the CLI/server test target without the
+unrelated test graphs or MLX. `RemoteHostingTests` uses local fixtures to cover
+the Mac hosting API: OpenAI responses, start/stop, pairing decisions, active
+client tracking, revocation, and cancellation of pending approvals.
+
 `python3 test/build-dependencies.py` checks the native and cross-build dependency
 profiles without downloading packages. CI runs it on macOS and Linux to verify
 that Forwiroh declares only its selected artifact and that disabling MLX omits

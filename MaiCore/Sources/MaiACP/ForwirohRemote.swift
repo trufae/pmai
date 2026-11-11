@@ -12,6 +12,7 @@ import MaiCore
 public struct ForwirohPeerSummary: Sendable {
   public let id: String
   public let name: String
+  public var connected: Bool = false
 }
 
 #if canImport(Forwiroh)
@@ -184,7 +185,7 @@ public struct ForwirohPeerSummary: Sendable {
       try await endpoint().approve(id: id, accept: accept)
     }
     public func peers() async throws -> [ForwirohPeerSummary] {
-      try await endpoint().status().peers.map { .init(id: $0.id, name: $0.name) }
+      try await endpoint().status().peers.map { .init(id: $0.id, name: $0.name, connected: $0.connected) }
     }
     public func revoke(id: String) async throws { try await endpoint().revoke(peer: id) }
 

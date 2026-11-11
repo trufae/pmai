@@ -6,12 +6,19 @@ import Observation
 /// Connections and transcripts belong to the app, independently of its windows.
 @MainActor @Observable
 final class MacBackend {
-  let home = AgentHome.resolve()
+  let home: AgentHome
+  let servers: MacServerStore
   var hosts: [ACPRemoteHost] = []
   var conversations: [MacConversation] = []
   var snapshots: [UUID?: ACPWorkspaceSnapshot] = [:]
   weak var activeWorkspace: MacWorkspace?
   private var preparation: Task<Void, Error>?
+
+  init() {
+    let home = AgentHome.resolve()
+    self.home = home
+    servers = MacServerStore(home: home)
+  }
 
   var hostStore: ACPRemoteHostStore { .init(directory: home.rootURL.appendingPathComponent("remotes")) }
 
@@ -42,6 +49,7 @@ final class MacBackend {
   }
 
   func close() async {
+    await servers.close()
     for conversation in conversations { conversation.stop() }
     for conversation in conversations { await conversation.close() }
   }

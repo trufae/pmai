@@ -8,6 +8,7 @@ struct MacWorkspaceView: View {
   @Bindable var workspace: MacWorkspace
   @State private var columns = NavigationSplitViewVisibility.all
   @Environment(\.scenePhase) private var scenePhase
+  @Environment(\.openWindow) private var openWindow
 
   var body: some View {
     NavigationSplitView(columnVisibility: $columns) {
@@ -24,6 +25,11 @@ struct MacWorkspaceView: View {
       .navigationSubtitle(subtitle)
       .toolbar {
         ToolbarItemGroup {
+          Button { openWindow(id: "servers") } label: {
+            Label(workspace.backend.servers.attentionCount > 0
+              ? "\(workspace.backend.servers.attentionCount) Pending Requests" : "Servers",
+              systemImage: workspace.backend.servers.attentionCount > 0 ? "person.badge.key.fill" : "server.rack")
+          }.help("Manage servers and remote clients")
           if let conversation = workspace.selected, !conversation.connected && !conversation.busy {
             Button("Reconnect", systemImage: "arrow.clockwise", action: conversation.connect)
           }
