@@ -76,10 +76,19 @@ public struct RemoteSessionOption: Identifiable, Equatable, Sendable {
     if let category { result["category"] = .string(category) }
     if let description { result["description"] = .string(description) }
     if !isBoolean {
-      result["options"] = .array(
-        choices.map {
-          .object(["value": .string($0.id), "name": .string($0.name)])
-        })
+      var options: [JSONValue] = []
+      var groups = Set<String>()
+      for choice in choices {
+        func json(_ choice: Choice) -> JSONValue {
+          .object(["value": .string(choice.id), "name": .string(choice.name)])
+        }
+        if let group = choice.group {
+          guard groups.insert(group).inserted else { continue }
+          options.append(.object(["group": .string(group), "name": .string(group),
+            "options": .array(choices.filter { $0.group == group }.map(json))]))
+        } else { options.append(json(choice)) }
+      }
+      result["options"] = .array(options)
     }
     return .object(result)
   }

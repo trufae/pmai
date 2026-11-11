@@ -403,6 +403,7 @@ extension MaiCLI {
           approvalHandler: approvalHandler,
           agent: profile.agentDefinition,
           configuration: configuration,
+          configurationPath: configurationPath,
           options: options, environment: environment)
         return
       }

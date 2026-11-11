@@ -97,6 +97,7 @@ public actor ACPClient {
   private var supportsPermissionEditing = false
   private var supportsYolo = false
   private var supportsInjection = false
+  private var supportsAgentProfiles = false
   private var supportsAgents = false
   private var supportsVoice = false
   private var supportsPromptImages = false
@@ -590,6 +591,28 @@ public actor ACPClient {
     ]), timeout: 30)
   }
 
+  public func agentProfilesSupported() -> Bool { supportsAgentProfiles }
+
+  public func agentProfiles(saving agent: AgentDefinition? = nil, creating: Bool = false,
+    deleting id: String? = nil) async throws -> ACPAgentProfiles {
+    guard supportsAgentProfiles, sessionLoaded, let sessionID, let peer else {
+      throw JSONRPCError.invalidParams("This host does not support editing agent profiles")
+    }
+    var fields: [String: JSONValue] = ["sessionId": .string(sessionID)]
+    if let agent {
+      fields["action"] = .string("save")
+      fields["agent"] = try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(agent))
+      fields["creating"] = .bool(creating)
+    } else if let id {
+      fields["action"] = .string("delete")
+      fields["agentId"] = .string(id)
+    }
+    let result = try await peer.request("_pmai/session/profiles", params: .object(fields), timeout: 30)
+    sessionOptions = RemoteSessionOption.parse(result.objectValue?["configOptions"])
+    return try JSONDecoder().decode(ACPAgentProfiles.self,
+      from: JSONEncoder().encode(result.objectValue?["profiles"] ?? .null))
+  }
+
   public func agentManagementSupported() -> Bool { supportsAgents }
 
   public func sessionAgents(task: String? = nil, stopping pid: AgentPID? = nil) async throws -> [AgentProcessRecord] {
@@ -647,6 +670,7 @@ public actor ACPClient {
     supportsPermissionEditing = false
     supportsYolo = false
     supportsHistoryRewind = false
+    supportsAgentProfiles = false
     supportsAgents = false
     supportsVoice = false
     supportsPromptImages = false
@@ -801,6 +825,7 @@ public actor ACPClient {
       let pmaiCapabilities = initialized.objectValue?["agentCapabilities"]?.objectValue?["_meta"]?
         .objectValue?["pmai"]?.objectValue
       supportsInjection = pmaiCapabilities?["injection"]?.intValue == 1
+      supportsAgentProfiles = pmaiCapabilities?["agentProfiles"]?.intValue == 1
       supportsAgents = pmaiCapabilities?["agents"]?.intValue == 1
       supportsVoice = pmaiCapabilities?["voice"]?.intValue == 1
       supportsPromptImages = initialized.objectValue?["agentCapabilities"]?.objectValue?["promptCapabilities"]?

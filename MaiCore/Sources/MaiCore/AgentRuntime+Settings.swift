@@ -138,6 +138,8 @@ extension AgentRuntime {
     taskAgents = assignments
   }
 
+  public func taskAgentAssignments() -> TaskAgentAssignments { taskAgents }
+
   /// Resolve inference settings only. The caller keeps its tool permissions,
   /// approvals, budgets, and session identity; task assignments never recurse.
   public func taskRequest(_ task: AgentTask, from original: AgentRequest) throws -> AgentRequest {

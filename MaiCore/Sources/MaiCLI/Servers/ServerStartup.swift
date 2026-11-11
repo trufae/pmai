@@ -23,6 +23,7 @@ extension MaiCLI {
     approvalHandler: TerminalApprovalHandler,
     agent: AgentDefinition,
     configuration: MaiConfiguration?,
+    configurationPath: String,
     options: CLIOptions,
     environment: [String: String]
   ) async throws {
@@ -103,6 +104,9 @@ extension MaiCLI {
           ? options.acpPaths.map { URL(fileURLWithPath: AgentHome.expandUserPath($0), isDirectory: true) } : nil,
         workspace: AgentHomeACPWorkspace(home: resolvedHome(options: options, environment: environment)),
         fileConfiguration: files,
+        profileDocument: options.tailcatGateway == nil
+          ? try ConfigurationDocument(url: URL(fileURLWithPath: configurationPath),
+            initialData: (configuration ?? MaiConfiguration()).encoded()) : nil,
         promptCatalog: { cwd in
           let project = try? home.loadProject(atWorkingDirectory: cwd)
           let skills = AgentSkillCatalog.load(directories: [

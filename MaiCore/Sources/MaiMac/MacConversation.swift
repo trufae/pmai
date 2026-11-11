@@ -56,6 +56,8 @@ final class MacConversation: Identifiable {
   var error: String?
   var permission: JSONValue?
   var canRewind = false
+  var canEditAgentProfiles = false
+  var agentProfiles: ACPAgentProfiles?
   var canManageAgents = false
   var canUseVoiceAgent = false
   var client: (any RemoteSessionClient)?
@@ -89,6 +91,8 @@ final class MacConversation: Identifiable {
       self.options = try await client.configurationOptions()
       self.prompts = try await client.promptCatalog()
       self.canRewind = await client.historyRewindSupported()
+      self.canEditAgentProfiles = await (client as? ACPClient)?.agentProfilesSupported() ?? false
+      try await self.refreshAgentProfiles()
       self.canManageAgents = await (client as? ACPClient)?.agentManagementSupported() ?? false
       self.canUseVoiceAgent = await (client as? ACPClient)?.voiceSupported() ?? false
       self.connected = true
@@ -170,7 +174,35 @@ final class MacConversation: Identifiable {
 
   func setOption(_ option: RemoteSessionOption, value: JSONValue) {
     guard connected, let client else { return }
-    perform { self.options = try await client.setConfigurationOption(id: option.id, value: value) }
+    perform {
+      self.options = try await client.setConfigurationOption(id: option.id, value: value)
+      try await self.refreshAgentProfiles()
+    }
+  }
+
+  func refreshAgentProfiles() async throws {
+    guard canEditAgentProfiles, let client = client as? ACPClient else { return }
+    agentProfiles = try await client.agentProfiles()
+    options = try await client.configurationOptions()
+  }
+
+  func saveAgentProfile(_ agent: AgentDefinition, creating: Bool) async throws {
+    guard !busy, connected, let client = client as? ACPClient else {
+      throw JSONRPCError.invalidParams("Wait for this conversation to finish before editing its agent")
+    }
+    busy = true
+    defer { busy = false }
+    agentProfiles = try await client.agentProfiles(saving: agent, creating: creating)
+    options = try await client.configurationOptions()
+    didChange?()
+  }
+
+  func deleteAgentProfile(_ id: String) {
+    guard let client = client as? ACPClient else { return }
+    perform {
+      self.agentProfiles = try await client.agentProfiles(deleting: id)
+      self.options = try await client.configurationOptions()
+    }
   }
 
   func rewind(_ message: ACPConversationMessage) {

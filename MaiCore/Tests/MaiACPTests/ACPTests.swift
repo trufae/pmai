@@ -1307,6 +1307,88 @@ func acpCancellationRecovery() async throws {
   await serving.value
 }
 
+@Test("Agent profiles retain groups, save edits, preserve other chats, and reject stale saves")
+func acpAgentProfiles() async throws {
+  let directory = FileManager.default.temporaryDirectory.appendingPathComponent("acp-profiles-\(UUID())")
+  try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: directory) }
+  let url = directory.appendingPathComponent("pmai.json")
+  let main = AgentDefinition(id: "main", instructions: "Main instructions", provider: .hello, model: "hello")
+  let voice = AgentDefinition(id: "speaker", instructions: "Voice instructions", provider: .hello, model: "hello")
+  let configuration = MaiConfiguration(taskAgents: .init(voice: voice.id),
+    providers: [.init(id: "hello", kind: .hello)], agents: [main, voice])
+  try configuration.save(to: url)
+  let runtime = AgentRuntime()
+  try await runtime.register(HelloProvider())
+  for agent in configuration.agents { try await runtime.register(agent: agent) }
+  await runtime.configureTaskAgents(configuration.taskAgents)
+  let (transport, worker) = PipeTransport.pair()
+  let server = ACPServer(runtime: runtime, agent: main, bridge: ACPPermissionBridge(),
+    sessionDirectory: directory.appendingPathComponent("sessions"), workspaceRoot: directory,
+    profileDocument: try ConfigurationDocument(url: url))
+  let serving = Task { await server.serve(on: worker) }
+  let peer = JSONRPCPeer(transport: transport)
+  await peer.start()
+  do {
+    _ = try await peer.request("initialize", params: .object(["protocolVersion": .integer(1)]), timeout: 30)
+    func create() async throws -> String {
+      let result = try await peer.request("session/new", params: .object(["cwd": .string(directory.path)]), timeout: 30)
+      let choices = RemoteSessionOption.parse(result.objectValue?["configOptions"]).first { $0.id == "agent" }?.choices
+      #expect(choices?.first { $0.id == "main" }?.group == "Conversation agents")
+      #expect(choices?.first { $0.id == "speaker" }?.group == "Voice agents")
+      return try #require(result.objectValue?["sessionId"]?.stringValue)
+    }
+    let id = try await create()
+    let other = try await create()
+    func profiles(_ session: String, _ fields: [String: JSONValue] = [:]) async throws -> ACPAgentProfiles {
+      let result = try await peer.request("_pmai/session/profiles",
+        params: .object(fields.merging(["sessionId": .string(session)]) { _, new in new }), timeout: 30)
+      return try JSONDecoder().decode(ACPAgentProfiles.self, from: JSONEncoder().encode(result.objectValue?["profiles"]))
+    }
+    func save(_ agent: AgentDefinition, creating: Bool) async throws -> ACPAgentProfiles {
+      try await profiles(id, ["action": .string("save"), "creating": .bool(creating),
+        "agent": try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(agent))])
+    }
+    var custom = main
+    custom.id = "custom"
+    custom.displayName = "Research"
+    custom.instructions = "Custom instructions"
+    custom.systemPrompt = "custom"
+    custom.options.reasoningEffort = "high"
+    let created = try await save(custom, creating: true)
+    #expect(created.current == custom)
+    #expect(try MaiConfiguration.load(from: url).agents.contains(custom))
+    #expect(try await profiles(other).current == main)
+    #expect(await runtime.availableAgents().contains(custom))
+    await #expect(throws: JSONRPCError.self) { _ = try await save(custom, creating: true) }
+    custom.displayName = "Research & Review"
+    #expect(try await save(custom, creating: false).current.displayName == custom.displayName)
+    #expect(try MaiConfiguration.load(from: url).agents.first { $0.id == custom.id }?.displayName == custom.displayName)
+    // An editor opened before an external change must never overwrite it.
+    var external = try MaiConfiguration.load(from: url)
+    external.agents[0].description = "Edited elsewhere"
+    try external.save(to: url)
+    await #expect(throws: JSONRPCError.self) { _ = try await save(custom, creating: false) }
+    #expect(try MaiConfiguration.load(from: url).agents[0].description == "Edited elsewhere")
+    _ = try await profiles(id)
+    _ = try await profiles(id, ["action": .string("delete"), "agentId": .string(voice.id)])
+    #expect(try MaiConfiguration.load(from: url).taskAgents.voice == nil)
+    let deleted = try await profiles(id, ["action": .string("delete"), "agentId": .string(custom.id)])
+    #expect(deleted.current == custom)
+    #expect(!deleted.agents.contains { $0.id == custom.id })
+    #expect(!(await runtime.availableAgents()).contains { $0.id == custom.id })
+    await #expect(throws: JSONRPCError.self) {
+      _ = try await profiles(id, ["action": .string("delete"), "agentId": .string(main.id)])
+    }
+  } catch {
+    await peer.close()
+    await serving.value
+    throw error
+  }
+  await peer.close()
+  await serving.value
+}
+
 @Test("ACP session settings change the next request, persist, and stay scoped to one chat")
 func acpSessionConfiguration() async throws {
   let directory = FileManager.default.temporaryDirectory.appendingPathComponent(

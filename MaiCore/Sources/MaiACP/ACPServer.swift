@@ -43,6 +43,8 @@ public actor ACPServer {
     var voiceHistory: [AgentMessage] = []
   }
 
+  private var profileDocument: ConfigurationDocument?
+  private var editingProfiles = false
   private let runtime: AgentRuntime
   private let agent: AgentDefinition
   private let bridge: ACPPermissionBridge
@@ -79,12 +81,14 @@ public actor ACPServer {
     sessionDirectory: URL? = nil, workspaceRoot: URL? = nil, workspaceRoots: [URL]? = nil,
     workspace: (any ACPWorkspaceRepository)? = nil,
     fileConfiguration: MaiFileWorkspaceConfiguration? = nil,
+    profileDocument: ConfigurationDocument? = nil,
     promptCatalog: @escaping @Sendable (URL) -> PromptCatalog = { _ in PromptCatalog() },
     authorize: @escaping @Sendable () throws -> Void = {},
     terminalIdleTimeout: @escaping @Sendable () -> TimeInterval = { 0 },
     extensionHandler: @escaping @Sendable (String, JSONValue?) throws -> JSONValue? = { _, _ in nil
     }
   ) {
+    self.profileDocument = profileDocument
     self.runtime = runtime
     self.agent = agent
     self.bridge = bridge
@@ -196,6 +200,8 @@ public actor ACPServer {
       return .object([:])
     case "_pmai/session/inject":
       return try await inject(params: params)
+    case "_pmai/session/profiles":
+      return try await agentProfiles(params: params)
     case "_pmai/session/agents":
       return try await sessionAgents(params: params)
     case "_pmai/session/voice":
@@ -242,6 +248,7 @@ public actor ACPServer {
           "workspaceTerminal": .integer(Self.hasPTY ? 1 : 0),
           "historyRewind": .integer(1), "injection": .integer(1), "agents": .integer(1),
           "voice": .integer(1),
+          "agentProfiles": .integer(profileDocument == nil ? 0 : 1),
         ])]),
         "loadSession": .bool(sessionDirectory != nil || workspace != nil),
         "sessionCapabilities": .object(
@@ -756,6 +763,74 @@ public actor ACPServer {
     return .object([:])
   }
 
+  private func agentProfiles(params: JSONValue?) async throws -> JSONValue {
+    guard var document = profileDocument,
+      let fields = params?.objectValue, let id = fields["sessionId"]?.stringValue,
+      var saved = sessions[id]?.saved else {
+      throw JSONRPCError.invalidParams("Agent profiles are unavailable on this host")
+    }
+    guard !editingProfiles, sessions[id]?.busy != true, !loadingSessions.contains(id) else {
+      throw JSONRPCError.invalidParams("Session is busy")
+    }
+    editingProfiles = true
+    sessions[id]?.busy = true
+    defer { editingProfiles = false; sessions[id]?.busy = false }
+    let action = fields["action"]?.stringValue ?? "list"
+    if action == "list" {
+      document = try ConfigurationDocument(url: document.url, initialData: document.configuration.encoded())
+      profileDocument = document
+    } else {
+      let previous = document.configuration
+      var configuration = previous
+      if action == "save" {
+        guard let value = fields["agent"] else { throw JSONRPCError.invalidParams("Provide an agent") }
+        let definition = try JSONDecoder().decode(AgentDefinition.self, from: JSONEncoder().encode(value))
+        guard !definition.id.isEmpty, !definition.id.contains(where: \.isWhitespace),
+          !definition.id.contains("::"),
+          !definition.id.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains),
+          !definition.displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+          throw JSONRPCError.invalidParams("Enter an agent name and a valid identifier")
+        }
+        let exists = configuration.agents.contains { $0.id == definition.id }
+        guard exists != (fields["creating"]?.boolValue == true) else {
+          throw JSONRPCError.invalidParams(exists ? "An agent with this identifier already exists" : "This agent was removed; reload the editor")
+        }
+        guard definition.isEnabled else { throw JSONRPCError.invalidParams("Enable the agent before selecting it") }
+        configuration.upsertAgent(definition)
+        let history = saved.transcript.drop(while: { $0.role == .system || $0.role == .developer })
+        saved.transcript = AgentChat.initialHistory(for: definition) + history
+        saved.definition = definition
+      } else if action == "delete", let removed = fields["agentId"]?.stringValue {
+        guard configuration.agents.filter({ $0.isEnabled && $0.id != removed }).count > 0 else {
+          throw JSONRPCError.invalidParams("Keep at least one enabled agent")
+        }
+        guard configuration.removeAgent(removed) else { throw JSONRPCError.invalidParams("Unknown agent") }
+      } else { throw JSONRPCError.invalidParams("Unknown profile action") }
+      try document.save(configuration)
+      profileDocument = document
+      // Only definitions affected by this edit are replaced in the runtime.
+      for removed in previous.agents where !configuration.agents.contains(where: { $0.id == removed.id }) {
+        await runtime.unregister(agentID: removed.id)
+      }
+      for definition in configuration.agents where !previous.agents.contains(definition) {
+        try await runtime.register(agent: definition, replacingExisting: true)
+      }
+      await runtime.configureTaskAgents(configuration.taskAgents)
+      if action == "save" {
+        saved.updatedAt = Date()
+        try await save(saved)
+        sessions[id]?.saved = saved
+      }
+    }
+    let snapshot = ACPAgentProfiles(agents: document.configuration.agents, current: saved.definition ?? agent)
+    let options = await configurationOptions(for: snapshot.current,
+      toolsEnabled: saved.toolsEnabled ?? true, reviewTools: saved.reviewTools ?? false)
+    return .object([
+      "profiles": try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(snapshot)),
+      "configOptions": .array(options.map(\.json)),
+    ])
+  }
+
   private func configurationOptions(
     for definition: AgentDefinition, toolsEnabled: Bool = true, reviewTools: Bool = false
   ) async -> [RemoteSessionOption] {
@@ -809,11 +884,26 @@ public actor ACPServer {
         description: tool.description,
         currentValue: .bool(toolsEnabled && modes[tool.name, default: .disabled] != .disabled))
     }
-    var agentChoices = await runtime.availableAgents(includingDisabled: false).map {
-      RemoteSessionOption.Choice($0.id, $0.displayName)
+    let assignments = await runtime.taskAgentAssignments()
+    var agentChoices = await runtime.availableAgents(includingDisabled: false).map { agent in
+      let group: String
+      if ["main", "plan", "bare"].contains(agent.id) { group = "Conversation agents" }
+      else if [assignments.voice, assignments.voiceover].contains(agent.id) { group = "Voice agents" }
+      else if AgentTask.allCases.contains(where: { assignments[$0] == agent.id }) { group = "Task agents" }
+      else { group = "Your agents" }
+      return RemoteSessionOption.Choice(agent.id, agent.displayName, group: group)
+    }
+    let order = ["Conversation agents", "Your agents", "Voice agents", "Task agents"]
+    agentChoices.sort {
+      let lhs = order.firstIndex(of: $0.group ?? "") ?? order.count
+      let rhs = order.firstIndex(of: $1.group ?? "") ?? order.count
+      if lhs != rhs { return lhs < rhs }
+      let presets = ["main", "plan", "bare"]
+      if lhs == 0 { return (presets.firstIndex(of: $0.id) ?? 3) < (presets.firstIndex(of: $1.id) ?? 3) }
+      return $0.name.localizedStandardCompare($1.name) == .orderedAscending
     }
     if !agentChoices.contains(where: { $0.id == definition.id }) {
-      agentChoices.append(.init(definition.id, definition.displayName))
+      agentChoices.append(.init(definition.id, definition.displayName, group: "This conversation"))
     }
     return [
       .init(
