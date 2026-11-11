@@ -91,6 +91,7 @@ final class TTSPlayer: NSObject, ObservableObject {
   func speak(
     text: String,
     voice: RoleVoiceSettings,
+    language: String? = nil,
     role: VoiceRole,
     title: String? = nil,
     tag: String? = nil,
@@ -102,7 +103,7 @@ final class TTSPlayer: NSObject, ObservableObject {
     guard
       let speech = QueuedSpeech(
         text: text,
-        voice: voice,
+        voice: Self.speechVoice(voice, language: language),
         role: role,
         title: title,
         tag: tag,
@@ -196,6 +197,7 @@ final class TTSPlayer: NSObject, ObservableObject {
   func speakFromHere(
     messages: [ChatMessage],
     voices: VoiceSettings,
+    language: String? = nil,
     openAIEndpoints: [OpenAIEndpoint] = [],
     skipTechnicalContent: Bool = true
   ) {
@@ -206,14 +208,14 @@ final class TTSPlayer: NSObject, ObservableObject {
       case .assistant: role = .assistant
       default: return nil
       }
-      if message.role == .user,
+      if language == nil, message.role == .user,
         let recorded = QueuedSpeech(recordingMessage: message, title: message.role.displayName)
       {
         return recorded
       }
       return QueuedSpeech(
         text: MessageContentFilter.render(message.presentationText).visibleText,
-        voice: voices.settings(for: role),
+        voice: Self.speechVoice(voices.settings(for: role), language: language),
         role: role,
         title: message.role.displayName,
         tag: nil,
@@ -494,10 +496,17 @@ final class TTSPlayer: NSObject, ObservableObject {
 
   func changeLanguage(_ identifier: String) {
     guard var speech = originalSpeech, canChangeLanguage else { return }
-    speech.voice.provider = .system
-    speech.voice.language = SystemLanguageSupport.canonicalLanguageIdentifier(identifier)
-    speech.voice.voiceIdentifier = ""
+    speech.voice = Self.speechVoice(speech.voice, language: identifier)
     restart(speech)
+  }
+
+  private static func speechVoice(_ defaults: RoleVoiceSettings, language: String?) -> RoleVoiceSettings {
+    guard let language else { return defaults }
+    var voice = defaults
+    voice.provider = .system
+    voice.language = SystemLanguageSupport.canonicalLanguageIdentifier(language)
+    voice.voiceIdentifier = ""
+    return voice
   }
 
   private func restart(_ speech: QueuedSpeech) {

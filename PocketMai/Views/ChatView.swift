@@ -792,7 +792,7 @@ struct ChatView: View {
       && remoteHosts?.selectedHost?.requiresApproval != true
   }
 
-  private func speakFromHere(_ message: ChatMessage) {
+  private func speakFromHere(_ message: ChatMessage, language: String?) {
     guard
       let conversation = currentConversation,
       let index = conversation.messages.firstIndex(where: { $0.id == message.id })
@@ -802,6 +802,7 @@ struct ChatView: View {
     ttsPlayer.speakFromHere(
       messages: Array(conversation.messages[index...]),
       voices: store.effectiveToolSettings(for: conversation).voices,
+      language: language,
       openAIEndpoints: store.settings.isOffline ? [] : store.settings.openAIEndpoints,
       skipTechnicalContent: store.settings.conversation.skipTechnicalContentInTTS
     )
@@ -968,7 +969,7 @@ struct ChatView: View {
                             onRestartFresh: remoteChat == nil || remoteChat?.supportsHistoryRewind == true
                               ? { messagePendingRestartFresh = message } : nil,
                             onResubmit: remoteChat.map { chat in { chat.resubmit(message.id) } },
-                            onSpeakFromHere: { speakFromHere(message) },
+                            onSpeakFromHere: { speakFromHere(message, language: $0) },
                             onReply: { reply in sendReply(reply) }),
                           isBookmarked: conversation.map {
                             store.isMessageBookmarked(message.id, in: $0.id)

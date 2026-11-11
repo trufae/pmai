@@ -790,7 +790,7 @@ struct SettingsView: View {
     } label: {
       Text("Voiceover")
     }
-    Text("Voices are used by voiceover, Speak Message, and the assistant's text-to-speech tool.")
+    Text("Voices are used by voiceover, Speak, and the assistant's text-to-speech tool.")
       .font(.caption)
       .foregroundStyle(.secondary)
 

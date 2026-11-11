@@ -273,6 +273,76 @@ final class OpenAISpeechTests: XCTestCase {
     XCTAssertNil(player.currentVoice)
   }
 
+  func testMessageLanguageChoiceUsesSystemSpeechWithoutChangingSavedVoice() async {
+    let synthesizer = PlaybackSpeechSynthesizer()
+    let player = TTSPlayer(
+      integratesWithSystemPlayback: false, synthesizer: synthesizer
+    ) { _, _, _ in
+      XCTFail("An explicit language must use system speech")
+      return Data()
+    }
+    defer { player.stop() }
+    let voice = RoleVoiceSettings(
+      provider: .openAICompatible, language: "en-US", voiceIdentifier: "saved-voice",
+      openAIEndpointID: UUID(), openAIVoice: "nova", rate: 0.4, pitch: 1.2)
+    let message = ChatMessage(role: .assistant, text: "Bonjour.")
+    player.speak(
+      text: message.text, voice: voice, language: "fr_FR", role: .assistant,
+      messageID: message.id)
+    XCTAssertEqual(synthesizer.utterances.last?.speechString, message.text)
+    XCTAssertEqual(player.currentMessageID, message.id)
+    XCTAssertEqual(player.currentVoice?.provider, .system)
+    XCTAssertEqual(player.currentVoice?.language, "fr-FR")
+    XCTAssertEqual(player.currentVoice?.voiceIdentifier, "")
+    XCTAssertEqual(player.currentVoice?.rate, voice.rate)
+    XCTAssertEqual(player.currentVoice?.pitch, voice.pitch)
+    XCTAssertNil(player.errorMessage)
+
+    let stopped = expectation(description: "Only the selected message is spoken")
+    let observation = player.$isSpeaking.sink { if !$0 { stopped.fulfill() } }
+    synthesizer.finish()
+    await fulfillment(of: [stopped], timeout: 5)
+    observation.cancel()
+
+    // The next request without a language still uses the configured provider.
+    player.speak(text: "Use my saved voice.", voice: voice, role: .assistant)
+    XCTAssertTrue(player.errorMessage?.contains("missing or disabled") == true)
+    XCTAssertFalse(player.isSpeaking)
+  }
+
+  func testMessageLanguageChoiceAppliesToEveryQueuedMessage() async {
+    let synthesizer = PlaybackSpeechSynthesizer()
+    let player = TTSPlayer(
+      integratesWithSystemPlayback: false, synthesizer: synthesizer)
+    defer { player.stop() }
+    let messages = [
+      ChatMessage(role: .user, text: "Hola."),
+      ChatMessage(role: .tool, text: "Do not read tool output."),
+      ChatMessage(role: .assistant, text: "Buenos días."),
+    ]
+    let voices = VoiceSettings(
+      user: .init(language: "en-US", rate: 0.4),
+      assistant: .init(provider: .openAICompatible, openAIEndpointID: UUID(), openAIVoice: "nova"))
+    player.speakFromHere(messages: messages, voices: voices, language: "es_ES")
+    XCTAssertEqual(player.currentMessageID, messages[0].id)
+    XCTAssertEqual(synthesizer.utterances.last?.speechString, "Hola.")
+    XCTAssertEqual(player.currentVoice?.language, "es-ES")
+    XCTAssertEqual(player.currentVoice?.rate, voices.user.rate)
+
+    let next = expectation(description: "The assistant uses the chosen language too")
+    synthesizer.onSpeak = { utterance in
+      XCTAssertEqual(utterance.speechString, "Buenos días.")
+      next.fulfill()
+    }
+    synthesizer.finish()
+    await fulfillment(of: [next], timeout: 5)
+    XCTAssertEqual(player.currentMessageID, messages[2].id)
+    XCTAssertEqual(player.currentVoice?.provider, .system)
+    XCTAssertEqual(player.currentVoice?.language, "es-ES")
+    XCTAssertEqual(player.currentVoice?.voiceIdentifier, "")
+    XCTAssertNil(player.errorMessage)
+  }
+
   func testChangingLanguageCancelsProviderChunksAndKeepsNextMessage() async throws {
     let endpoint = OpenAIEndpoint()
     let voice = RoleVoiceSettings(

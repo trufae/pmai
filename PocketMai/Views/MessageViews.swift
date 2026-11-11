@@ -85,7 +85,7 @@ struct MessageBubbleActions {
   var onTrimFromHere: (() -> Void)? = nil
   var onRestartFresh: (() -> Void)? = nil
   var onResubmit: (() -> Void)? = nil
-  var onSpeakFromHere: (() -> Void)? = nil
+  var onSpeakFromHere: ((String?) -> Void)? = nil
   var onReply: ((String) -> Void)? = nil
 }
 
@@ -227,6 +227,8 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
   @State private var selectedImageAttachment: ChatAttachment?
   @State private var imageSaveNotice: ToastNotice?
   @State private var replyDraft: MessageReplyDraft?
+  @State private var showingDetails = false
+  @State private var showingSpeechOptions = false
   @State private var userPreviewSteps: [Int: Int] = [:]
 
   private var isUser: Bool { message.role == .user }
@@ -258,6 +260,7 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
       && (lhs.actions.onRestartFresh == nil) == (rhs.actions.onRestartFresh == nil)
       && (lhs.actions.onResubmit == nil) == (rhs.actions.onResubmit == nil)
       && (lhs.actions.onTogglePin == nil) == (rhs.actions.onTogglePin == nil)
+      && (lhs.actions.onSpeakFromHere == nil) == (rhs.actions.onSpeakFromHere == nil)
       && lhs.isBookmarked == rhs.isBookmarked
       && lhs.conversationCreatedAt == rhs.conversationCreatedAt
       && lhs.showUserTimestamp == rhs.showUserTimestamp
@@ -343,6 +346,32 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
     .frame(maxWidth: 720, alignment: isUser ? .trailing : .leading)
     .padding(.leading, isUser ? 36 : 0)
     .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
+    .popover(isPresented: $showingDetails) {
+      MessageDetailsPopover(message: message, conversationCreatedAt: conversationCreatedAt)
+        .presentationCompactAdaptation(.popover)
+    }
+    .popover(isPresented: $showingSpeechOptions) {
+      MessageSpeechPopover(
+        onSpeakMessage: { language in
+          showingSpeechOptions = false
+          TTSPlayer.shared.speak(
+            text: prepared.visibleText,
+            voice: toolSettings.voices.settings(for: message.role == .user ? .user : .assistant),
+            language: language,
+            role: message.role == .user ? .user : .assistant,
+            title: message.role.displayName,
+            messageID: message.id,
+            openAIEndpoints: openAIEndpoints,
+            skipTechnicalContent: skipTechnicalContentInTTS)
+        },
+        onSpeakFromHere: actions.onSpeakFromHere.map { speak in
+          { language in
+            showingSpeechOptions = false
+            speak(language)
+          }
+        })
+        .presentationCompactAdaptation(.popover)
+    }
   }
 
   @ViewBuilder
@@ -777,43 +806,27 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
     return nil
   }
 
-  /// MaiCore's spelling of the call(s) behind the message, the same one the
-  /// pmai REPL uses.
-  private var generationStatsText: String? {
-    message.stats?.summary
-  }
-
   @ViewBuilder
   private func messageContextMenu(visibleText: String, rawText: String) -> some View {
-    if let conversationCreatedAt {
-      Text(ConversationDatePresentation.startedText(conversationCreatedAt))
-        .font(.system(size: 8))
-        .foregroundStyle(.secondary)
-      Divider()
-    }
-    if let statsText = generationStatsText {
-      Text(statsText)
-        .font(.system(size: 8))
-        .foregroundStyle(.secondary)
-      Divider()
-    }
-
     if let onBeginSelection = actions.onBeginSelection {
       Button("Select...", systemImage: "checkmark.circle", action: onBeginSelection)
     }
 
-    if let onToggleBookmark = actions.onToggleBookmark {
-      Button(
-        isBookmarked ? "Unbookmark" : "Bookmark",
-        systemImage: isBookmarked ? "bookmark.slash" : "bookmark", action: onToggleBookmark
-      )
-      .disabled(!actions.allowsConversationMutation)
-    }
-
-    if let onTogglePin = actions.onTogglePin {
-      Button(
-        message.isPinned ? "Unpin Message" : "Pin Message",
-        systemImage: message.isPinned ? "pin.slash" : "pin", action: onTogglePin)
+    if actions.onToggleBookmark != nil || actions.onTogglePin != nil {
+      Section {
+        if let onToggleBookmark = actions.onToggleBookmark {
+          Button(
+            isBookmarked ? "Unbookmark" : "Bookmark",
+            systemImage: isBookmarked ? "bookmark.slash" : "bookmark", action: onToggleBookmark
+          )
+          .disabled(!actions.allowsConversationMutation)
+        }
+        if let onTogglePin = actions.onTogglePin {
+          Button(
+            message.isPinned ? "Unpin Message" : "Pin Message",
+            systemImage: message.isPinned ? "pin.slash" : "pin", action: onTogglePin)
+        }
+      }
     }
 
     ForEach(Array(imageAttachments.enumerated()), id: \.element.id) { index, attachment in
@@ -851,19 +864,12 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
 
     Divider()
 
-    Button("Speak Message", systemImage: "speaker.wave.2") {
-      _ = TextToSpeechTool.speak(
-        arguments: ["text": .string(visibleText)],
-        settings: toolSettings,
-        skipTechnicalContent: skipTechnicalContentInTTS,
-        openAIEndpoints: openAIEndpoints,
-        role: message.role == .user ? .user : .assistant,
-        title: message.role.displayName,
-        messageID: message.id)
+    Button("Speak…", systemImage: "speaker.wave.2") {
+      showingSpeechOptions = true
     }
 
-    if let onSpeakFromHere = actions.onSpeakFromHere {
-      Button("Speak From Here", systemImage: "speaker.wave.2.fill", action: onSpeakFromHere)
+    Button("Details…", systemImage: "info.circle") {
+      showingDetails = true
     }
 
     if message.role != .assistant {
