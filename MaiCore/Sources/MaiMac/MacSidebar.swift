@@ -256,7 +256,7 @@ struct MacSidebar: View {
       Image(systemName: chat?.permission != nil ? "hand.raised" : pinned ? "pin.fill" : "bubble.left")
       VStack(alignment: .leading, spacing: 3) {
         Text(title).lineLimit(2)
-        if let date { Text(date, style: .relative).font(.caption).foregroundStyle(.secondary) }
+        if let date { Text(.currentDate, format: .reference(to: date)).font(.caption).foregroundStyle(.secondary) }
       }
       Spacer()
       if chat?.busy == true { ProgressView().controlSize(.mini).accessibilityLabel("Working") }
