@@ -115,7 +115,9 @@ struct MacChatView: View {
                 } else if let message = run.messages.first {
                   MacMessageRow(message: message, conversation: conversation,
                     searchQuery: conversation.find.activeQuery,
-                    isSearchSelected: conversation.find.isPresented && message.id == conversation.find.selectedID).equatable()
+                    isSearchSelected: conversation.find.isPresented && message.id == conversation.find.selectedID,
+                    isStreaming: conversation.connected && conversation.busy
+                      && conversation.messages.last?.id == message.id).equatable()
                 }
               }.id(run.id)
             }

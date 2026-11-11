@@ -1,5 +1,6 @@
 import AppKit
 import MaiMarkdown
+import MaiUI
 import SwiftUI
 
 /// The same block parser as CLI output and document exports, rendered natively.
@@ -18,8 +19,9 @@ struct MacMarkdown: View, @MainActor Equatable {
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
       if let document {
-        ForEach(Array(document.blocks.enumerated()), id: \.offset) { _, block in
+        ForEach(Array(document.blocks.enumerated()), id: \.offset) { index, block in
           render(block)
+            .streamingResponseTail(index == document.blocks.count - 1)
         }
       } else if !text.isEmpty {
         ProgressView().controlSize(.small)
@@ -45,7 +47,7 @@ struct MacMarkdown: View, @MainActor Equatable {
       }
   }
 
-  private func inline(_ text: String) -> Text {
+  private func inline(_ text: String) -> some View {
     var attributed = document?.inlineText[text] ?? AttributedString(text)
     for run in attributed.runs where run.inlinePresentationIntent?.contains(.stronglyEmphasized) == true {
       attributed[run.range].foregroundColor = appearance.accentColor
@@ -54,11 +56,12 @@ struct MacMarkdown: View, @MainActor Equatable {
       attributed[run.range].underlineStyle = .single
     }
     attributed = MacSearchHighlight.apply(to: attributed, query: searchQuery)
-    return attributed.runs.reduce(Text("")) { result, run in
+    let rendered = attributed.runs.reduce(Text("")) { result, run in
       let part = Text(AttributedString(attributed[run.range]))
       let marked = run.link == nil ? part : part.customAttribute(MacMarkdownLink())
       return Text("\(result)\(marked)")
     }
+    return rendered.streamingTextReveal(String(attributed.characters))
   }
 
   @ViewBuilder private func render(_ block: MarkdownBlock) -> some View {
@@ -88,30 +91,42 @@ struct MacMarkdown: View, @MainActor Equatable {
         }
         ScrollView(.horizontal) {
           Text(MacSearchHighlight.text(code, query: searchQuery))
-            .font(typography.font(design: .monospaced)).fixedSize(horizontal: true, vertical: false)
+            .font(typography.font(design: .monospaced))
+            .streamingTextReveal(code).fixedSize(horizontal: true, vertical: false)
         }
       }.padding(14).background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 10))
     case .bullets(let items):
-      ForEach(Array(items.enumerated()), id: \.offset) { _, item in HStack(alignment: .top) { Text("•"); inline(item) } }
+      ForEach(Array(items.enumerated()), id: \.offset) { index, item in
+        HStack(alignment: .top) { Text("•"); inline(item) }
+          .streamingResponseTail(index == items.count - 1)
+      }
     case .ordered(let items):
-      ForEach(Array(items.enumerated()), id: \.offset) { _, item in HStack(alignment: .top) { Text(item.label); inline(item.text) } }
+      ForEach(Array(items.enumerated()), id: \.offset) { index, item in
+        HStack(alignment: .top) { Text(item.label); inline(item.text) }
+          .streamingResponseTail(index == items.count - 1)
+      }
     case .tasks(let items):
-      ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+      ForEach(Array(items.enumerated()), id: \.offset) { index, item in
         HStack(alignment: .top) { Image(systemName: item.checked ? "checkmark.square" : "square"); inline(item.text) }
+          .streamingResponseTail(index == items.count - 1)
       }
     case .footnotes(let items):
-      ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+      ForEach(Array(items.enumerated()), id: \.offset) { index, item in
         inline("[\(item.key)] \(item.text)").font(typography.messageFont(for: role, style: .caption1))
+          .streamingResponseTail(index == items.count - 1)
       }
     case .table(let table):
       ScrollView(.horizontal) {
         Grid(alignment: .leading, horizontalSpacing: 20, verticalSpacing: 10) {
-          GridRow { ForEach(Array(table.headers.enumerated()), id: \.offset) { _, cell in
+          GridRow { ForEach(Array(table.headers.enumerated()), id: \.offset) { index, cell in
             inline(cell).bold().foregroundStyle(appearance.accentColor)
+              .streamingResponseTail(table.rows.isEmpty && index == table.headers.count - 1)
           } }
           Divider()
-          ForEach(Array(table.rows.enumerated()), id: \.offset) { _, row in
-            GridRow { ForEach(Array(row.enumerated()), id: \.offset) { _, cell in inline(cell) } }
+          ForEach(Array(table.rows.enumerated()), id: \.offset) { rowIndex, row in
+            GridRow { ForEach(Array(row.enumerated()), id: \.offset) { column, cell in
+              inline(cell).streamingResponseTail(rowIndex == table.rows.count - 1 && column == row.count - 1)
+            } }
           }
         }.padding(12)
       }.background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))

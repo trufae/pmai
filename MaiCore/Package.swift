@@ -98,6 +98,7 @@ let package = Package(
     .library(name: "MaiPluginHost", targets: ["MaiPluginHost"]),
     .library(name: "MaiDocuments", targets: ["MaiDocuments"]),
     .library(name: "MaiMarkdown", targets: ["MaiMarkdown"]),
+    .library(name: "MaiUI", targets: ["MaiUI"]),
     .library(name: "MaiACP", targets: ["MaiACP"]),
     .library(name: "MaiFixturePlugin", type: .dynamic, targets: ["MaiFixturePlugin"]),
     .executable(name: "pmai", targets: ["MaiCommand"]),
@@ -111,6 +112,7 @@ let package = Package(
     .target(name: "MaiCore", dependencies: ["CMaiWinHTTP"]),
     .target(name: "MaiVoice", dependencies: ["MaiCore", "MaiOpenAI"]),
     .target(name: "MaiMarkdown"),
+    .target(name: "MaiUI"),
     .target(name: "MaiOpenAI", dependencies: [
       "MaiCore", .product(name: "Crypto", package: "swift-crypto"),
       .product(name: "CryptoExtras", package: "swift-crypto"),
@@ -199,7 +201,7 @@ let package = Package(
 if !focusedTests {
   package.products.append(.executable(name: "pmai-mac", targets: ["MaiMac"]))
   package.targets.append(.executableTarget(name: "MaiMac",
-    dependencies: ["MaiCLI", "MaiCore", "MaiACP", "MaiMarkdown", "MaiStandardTools", "MaiDocuments", "MaiVoice"]))
+    dependencies: ["MaiCLI", "MaiCore", "MaiACP", "MaiMarkdown", "MaiUI", "MaiStandardTools", "MaiDocuments", "MaiVoice"]))
 }
 #endif
 

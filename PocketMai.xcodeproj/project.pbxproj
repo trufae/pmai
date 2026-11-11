@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A30000000000000000000001 /* MaiUI in Frameworks */ = {isa = PBXBuildFile; productRef = A30000000000000000000002 /* MaiUI */; };
 		A10000000000000000000001 /* MLX in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000011 /* MLX */; };
 		A10000000000000000000002 /* MLXLLM in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000012 /* MLXLLM */; };
 		A10000000000000000000003 /* MLXLMCommon in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000013 /* MLXLMCommon */; };
@@ -143,6 +144,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A30000000000000000000001 /* MaiUI in Frameworks */,
 				A20000000000000000000001 /* MaiCore in Frameworks */,
 				A20000000000000000000002 /* MaiOpenAI in Frameworks */,
 				A20000000000000000000007 /* MaiLocalProviders in Frameworks */,
@@ -233,6 +235,7 @@
 			);
 			name = PocketMai;
 			packageProductDependencies = (
+				A30000000000000000000002 /* MaiUI */,
 				A20000000000000000000011 /* MaiCore */,
 				A20000000000000000000012 /* MaiOpenAI */,
 				A20000000000000000000017 /* MaiLocalProviders */,
@@ -913,6 +916,10 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		A30000000000000000000002 /* MaiUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = MaiUI;
+		};
 		A10000000000000000000011 /* MLX */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = A10000000000000000000021 /* XCRemoteSwiftPackageReference "mlx-swift" */;

@@ -1,4 +1,5 @@
 import MaiCore
+import MaiUI
 import Photos
 import ImageIO
 import SwiftUI
@@ -281,7 +282,8 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
             partID: part.id,
             visiblePartIndex: prepared.visiblePartIndex(at: index),
             actionText: prepared.visibleText,
-            includeMessageExtras: index == prepared.firstVisiblePartIndex
+            includeMessageExtras: index == prepared.firstVisiblePartIndex,
+            isStreamingTail: index == prepared.parts.count - 1
           )
           .id(ResponseScrollTarget(messageID: message.id, partID: part.id))
         default:
@@ -391,7 +393,8 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
     partID: Int,
     visiblePartIndex: Int,
     actionText: String? = nil,
-    includeMessageExtras: Bool = true
+    includeMessageExtras: Bool = true,
+    isStreamingTail: Bool = true
   )
     -> some View
   {
@@ -458,12 +461,17 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
           allowsTextSelection: false,
           renderImages: renderImages
         )
+        .environment(\.isStreamingResponse, isStreamingTail && isStreaming && message.role == .assistant
+          && !isFullChatScreenshotRendering)
         .fixedSize(horizontal: false, vertical: true)
       } else {
         Text(bubbleText)
           .font(messageFont)
           .lineSpacing(CGFloat(appearance.lineSpacing))
           .foregroundStyleIfPresent(plainBodyForegroundStyle)
+          .streamingTextReveal(bubbleText)
+          .environment(\.isStreamingResponse, isStreamingTail && isStreaming && message.role == .assistant
+            && !isFullChatScreenshotRendering)
           .fixedSize(horizontal: false, vertical: true)
       }
       if allowsProgressiveReveal && (userPreview != nil || previewSteps > 1) {
@@ -2929,104 +2937,109 @@ struct MarkdownContentView: View {
   var body: some View {
     VStack(alignment: .leading, spacing: appearance.markdownMetric(10)) {
       ForEach(blocks) { block in
-        switch block.kind {
-        case .heading(let level, let value):
-          MarkdownInlineText(
-            value: value,
-            appearance: appearance,
-            font: headingFont(level: level),
-            uiFont: headingUIFont(level: level),
-            allowsTextSelection: allowsTextSelection,
-            foregroundStyle: foregroundStyle,
-            uiForegroundColor: uiForegroundColor,
-            italic: italic
-          )
-          .fixedSize(horizontal: false, vertical: true)
-        case .text(let value):
-          MarkdownInlineText(
-            value: value,
-            appearance: appearance,
-            font: fontFamily.swiftUIFont(size: appearance.fontSize),
-            uiFont: fontFamily.uiFont(size: appearance.fontSize),
-            allowsTextSelection: allowsTextSelection,
-            foregroundStyle: bodyForegroundStyle,
-            uiForegroundColor: bodyUIForegroundColor,
-            italic: italic
-          )
-          .fixedSize(horizontal: false, vertical: true)
-        case .blockquote(let value):
-          BlockquoteView(
-            text: value,
-            appearance: appearance,
-            fontFamily: fontFamily,
-            allowsTextSelection: allowsTextSelection,
-            italic: italic)
-        case .horizontalRule:
-          MarkdownHorizontalRuleView(appearance: appearance)
-        case .code(let language, let code):
-          CodeBlockView(
-            language: language,
-            code: code,
-            appearance: appearance,
-            allowsTextSelection: allowsTextSelection)
-        case .mermaid(let source):
-          MermaidBlockView(
-            source: source,
-            appearance: appearance,
-            allowsTextSelection: allowsTextSelection)
-        case .table(let headers, let rows, let alignments):
-          MarkdownTableView(
-            headers: headers,
-            rows: rows,
-            alignments: alignments,
-            appearance: appearance,
-            fontFamily: fontFamily,
-            allowsTextSelection: allowsTextSelection,
-            foregroundStyle: bodyForegroundStyle,
-            uiForegroundColor: bodyUIForegroundColor,
-            italic: italic
-          )
-        case .taskList(let items):
-          TaskListView(
-            items: items,
-            appearance: appearance,
-            fontFamily: fontFamily,
-            allowsTextSelection: allowsTextSelection,
-            foregroundStyle: bodyForegroundStyle,
-            uiForegroundColor: bodyUIForegroundColor,
-            italic: italic)
-        case .bulletList(let items):
-          BulletListView(
-            items: items,
-            appearance: appearance,
-            fontFamily: fontFamily,
-            allowsTextSelection: allowsTextSelection,
-            foregroundStyle: bodyForegroundStyle,
-            uiForegroundColor: bodyUIForegroundColor,
-            italic: italic)
-        case .orderedList(let items):
-          OrderedListView(
-            items: items,
-            appearance: appearance,
-            fontFamily: fontFamily,
-            allowsTextSelection: allowsTextSelection,
-            foregroundStyle: bodyForegroundStyle,
-            uiForegroundColor: bodyUIForegroundColor,
-            italic: italic)
-        case .footnotes(let items):
-          FootnotesView(
-            items: items,
-            appearance: appearance,
-            fontFamily: fontFamily,
-            allowsTextSelection: allowsTextSelection,
-            foregroundStyle: bodyForegroundStyle,
-            uiForegroundColor: bodyUIForegroundColor,
-            italic: italic)
-        }
+        blockView(block)
+          .streamingResponseTail(block.id == blocks.last?.id)
       }
     }
     .environment(\.markdownRenderImages, renderImages)
     .frame(maxWidth: .infinity, alignment: .leading)
+  }
+
+  @ViewBuilder private func blockView(_ block: MarkdownBlock) -> some View {
+    switch block.kind {
+    case .heading(let level, let value):
+      MarkdownInlineText(
+        value: value,
+        appearance: appearance,
+        font: headingFont(level: level),
+        uiFont: headingUIFont(level: level),
+        allowsTextSelection: allowsTextSelection,
+        foregroundStyle: foregroundStyle,
+        uiForegroundColor: uiForegroundColor,
+        italic: italic
+      )
+      .fixedSize(horizontal: false, vertical: true)
+    case .text(let value):
+      MarkdownInlineText(
+        value: value,
+        appearance: appearance,
+        font: fontFamily.swiftUIFont(size: appearance.fontSize),
+        uiFont: fontFamily.uiFont(size: appearance.fontSize),
+        allowsTextSelection: allowsTextSelection,
+        foregroundStyle: bodyForegroundStyle,
+        uiForegroundColor: bodyUIForegroundColor,
+        italic: italic
+      )
+      .fixedSize(horizontal: false, vertical: true)
+    case .blockquote(let value):
+      BlockquoteView(
+        text: value,
+        appearance: appearance,
+        fontFamily: fontFamily,
+        allowsTextSelection: allowsTextSelection,
+        italic: italic)
+    case .horizontalRule:
+      MarkdownHorizontalRuleView(appearance: appearance)
+    case .code(let language, let code):
+      CodeBlockView(
+        language: language,
+        code: code,
+        appearance: appearance,
+        allowsTextSelection: allowsTextSelection)
+    case .mermaid(let source):
+      MermaidBlockView(
+        source: source,
+        appearance: appearance,
+        allowsTextSelection: allowsTextSelection)
+    case .table(let headers, let rows, let alignments):
+      MarkdownTableView(
+        headers: headers,
+        rows: rows,
+        alignments: alignments,
+        appearance: appearance,
+        fontFamily: fontFamily,
+        allowsTextSelection: allowsTextSelection,
+        foregroundStyle: bodyForegroundStyle,
+        uiForegroundColor: bodyUIForegroundColor,
+        italic: italic
+      )
+    case .taskList(let items):
+      TaskListView(
+        items: items,
+        appearance: appearance,
+        fontFamily: fontFamily,
+        allowsTextSelection: allowsTextSelection,
+        foregroundStyle: bodyForegroundStyle,
+        uiForegroundColor: bodyUIForegroundColor,
+        italic: italic)
+    case .bulletList(let items):
+      BulletListView(
+        items: items,
+        appearance: appearance,
+        fontFamily: fontFamily,
+        allowsTextSelection: allowsTextSelection,
+        foregroundStyle: bodyForegroundStyle,
+        uiForegroundColor: bodyUIForegroundColor,
+        italic: italic)
+    case .orderedList(let items):
+      OrderedListView(
+        items: items,
+        appearance: appearance,
+        fontFamily: fontFamily,
+        allowsTextSelection: allowsTextSelection,
+        foregroundStyle: bodyForegroundStyle,
+        uiForegroundColor: bodyUIForegroundColor,
+        italic: italic)
+    case .footnotes(let items):
+      FootnotesView(
+        items: items,
+        appearance: appearance,
+        fontFamily: fontFamily,
+        allowsTextSelection: allowsTextSelection,
+        foregroundStyle: bodyForegroundStyle,
+        uiForegroundColor: bodyUIForegroundColor,
+        italic: italic)
+    }
   }
 
   // Body copy is dimmed by default so headings and bold runs stand out; an
@@ -3140,7 +3153,7 @@ private struct MarkdownInlineSegmentedText: View {
 
   var body: some View {
     VStack(alignment: frameAlignment, spacing: appearance.markdownMetric(6)) {
-      ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
+      ForEach(Array(segments.enumerated()), id: \.offset) { index, segment in
         switch segment {
         case .text(let text):
           if !text.trimmingCharacters(in: .newlines).isEmpty {
@@ -3159,6 +3172,7 @@ private struct MarkdownInlineSegmentedText: View {
               italic: italic
             )
             .frame(maxWidth: .infinity, alignment: swiftUIAlignment)
+            .streamingResponseTail(index == segments.count - 1)
           }
         case .image(let image):
           MarkdownImageView(image: image, appearance: appearance)
@@ -3225,13 +3239,15 @@ private struct MarkdownPlainInlineText: View {
       }
     } else {
       let effectiveFont = font.italicizedIf(italic)
-      Text(attributedInlineMarkdown(value, strongFont: effectiveFont.bold()))
+      let attributed = attributedInlineMarkdown(value, strongFont: effectiveFont.bold())
+      Text(attributed)
         .font(effectiveFont)
         .lineSpacing(CGFloat(appearance.lineSpacing))
         .multilineTextAlignment(textAlignment)
         .foregroundStyleIfPresent(foregroundStyle)
         .strikethrough(strikethrough, color: .secondary)
         .textSelectionIfEnabled(allowsTextSelection)
+        .streamingTextReveal(String(attributed.characters))
     }
   }
 }
@@ -3688,6 +3704,9 @@ extension TextAlignment {
 }
 
 private struct JustifiedMarkdownTextView: UIViewRepresentable {
+  @Environment(\.isStreamingResponse) private var streaming
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @Environment(\.scenePhase) private var scenePhase
   let value: String
   let font: UIFont
   let lineSpacing: Double
@@ -3764,6 +3783,8 @@ private struct JustifiedMarkdownTextView: UIViewRepresentable {
     textView.textDragInteraction?.isEnabled = allowsTextSelection
     textView.isSelectable = allowsTextSelection || allowsLinkInteraction
     textView.isUserInteractionEnabled = allowsTextSelection || allowsLinkInteraction
+    textView.streamingMask.update(textView.text ?? "",
+      enabled: streaming && !reduceMotion && scenePhase == .active)
   }
 
   final class Coordinator: NSObject, UITextViewDelegate {
@@ -3829,8 +3850,19 @@ private struct JustifiedMarkdownTextView: UIViewRepresentable {
 }
 
 private final class LinkHitTestingTextView: UITextView {
+  let streamingMask = StreamingTextMask()
   var allowsTextInteraction = false
   var allowsLinkInteraction = false
+
+  override func layoutSubviews() {
+    super.layoutSubviews()
+    streamingMask.layout(in: self)
+  }
+
+  override func didMoveToWindow() {
+    super.didMoveToWindow()
+    if window == nil { streamingMask.clear() }
+  }
 
   override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
     guard super.point(inside: point, with: event) else { return false }
@@ -5368,6 +5400,7 @@ struct MarkdownTableView: View {
               isHeader: rowIndex == 0,
               unwrapped: false
             )
+            .streamingResponseTail(rowIndex == rowCount - 1 && columnIndex == headers.count - 1)
             .background(
               rowIndex == 0
                 ? Color.secondary.opacity(0.10)
@@ -5395,6 +5428,7 @@ struct MarkdownTableView: View {
               columnIndex: columnIndex,
               isHeader: true,
               unwrapped: true)
+              .streamingResponseTail(rows.isEmpty && columnIndex == headers.count - 1)
           }
         }
         .background(Color.secondary.opacity(0.10))
@@ -5407,6 +5441,7 @@ struct MarkdownTableView: View {
                 columnIndex: columnIndex,
                 isHeader: false,
                 unwrapped: true)
+                .streamingResponseTail(rowIndex == rows.count - 1 && columnIndex == headers.count - 1)
             }
           }
           .background(rowIndex.isMultiple(of: 2) ? Color.clear : Color.secondary.opacity(0.05))
@@ -5545,6 +5580,7 @@ struct CodeBlockView: View {
             .font(appearance.codeFont)
             .lineSpacing(CGFloat(appearance.lineSpacing))
             .textSelectionIfEnabled(allowsTextSelection)
+            .streamingTextReveal(code)
             .padding(appearance.markdownMetric(12))
             .fixedSize(horizontal: true, vertical: true)
         }
@@ -5772,7 +5808,7 @@ struct TaskListView: View {
     let textFont = fontFamily.swiftUIFont(size: appearance.fontSize)
     let markerWidth = appearance.markdownListMarkerWidth(markerLength: 1, minimum: 20)
     VStack(alignment: .leading, spacing: appearance.markdownMetric(6)) {
-      ForEach(items) { item in
+      ForEach(Array(items.enumerated()), id: \.offset) { index, item in
         HStack(alignment: .firstTextBaseline, spacing: appearance.markdownMetric(8)) {
           Image(systemName: item.checked ? "checkmark.square.fill" : "square")
             .font(.system(size: appearance.fontSize * 0.95))
@@ -5795,6 +5831,7 @@ struct TaskListView: View {
           .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .streamingResponseTail(index == items.count - 1)
       }
     }
   }
@@ -5831,7 +5868,7 @@ struct BulletListView: View {
     let textFont = fontFamily.swiftUIFont(size: appearance.fontSize)
     let markerWidth = appearance.markdownListMarkerWidth(markerLength: 1)
     VStack(alignment: .leading, spacing: appearance.markdownMetric(6)) {
-      ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+      ForEach(Array(items.enumerated()), id: \.offset) { index, item in
         HStack(alignment: .firstTextBaseline, spacing: appearance.markdownMetric(8)) {
           Text("•")
             .font(textFont.italicizedIf(italic))
@@ -5851,6 +5888,7 @@ struct BulletListView: View {
           .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .streamingResponseTail(index == items.count - 1)
       }
     }
   }
@@ -5888,7 +5926,7 @@ struct OrderedListView: View {
     let markerLength = items.map { $0.marker.count }.max() ?? 2
     let markerWidth = appearance.markdownListMarkerWidth(markerLength: markerLength)
     VStack(alignment: .leading, spacing: appearance.markdownMetric(6)) {
-      ForEach(items) { item in
+      ForEach(Array(items.enumerated()), id: \.offset) { index, item in
         HStack(alignment: .firstTextBaseline, spacing: appearance.markdownMetric(8)) {
           Text(item.marker)
             .font(textFont.italicizedIf(italic))
@@ -5909,6 +5947,7 @@ struct OrderedListView: View {
           .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .streamingResponseTail(index == items.count - 1)
       }
     }
   }
@@ -5973,7 +6012,7 @@ private struct FootnotesView: View {
     VStack(alignment: .leading, spacing: appearance.markdownMetric(3)) {
       Divider()
         .overlay(Color.secondary.opacity(0.25))
-      ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+      ForEach(Array(items.enumerated()), id: \.offset) { index, item in
         MarkdownInlineText(
           value: "\(MarkdownInlineSymbols.toSuperscript(item.key)) \(item.text)",
           appearance: appearance,
@@ -5983,6 +6022,7 @@ private struct FootnotesView: View {
           foregroundStyle: foregroundStyle ?? Color.secondary,
           uiForegroundColor: uiForegroundColor ?? .secondaryLabel,
           italic: italic)
+          .streamingResponseTail(index == items.count - 1)
       }
     }
   }

@@ -1,5 +1,6 @@
 import AppKit
 import MaiACP
+import MaiUI
 import SwiftUI
 
 struct MacMessageRun: Identifiable, Equatable {
@@ -67,6 +68,7 @@ struct MacMessageRow: View, @MainActor Equatable {
   let conversation: MacConversation
   var searchQuery = ""
   var isSearchSelected = false
+  var isStreaming = false
   @State private var expanded = false
   private var typography = MacChatTypography()
   private var appearance = MacAppearance()
@@ -74,6 +76,7 @@ struct MacMessageRow: View, @MainActor Equatable {
   static func == (lhs: Self, rhs: Self) -> Bool {
     lhs.message == rhs.message && lhs.conversation === rhs.conversation
       && lhs.searchQuery == rhs.searchQuery && lhs.isSearchSelected == rhs.isSearchSelected
+      && lhs.isStreaming == rhs.isStreaming
   }
 
   var body: some View {
@@ -98,6 +101,8 @@ struct MacMessageRow: View, @MainActor Equatable {
           systemImage: message.role == "user" ? "person.crop.circle" : "sparkle")
           .font(typography.font(.callout).weight(.semibold)).foregroundStyle(.secondary)
         MacMarkdown(text: message.text, searchQuery: searchQuery, role: message.role).equatable()
+          .environment(\.isStreamingResponse,
+            message.role == "assistant" && isStreaming && searchQuery.isEmpty)
       }
     }
     .font(typography.font())
