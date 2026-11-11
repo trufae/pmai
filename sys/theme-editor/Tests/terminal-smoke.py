@@ -90,6 +90,9 @@ def main():
             session.wait('Update the greeting and add a test.')
             session.wait('Tool call')
             session.wait('Markdown italic')
+            session.output = b''
+            session.resize(84, 22)
+            session.wait('Ask a follow-up…')
             session.send(b'e#123456\r', 'default.backgroundLine = #123456')
             session.send(b'\t', 'PMAI THEME EDITOR  |  ansi')
             # The Text row contains foreground, background and the bold flag.
@@ -108,10 +111,21 @@ def main():
             expected = expected.replace('backgroundLine: "black", foreground: "white", background: "",',
                                         'backgroundLine: "black", foreground: "white", background: "#918080",', 1)
             assert saved == expected, 'Saving changed unexpected source text'
-            session.resize(60, 18)
-            session.wait('Resize to at least 78 x 24')
-            session.resize(80, 24)
             session.output = b''
+            session.resize(60, 18)
+            session.wait('bgcolor = #918080')
+            session.wait('Ask a follow-up…')
+            session.send(b'e#abcdef', 'Color: #abcdef_')
+            session.output = b''
+            session.resize(40, 12)
+            session.wait('Color: #abcdef_')
+            session.send(b'\r', 'bgcolor = #abcdef')
+            session.send(b'u', 'bgcolor = #918080')
+            session.send(b'?', 'j/k Up/Down')
+            session.send(b'G', 'Ctrl-C: exit without saving')
+            session.send(b'?', 'bgcolor = #918080')
+            session.output = b''
+            session.resize(80, 24)
             session.wait('◢')
             session.wait('Ask a follow-up…')
             # Selecting Error reveals its sample even in a short terminal.

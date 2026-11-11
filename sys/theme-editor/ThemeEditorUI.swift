@@ -47,10 +47,13 @@ struct ThemeEditorUI {
   var input: String?
   var confirmation: String?
   var help = false
+  var helpOffset = 0
+  var helpPageSize = 1
   var clipboard: String?
   var undo: [ThemeEdit] = []
   var redo: [ThemeEdit] = []
   var previewOffset = 0
+  var previewPageSize = 1
   var revealSelection = true
   var blinkStarted: TimeInterval = -.infinity
   var status = "Ready. Edits stay in memory until you save."
@@ -156,12 +159,24 @@ struct ThemeEditorUI {
       }
       return true
     }
-    if help { if [.escape, .character("?"), .enter].contains(key) { help = false }; return true }
+    if help {
+      switch key {
+      case .escape, .character("?"), .enter: help = false
+      case .down, .character("j"): helpOffset += 1
+      case .up, .character("k"): helpOffset = max(0, helpOffset - 1)
+      case .pageDown: helpOffset += helpPageSize
+      case .pageUp: helpOffset = max(0, helpOffset - helpPageSize)
+      case .home, .character("g"): helpOffset = 0
+      case .end, .character("G"): helpOffset = Int.max
+      default: break
+      }
+      return true
+    }
     switch key {
     case .character("q"), .escape:
       if !document.dirty { return false }
       confirmation = "quit"
-    case .character("?"): help = true
+    case .character("?"): help = true; helpOffset = 0
     case .character("s"): _ = save()
     case .character("r"): setValue(document.original[theme]![field.name]!)
     case .character("R"):
@@ -198,8 +213,7 @@ struct ThemeEditorUI {
     case .fastLeft: adjust(-1, step: 16)
     case .fastRight: adjust(1, step: 16)
     case .pageUp, .pageDown:
-      let page = max(1, Terminal.size.rows - 8)
-      previewOffset = max(0, previewOffset + (key == .pageUp ? -page : page))
+      previewOffset = max(0, previewOffset + (key == .pageUp ? -previewPageSize : previewPageSize))
       revealSelection = false
     case .character("."): highlight()
     default: break
@@ -222,117 +236,198 @@ struct ThemeEditorUI {
   }
 
   mutating func frame(columns: Int, rows: Int, now: TimeInterval) -> String {
-    var screen = Array(repeating: "", count: max(1, rows))
+    let columns = max(1, columns)
+    let rows = max(1, rows)
+    let left = columns >= 40 ? 2 : 1
+    // Leave the last column free to avoid autowrap, unless it is the only column.
+    let right = max(1, columns - 1)
+    let width = right - left + 1
+    var screen = Array(repeating: "", count: rows)
     func put(_ x: Int, _ y: Int, _ text: String, width: Int, style: String = "") {
-      guard y > 0, y <= rows, x <= columns else { return }
-      let width = max(0, min(width, columns - x))
+      guard y > 0, y <= rows, x > 0, x <= right else { return }
+      let width = max(0, min(width, right - x + 1))
       let safe = text.map { $0.isNewline || $0.asciiValue.map({ $0 < 32 || $0 == 127 }) == true ? " " : $0 }
       let clipped = String(safe.prefix(width))
       screen[y - 1] += "\u{1b}[\(y);\(x)H" + Terminal.reset + style + clipped
         + String(repeating: " ", count: max(0, width - clipped.count)) + Terminal.reset
     }
-    put(2, 1, "PMAI THEME EDITOR  |  \(theme)\(document.dirty ? "  * unsaved" : "")",
-      width: columns - 3, style: "\u{1b}[1m")
-    put(2, 2, "Tab / Shift-Tab: theme \(themeIndex + 1)/\(document.themes.count)   ? help   \(document.changedCount) changes",
-      width: columns - 3, style: "\u{1b}[2m")
-    if columns < 78 || rows < 24 {
-      put(2, 4, "Resize to at least 78 x 24 (now \(columns) x \(rows)).", width: columns - 3)
-      put(2, 6, "s save  q quit  Ctrl-C exit", width: columns - 3)
-    } else {
-      let sidebar = 34
-      let height = rows - 10
-      let start = max(0, min(itemIndex - height / 2, items.count - height))
-      let palette = document.values[theme]!
-      put(2, 3, "Elements \(start + 1)-\(min(items.count, start + height))/\(items.count)", width: 22, style: "\u{1b}[2m")
-      put(25, 3, "fg bg  B", width: 9, style: "\u{1b}[2m")
-      for (offset, entry) in items.dropFirst(start).prefix(height).enumerated() {
-        let selected = start + offset == itemIndex
-        let changed = entry.fields.contains { palette[$0.name] != document.original[theme]?[$0.name] }
-        put(2, 4 + offset, "\(selected ? "›" : " ") \(entry.title)\(changed ? " *" : "")", width: sidebar - 1,
-          style: selected ? "\u{1b}[7m" : "")
+    func wrapped(_ text: String) -> [String] {
+      var rest = text[...]
+      var lines: [String] = []
+      while !rest.isEmpty {
+        lines.append(String(rest.prefix(width)))
+        rest = rest.dropFirst(width)
+      }
+      return lines
+    }
+    func rendered() -> String {
+      // Paint each cleared row immediately rather than blanking the whole screen.
+      screen.enumerated().map { row, content in
+        Terminal.reset + "\u{1b}[\(row + 1);1H\u{1b}[2K" + content
+      }.joined()
+    }
+    if help {
+      let shortcuts = ["j/k Up/Down: move through elements", "g/G Home/End: first/last element",
+        "Ctrl-U/D: page through elements", "Tab / Shift-Tab: next/previous theme",
+        "h/l [/] Space: cycle fg/bg/bold", "f / b / v: select fg / bg / bold",
+        "Enter / e: type color; toggle flag", "c / n: cycle mode / use none",
+        "Left/Right -/+: adjust color/channel", "Shift-Left/Right: adjust channel by 16",
+        "1/2/3: select R/G/B channel", "y / p: copy / paste value", "u / U: undo / redo edit",
+        "r / R: reset field / reload", "s Ctrl-S: save all themes",
+        "PgUp/PgDn: scroll conversation", ".: blink/reveal selection",
+        "q / Esc: quit; check unsaved edits", "Ctrl-C: exit without saving"]
+      let lines = shortcuts.flatMap(wrapped)
+      let top = rows > 1 ? 2 : 1
+      helpPageSize = rows - top + 1
+      helpOffset = min(helpOffset, max(0, lines.count - helpPageSize))
+      if rows > 1 { put(left, 1, "? close · j/k scroll · KEYBOARD", width: width, style: "\u{1b}[1m") }
+      for (offset, line) in lines.dropFirst(helpOffset).prefix(helpPageSize).enumerated() {
+        put(left, top + offset, line, width: width)
+      }
+      return rendered()
+    }
+
+    let titleRows = rows >= 12 ? 2 : rows >= 5 ? 1 : 0
+    let footerRows = rows >= 8 ? 2 : rows >= 3 ? 1 : 0
+    let top = titleRows + 1
+    let height = rows - titleRows - footerRows
+    let sideBySide = columns >= 72
+    let editorWidth = sideBySide ? 33 : width
+    let editorHeight = sideBySide ? height : max(1, min(9, height / 2))
+    let palette = document.values[theme]!
+    if titleRows > 0 {
+      let title = width >= 58 ? "PMAI THEME EDITOR  |  \(theme)\(document.dirty ? "  * unsaved" : "")"
+        : "\(theme)\(document.dirty ? " *" : "") · THEME EDITOR"
+      put(left, 1, title, width: width, style: "\u{1b}[1m")
+    }
+    if titleRows > 1 {
+      put(left, 2, "Tab / Shift-Tab: theme \(themeIndex + 1)/\(document.themes.count)   ? help   \(document.changedCount) changes",
+        width: width, style: "\u{1b}[2m")
+    }
+
+    let listHeader = editorHeight >= 9 ? 1 : 0
+    let separator = editorHeight >= 14 ? 1 : 0
+    let details = editorHeight >= 10 ? 4 : editorHeight >= 6 ? 3 : editorHeight >= 3 ? 2 : 1
+    let listHeight = editorHeight - listHeader - separator - details
+    let start = max(0, min(itemIndex - listHeight / 2, items.count - listHeight))
+    if listHeader > 0 {
+      put(left, top, "Elements \(start + 1)-\(min(items.count, start + listHeight))/\(items.count)",
+        width: editorWidth - 10, style: "\u{1b}[2m")
+      put(left + editorWidth - 10, top, "fg bg  B", width: 9, style: "\u{1b}[2m")
+    }
+    for (offset, entry) in items.dropFirst(start).prefix(listHeight).enumerated() {
+      let selected = start + offset == itemIndex
+      let changed = entry.fields.contains { palette[$0.name] != document.original[theme]?[$0.name] }
+      let y = top + listHeader + offset
+      put(left, y, "\(selected ? "›" : " ") \(entry.title)\(changed ? " *" : "")", width: editorWidth,
+        style: selected ? "\u{1b}[7m" : "")
+      if editorWidth >= 30 {
         for member in entry.fields {
           let component = ThemeItem.component(member)
-          let x = component == "fg" ? 25 : component == "bg" ? 28 : 32
+          let x = left + editorWidth - (component == "fg" ? 10 : component == "bg" ? 7 : 3)
           let color = palette[member.name]!
           let active = selected && member.name == field.name
           let swatch = member.isFlag ? (color == "true" ? "1" : "0") : color.isEmpty ? "··" : "██"
-          put(x, 4 + offset, swatch, width: member.isFlag ? 1 : 2,
+          put(x, y, swatch, width: member.isFlag ? 1 : 2,
             style: (member.isFlag ? "" : "\u{1b}[\(ThemeColor.code(color))m") + (active ? "\u{1b}[4m" : ""))
         }
       }
-      put(2, rows - 6, String(repeating: "─", count: sidebar - 1), width: sidebar - 1, style: "\u{1b}[2m")
-      var x = 2
+    }
+    var detailY = top + listHeader + listHeight
+    if separator > 0 {
+      put(left, detailY, String(repeating: "─", count: editorWidth), width: editorWidth, style: "\u{1b}[2m")
+      detailY += 1
+    }
+    if details >= 3 {
+      var x = left
       for member in item.fields {
         let label = " \(ThemeItem.component(member)) "
-        put(x, rows - 5, label, width: min(label.count, sidebar + 1 - x),
+        put(x, detailY, label, width: min(label.count, left + editorWidth - x),
           style: member.name == field.name ? "\u{1b}[7m" : "\u{1b}[2m")
         x += label.count + 1
       }
-      put(2, rows - 4, input.map { "Color: \($0)_" } ?? "\(field.shortName) = \(value.isEmpty ? "none" : value)",
-        width: sidebar - 1, style: input == nil ? "" : "\u{1b}[1m")
+      detailY += 1
+    }
+    let currentValue = "\(field.shortName) = \(value.isEmpty ? "none" : value)"
+    let editingValue = input.map { String("Color: \($0)_".suffix(editorWidth)) }
+    put(left, detailY, editingValue ?? currentValue, width: editorWidth,
+      style: input == nil ? "" : "\u{1b}[1m")
+    if details >= 2 {
+      let modeText: String
       if let rgb = ThemeColor.rgb(value), !field.isFlag {
-        let channels = (0..<3).map { "\($0 == channel ? "[" : " ")\(["R", "G", "B"][$0]):\(rgb[$0])\($0 == channel ? "]" : " ")" }
-        put(2, rows - 3, channels.joined(separator: " "), width: sidebar - 1)
+        modeText = (0..<3).map { "\($0 == channel ? "[" : "")\(["R", "G", "B"][$0]):\(rgb[$0])\($0 == channel ? "]" : "")" }
+          .joined(separator: " ")
       } else {
-        put(2, rows - 3, field.isFlag ? "Boolean · Enter toggles" : "\(["None", "ANSI", "RGB"][mode]) · c changes color mode", width: sidebar - 1)
+        modeText = field.isFlag ? "Boolean · Enter toggles" : "\(["None", "ANSI", "RGB"][mode]) · c changes color mode"
       }
-      put(2, rows - 2, input == nil ? "h/l part  ←/→ value  1/2/3 RGB" : "Enter applies · Esc cancels", width: sidebar - 1,
-        style: "\u{1b}[2m")
-      for y in 3...(rows - 2) { put(36, y, "│", width: 1, style: "\u{1b}[2m") }
-      let previewX = 38
-      let width = columns - previewX
-      let preview = ThemePreview(palette: palette, width: width)
-      let bodyHeight = rows - 7
+      put(left, detailY + 1, input == nil ? modeText : "Enter applies · Esc cancels", width: editorWidth)
+    }
+    if details == 4 {
+      put(left, detailY + 2, "h/l part  ←/→ value  1/2/3 RGB", width: editorWidth, style: "\u{1b}[2m")
+    }
+
+    let previewX = sideBySide ? 38 : left
+    let previewY = sideBySide ? top : top + editorHeight
+    let previewWidth = right - previewX + 1
+    let previewHeight = sideBySide ? height : height - editorHeight
+    previewPageSize = 1
+    if previewHeight > 0 {
+      if sideBySide {
+        for y in top..<(top + height) { put(36, y, "│", width: 1, style: "\u{1b}[2m") }
+      }
+      let preview = ThemePreview(palette: palette, width: previewWidth, compact: previewHeight < 8)
+      let showChrome = previewHeight >= 3
+      let showPosition = previewHeight >= 5
+      let bodyHeight = previewHeight - (showChrome ? 2 : 0) - (showPosition ? 1 : 0)
+      previewPageSize = bodyHeight
       previewOffset = min(previewOffset, max(0, preview.lines.count - bodyHeight))
       let header = ThemePreview.header(theme)
       let prompt = ThemePreview.prompt
       if revealSelection {
-        if !header.contains(field.name, palette: palette), !prompt.contains(field.name, palette: palette),
+        if !(showChrome && (header.contains(field.name, palette: palette) || prompt.contains(field.name, palette: palette))),
           let target = preview.lines.firstIndex(where: { $0.contains(field.name, palette: palette) }),
           !(previewOffset..<(previewOffset + bodyHeight)).contains(target) {
-          previewOffset = max(0, min(target - 2, preview.lines.count - bodyHeight))
+          previewOffset = max(0, min(target - min(2, bodyHeight - 1), preview.lines.count - bodyHeight))
         }
         revealSelection = false
       }
-      let flashing = blinkPhase(at: now) % 2 == 0 && blinkPhase(at: now) < 6 ? field.name : nil
+      let phase = blinkPhase(at: now)
+      let flashing = phase % 2 == 0 && phase < 6 ? field.name : nil
       func previewRow(_ y: Int, _ line: PreviewLine) {
-        screen[y - 1] += "\u{1b}[\(y);\(previewX)H" + line.render(width: width, palette: palette, flashing: flashing)
+        screen[y - 1] += "\u{1b}[\(y);\(previewX)H" + line.render(width: previewWidth, palette: palette, flashing: flashing)
       }
-      previewRow(3, header)
+      if showChrome { previewRow(previewY, header) }
+      let bodyY = previewY + (showChrome ? 1 : 0)
       for offset in 0..<bodyHeight {
         let index = previewOffset + offset
-        previewRow(4 + offset, index < preview.lines.count ? preview.lines[index] : PreviewLine())
+        previewRow(bodyY + offset, index < preview.lines.count ? preview.lines[index] : PreviewLine())
       }
-      previewRow(rows - 3, prompt)
-      put(previewX, rows - 2, "Preview \(previewOffset + 1)-\(min(preview.lines.count, previewOffset + bodyHeight))/\(preview.lines.count) · PgUp/PgDn",
-        width: width, style: "\u{1b}[2m")
-      if help {
-        let shortcuts = ["KEYBOARD · ? / Esc closes", "j/k ↑/↓    Move through elements",
-          "g/G Home/End   First/last element", "Ctrl-U/D   Page through elements",
-          "Tab / Shift-Tab   Next/prev theme", "h/l [/] Space   Cycle fg/bg/bold",
-          "f / b / v  Select fg / bg / bold", "Enter / e  Type color; toggle flag",
-          "c / n      Cycle mode / use none", "←/→  -/+   Adjust color/channel",
-          "Shift-←/→  Adjust channel by 16", "1/2/3      Select R/G/B channel",
-          "y / p      Copy / paste value", "u / U      Undo / redo edit",
-          "r / R      Reset field / reload", "s Ctrl-S   Save all themes",
-          "PgUp/PgDn  Scroll conversation", ".          Blink/reveal selection",
-          "q / Esc    Quit; check unsaved edits", "Ctrl-C     Exit without saving"]
-        for y in 3...(rows - 2) {
-          let index = y - 3
-          put(previewX, y, index < shortcuts.count ? shortcuts[index] : "", width: width)
-        }
+      if showChrome { previewRow(bodyY + bodyHeight, prompt) }
+      if showPosition {
+        put(previewX, previewY + previewHeight - 1,
+          "Preview \(previewOffset + 1)-\(min(preview.lines.count, previewOffset + bodyHeight))/\(preview.lines.count) · PgUp/PgDn",
+          width: previewWidth, style: "\u{1b}[2m")
       }
     }
-    let message = confirmation == "quit" ? "Unsaved edits: s save & quit / d discard / Esc stay"
-      : confirmation == "reload" ? "Reload and discard unsaved edits? y yes / n no" : status
-    put(2, rows - 1, message, width: columns - 3, style: confirmation == nil ? "" : "\u{1b}[7m")
-    put(2, rows, "j/k items · Tab themes · e edit · f/b fg/bg · u undo · s save · ? help · q quit", width: columns - 3,
-      style: "\u{1b}[2m")
-    // Paint each cleared row immediately, rather than blanking the whole screen
-    // before the selection pulse. Leave the last column free to avoid autowrap.
-    return screen.enumerated().map { row, content in
-      Terminal.reset + "\u{1b}[\(row + 1);1H\u{1b}[2K" + content
-    }.joined()
+    if footerRows > 0 { put(left, rows - footerRows + 1, status, width: width) }
+    if footerRows > 1 {
+      put(left, rows, width >= 70
+        ? "j/k items · Tab themes · e edit · f/b fg/bg · u undo · s save · ? help · q quit"
+        : "e edit · s save · ? help · q quit", width: width, style: "\u{1b}[2m")
+    }
+    if let confirmation {
+      let message = confirmation == "quit" ? "Unsaved edits: s save & quit / d discard / Esc stay"
+        : "Reload and discard unsaved edits? y yes / n no"
+      // Wrap prompts over the lower rows so narrow terminals still show the choices.
+      let lines = wrapped(message)
+      let visible = lines.suffix(rows)
+      for (offset, line) in visible.enumerated() {
+        let y = rows - visible.count + offset + 1
+        screen[y - 1] = ""
+        put(left, y, line, width: width, style: "\u{1b}[7m")
+      }
+    }
+    return rendered()
   }
 
   mutating func run() throws {

@@ -404,7 +404,7 @@ struct ThemeEditor {
           PgUp/PgDn scrolls the preview; . blinks the affected sample; ? shows help.
           e enters a color: none, an ANSI name, #rrggbb, or rgb:rgb.
           s/Ctrl-S saves all edited themes; r resets a field; R reloads; q quits.
-          Ctrl-C exits without saving. Requires a terminal of at least 78 x 24.
+          Ctrl-C exits without saving. The layout adapts to the terminal size.
           Rebuild pmai after saving to use the edited built-in themes.
           """)
         return

@@ -8,7 +8,9 @@ make themeeditor
 
 Or run `swift run ThemeEditor` inside this directory. Use
 `make themeeditor ARGS="--root /path/to/pmai"` to edit another checkout.
-The terminal must be at least 78 columns by 24 rows.
+The layout adapts to the terminal size, stacking the editor above the preview
+in narrow terminals and reducing the visible rows in short terminals. Small
+previews omit blank lines and bubble borders so the sample text stays visible.
 
 The persistent element list reads every editable key from the existing Swift
 definitions, including defaults from `ConfiguredTerminalUI`. Foreground,
@@ -42,7 +44,7 @@ selected component again.
 | u / U | Undo / redo an edit, including across themes |
 | Page Up / Page Down | Scroll the preview conversation |
 | . | Reveal and blink the selected component again |
-| ? | Show keyboard help; ? or Escape closes it |
+| ? | Show keyboard help; j/k or Page Up/Down scrolls it; ? or Escape closes it |
 | s / Ctrl-S | Save all changed themes |
 | r | Reset the current field to its last loaded/saved value |
 | R | Reload source, with confirmation if edits would be discarded |

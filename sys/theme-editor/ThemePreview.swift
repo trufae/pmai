@@ -63,11 +63,13 @@ struct PreviewLine {
 struct ThemePreview {
   let palette: [String: String]
   let width: Int
+  let compact: Bool
   var lines: [PreviewLine] = []
 
-  init(palette: [String: String], width: Int) {
+  init(palette: [String: String], width: Int, compact: Bool = false) {
     self.palette = palette
-    self.width = max(8, width)
+    self.width = max(1, width)
+    self.compact = compact
     bubble("Update the greeting and add a test.")
     line("Thinking... inspecting the project", foreground: "thinkingForeground")
     tool("files_read", parameter: "path", value: "Sources/main.swift")
@@ -145,6 +147,7 @@ struct ThemePreview {
 
   mutating func line(_ text: String, foreground: String = "foreground", background: String = "background",
     bold: Bool = false, italic: Bool = false) {
+    if compact && text.isEmpty { return }
     let span = PreviewSpan(text: text, foreground: foreground, background: background, bold: bold,
       italic: italic)
     wrapped([span], fill: PreviewSpan(text: "", background: background))
@@ -191,6 +194,14 @@ struct ThemePreview {
 
   mutating func bubble(_ text: String) {
     line("")
+    // Small previews use the border and padding cells for the message itself.
+    if compact || width < 5 {
+      let prefix = compact && width >= 3 ? "◢ " : ""
+      wrapped([PreviewSpan(text: prefix + text, foreground: "bubbleForeground", background: "bubbleBackground", flag: "bold")],
+        fill: PreviewSpan(text: "", background: "bubbleBackground"))
+      line("")
+      return
+    }
     // Same four-cell reservation and filled/outlined geometry as the REPL.
     var body: [String] = []
     var rest = text[...]

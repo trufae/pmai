@@ -154,4 +154,89 @@ final class ThemeEditorTests: XCTestCase {
       XCTAssertEqual(reopened.values, ui.document.values)
     }
   }
+
+  // A resize must keep the selected value editable and must not wrap drawing
+  // outside the terminal, including while entering a color or confirming quit.
+  func testEditingSurvivesSmallTerminalLayouts() throws {
+    try fixture { document in
+      var ui = ThemeEditorUI(document: document)
+      XCTAssertTrue(ui.handle(.character("j")))
+      XCTAssertTrue(ui.handle(.character("f")))
+      for (columns, rows) in [(84, 22), (60, 18), (40, 12), (20, 8), (10, 4), (1, 1), (84, 22)] {
+        for key in [Key.character("e")] + "blue".map(Key.character) {
+          XCTAssertTrue(ui.handle(key))
+        }
+        let editing = try visibleScreen(ui.frame(columns: columns, rows: rows, now: 0), columns: columns, rows: rows)
+        if columns >= 20 { XCTAssertTrue(editing.contains("Color: blue_"), editing) }
+        XCTAssertTrue(ui.handle(.enter))
+        let edited = try visibleScreen(ui.frame(columns: columns, rows: rows, now: 0), columns: columns, rows: rows)
+        if columns >= 20 {
+          XCTAssertTrue(edited.contains("fgcolor = blue"), edited)
+          XCTAssertTrue(edited.contains("pmai"), edited)
+          XCTAssertTrue(edited.contains("Update"), edited)
+        }
+        XCTAssertTrue(ui.handle(.character("?")))
+        _ = try visibleScreen(ui.frame(columns: columns, rows: rows, now: 0), columns: columns, rows: rows)
+        XCTAssertTrue(ui.handle(.end))
+        let help = try visibleScreen(ui.frame(columns: columns, rows: rows, now: 0), columns: columns, rows: rows)
+        if columns >= 40 { XCTAssertTrue(help.contains("Ctrl-C: exit without saving"), help) }
+        XCTAssertTrue(ui.handle(.escape))
+        XCTAssertTrue(ui.handle(.character("q")))
+        let confirmation = try visibleScreen(ui.frame(columns: columns, rows: rows, now: 0), columns: columns, rows: rows)
+        if columns >= 20 {
+          let joined = confirmation.components(separatedBy: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.joined()
+          XCTAssertTrue(joined.contains("d discard"), confirmation)
+          XCTAssertTrue(joined.contains("Esc stay"), confirmation)
+        }
+        XCTAssertTrue(ui.handle(.escape))
+      }
+      XCTAssertTrue(ui.save())
+      let reopened = try ThemeDocument(sourceURL: document.sourceURL, configurationURL: document.configurationURL)
+      XCTAssertEqual(reopened.values["default"]?["foreground"], "blue")
+    }
+  }
+
+  func testPreviewReflowsWithinNarrowTerminals() {
+    for width in [1, 4, 5, 12, 38] {
+      for background in ["", "blue"] {
+        let preview = ThemePreview(palette: ["bubbleBackground": background], width: width)
+        for line in preview.lines {
+          let text = line.spans.map(\.text).joined()
+          XCTAssertLessThanOrEqual(text.count, width, text)
+        }
+      }
+    }
+  }
+
+  private func visibleScreen(_ frame: String, columns: Int, rows: Int) throws -> String {
+    var screen = Array(repeating: Array(repeating: Character(" "), count: columns), count: rows)
+    var x = 0, y = 0
+    var offset = frame.startIndex
+    let escapes = try NSRegularExpression(pattern: "\u{1b}\\[([0-9;]*)([HKm])")
+    func write(_ text: Substring) {
+      for character in text {
+        guard (0..<rows).contains(y), (0..<columns).contains(x) else {
+          XCTFail("Drawing outside \(columns)x\(rows) at \(x + 1),\(y + 1)")
+          return
+        }
+        screen[y][x] = character
+        x += 1
+      }
+    }
+    for match in escapes.matches(in: frame, range: NSRange(frame.startIndex..., in: frame)) {
+      let range = Range(match.range, in: frame)!
+      write(frame[offset..<range.lowerBound])
+      let command = frame[Range(match.range(at: 2), in: frame)!]
+      if command == "H" {
+        let position = frame[Range(match.range(at: 1), in: frame)!].split(separator: ";").compactMap { Int($0) }
+        y = position[0] - 1; x = position[1] - 1
+        XCTAssertTrue((0..<rows).contains(y) && (0..<columns).contains(x), "Cursor outside terminal")
+      } else if command == "K", (0..<rows).contains(y) {
+        screen[y] = Array(repeating: " ", count: columns)
+      }
+      offset = range.upperBound
+    }
+    write(frame[offset...])
+    return screen.map { String($0) }.joined(separator: "\n")
+  }
 }
