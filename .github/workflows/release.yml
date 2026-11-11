@@ -39,6 +39,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Install Linux static-link dependencies
+        if: runner.os == 'Linux'
+        run: sudo bash .github/install-ubuntu-packages.sh libcurl4-openssl-dev
+
       - name: Set up Swift
         uses: SwiftyLab/setup-swift@d60245579ea3836a3f2fa65ebbe1e8891d577c76 # v1.14.2
         with:
@@ -49,16 +53,6 @@ jobs:
         run: |
           swift --version
           test "$(uname -m)" = "${{ matrix.runner_arch }}"
-
-      - name: Install Linux static-link dependencies
-        if: runner.os == 'Linux'
-        run: |
-          # Chrome's unrelated apt repository occasionally publishes an index
-          # while its Release metadata is still being mirrored. We do not need
-          # it for this build, so keep it out of apt-get update.
-          sudo rm -f /etc/apt/sources.list.d/google-chrome.list
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libcurl4-openssl-dev
 
       - name: Restore Swift build outputs
         id: build-cache
@@ -165,9 +159,7 @@ jobs:
       - name: Verify release networking without AVX
         if: matrix.arch == 'x86_64'
         run: |
-          sudo rm -f /etc/apt/sources.list.d/google-chrome.list
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends qemu-user
+          sudo bash .github/install-ubuntu-packages.sh qemu-user
           python3 test/linux-network-smoke.py qemu-x86_64 -cpu Nehalem ./pmai
 
       - name: Package CLI

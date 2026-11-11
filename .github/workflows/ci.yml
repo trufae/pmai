@@ -140,6 +140,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Install static link dependencies
+        run: sudo bash .github/install-ubuntu-packages.sh libcurl4-openssl-dev
+
       - name: Set up Swift
         uses: SwiftyLab/setup-swift@d60245579ea3836a3f2fa65ebbe1e8891d577c76 # v1.14.2
         with:
@@ -148,15 +151,6 @@ jobs:
 
       - name: Show Swift version
         run: swift --version
-
-      - name: Install static link dependencies
-        run: |
-          # Chrome's unrelated apt repository occasionally publishes an index
-          # while its Release metadata is still being mirrored. We do not need
-          # it for this build, so keep it out of apt-get update.
-          sudo rm -f /etc/apt/sources.list.d/google-chrome.list
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libcurl4-openssl-dev
 
       # Links the Swift runtime, Foundation and libdispatch into the
       # executable so it runs on machines without a Swift toolchain. The
@@ -190,9 +184,11 @@ jobs:
 
       - name: Verify Ubuntu 26.04 compatibility
         run: |
-          docker run --rm -v "$PWD:/work:ro" ubuntu:26.04 sh -ec '
-            apt-get update
-            apt-get install -y --no-install-recommends libcurl4t64 libstdc++6 ca-certificates
+          docker run --rm -v "$PWD:/work:ro" \
+            -v /etc/ssl/certs/ca-certificates.crt:/run/runner-ca-certificates.crt:ro ubuntu:26.04 sh -ec '
+            mkdir -p /etc/ssl/certs
+            cp /run/runner-ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+            bash /work/.github/install-ubuntu-packages.sh libcurl4t64 libstdc++6 ca-certificates
             /work/pmai --help
           '
 
@@ -274,9 +270,7 @@ jobs:
       - name: Verify release networking without AVX
         if: matrix.arch == 'x86_64'
         run: |
-          sudo rm -f /etc/apt/sources.list.d/google-chrome.list
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends qemu-user
+          sudo bash .github/install-ubuntu-packages.sh qemu-user
           python3 test/linux-network-smoke.py qemu-x86_64 -cpu Nehalem ./pmai
 
   windows-cli:
