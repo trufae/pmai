@@ -3,11 +3,12 @@
 A standalone Swift TUI with no dependencies or server. From the repository root:
 
 ```sh
-swift run --package-path sys/theme-editor ThemeEditor
+make themeeditor
 ```
 
-Or run `swift run ThemeEditor` inside this directory. Pass `--root /path/to/pmai`
-to edit another checkout. The terminal must be at least 78 columns by 24 rows.
+Or run `swift run ThemeEditor` inside this directory. Use
+`make themeeditor ARGS="--root /path/to/pmai"` to edit another checkout.
+The terminal must be at least 78 columns by 24 rows.
 
 The persistent element list reads every editable key from the existing Swift
 definitions, including defaults from `ConfiguredTerminalUI`. Foreground,

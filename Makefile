@@ -36,7 +36,7 @@ MAC_SIGN_IDENTITY ?= -
 MAC_INSTALL_DIR ?= $(HOME)/Applications
 BINDIR ?= $(HOME)/.local/bin
 
-.PHONY: all build test list run uninstall repl repl-build repl-install repl-uninstall repl-musl plugin-fixture fmt clean check-shared-tooling aitest-build
+.PHONY: all build test list run uninstall repl repl-build repl-install repl-uninstall repl-musl themeeditor plugin-fixture fmt clean check-shared-tooling aitest-build
 .PHONY: android android-test android-kotlin android-kotlin-release test-core test-unit test-cli
 .PHONY: mac mac-dmg mac-install mac-run
 TEST_PROFILE ?= platform
@@ -150,6 +150,9 @@ repl:
 		. ./env.sh; \
 	fi; \
 	$(SWIFT) run --package-path MaiCore $(SWIFT_BUILD_FLAGS) pmai $(ARGS)
+
+themeeditor:
+	$(SWIFT) run --package-path sys/theme-editor $(SWIFT_BUILD_FLAGS) ThemeEditor $(ARGS)
 
 repl-build:
 	$(SWIFT) build --package-path MaiCore $(SWIFT_BUILD_FLAGS) --product pmai
