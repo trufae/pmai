@@ -4,22 +4,38 @@ import QuartzCore
 
 /// Shared motion tuning for SwiftUI text and native link/justified text.
 public enum StreamingTextRevealStyle {
-  public static let duration = 0.72
+  public static let duration = 2.00
   public static let maximumBatches = 12
 
-  public static func opacity(progress: Double, position: Double) -> Double {
+  public static func opacity(progress: Double, position: Double = 0) -> Double {
     let delay = min(1, max(0, position)) * 0.22
     let t = min(1, max(0, (progress - delay) / (1 - delay)))
-    // Smootherstep has zero velocity and acceleration at either end. Each
-    // glyph gently gathers ink without a sudden start or an abrupt finish.
-    let eased = t * t * t * (t * (t * 6 - 15) + 10)
+    let eased = t * t * (3 - 2 * t)
     return 0.22 + 0.78 * eased
   }
 }
 
-struct StreamingTextArrival {
-  var count: Int
+/// One fading wave follows the stream, retaining its position across appends.
+struct StreamingTextWave {
+  static let maximumTail = 96
+  static let width = 24.0
+  let count: Int
+  let distance: Double
   let time: TimeInterval
+
+  init(count: Int, time: TimeInterval, previous: Self?) {
+    self.count = min(Self.maximumTail, (previous?.count ?? 0) + count)
+    // Moving the end also moves the wave's distance by the same amount,
+    // leaving the opacity of text already on screen unchanged.
+    distance = min(Double(Self.maximumTail) + Self.width,
+      (previous?.remaining(at: time) ?? Self.width) + Double(count))
+    self.time = time
+  }
+
+  func remaining(at time: TimeInterval) -> Double {
+    let t = min(1, max(0, (time - self.time) / StreamingTextRevealStyle.duration))
+    return distance * (1 - t) * (1 - t)
+  }
 }
 
 private struct StreamingResponseKey: EnvironmentKey {
@@ -60,22 +76,18 @@ private struct StreamingTextReveal: ViewModifier {
   @Environment(\.isStreamingResponse) private var streaming
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @Environment(\.scenePhase) private var scenePhase
-  @State private var arrivals: [StreamingTextArrival] = []
-  @State private var revision = 0
-  @State private var revealing = false
+  @State private var wave: StreamingTextWave?
 
   private var enabled: Bool { streaming && !reduceMotion && scenePhase == .active }
 
   func body(content: Content) -> some View {
     Group {
       if enabled {
-        // Only this drawing subtree ticks. A real monotonic clock lets new
-        // chunks join the fade without restarting or rewinding older ink.
-        TimelineView(.animation(minimumInterval: 1.0 / 60, paused: !revealing)) { _ in
+        // Only the drawing subtree ticks, and only while the wave is moving.
+        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: wave == nil)) { _ in
           content.textRenderer(StreamingTextRenderer(
-            time: revealing ? CACurrentMediaTime()
-              : (arrivals.last?.time ?? 0) + StreamingTextRevealStyle.duration,
-            arrivals: arrivals))
+            remaining: wave?.remaining(at: CACurrentMediaTime()) ?? 0,
+            tailCount: wave?.count ?? 0))
         }
         .transaction { $0.animation = nil }
       } else {
@@ -83,109 +95,91 @@ private struct StreamingTextReveal: ViewModifier {
       }
     }
       .onChange(of: source, initial: true) { old, new in
-        guard enabled else { arrivals = []; revealing = false; return }
+        guard enabled else { wave = nil; return }
         // Only arrivals animate. Replacements, final formatting, search and
         // history restoration must never conceal existing text.
         let appended: Substring
-        if old == new, revision == 0 {
-          appended = new.suffix(StreamingTextRenderer.maximumTail)
+        if old == new {
+          appended = new.suffix(StreamingTextWave.maximumTail)
         } else if new.utf8.starts(with: old.utf8) {
           appended = new.dropFirst(old.count)
         } else {
-          arrivals = []
-          revealing = false
+          wave = nil
           return
         }
-        let count = appended.suffix(StreamingTextRenderer.maximumTail).filter { !$0.isNewline }.count
+        let count = appended.suffix(StreamingTextWave.maximumTail).filter { !$0.isNewline }.count
         guard count > 0 else { return }
         let now = CACurrentMediaTime()
-        arrivals.removeAll { now - $0.time >= StreamingTextRevealStyle.duration }
-        arrivals.append(StreamingTextArrival(count: count, time: now))
-        arrivals = Array(arrivals.suffix(StreamingTextRevealStyle.maximumBatches))
-        var budget = StreamingTextRenderer.maximumTail
-        for index in arrivals.indices.reversed() {
-          arrivals[index].count = min(arrivals[index].count, budget)
-          budget -= arrivals[index].count
-        }
-        arrivals.removeAll { $0.count == 0 }
-        revealing = true
-        revision &+= 1
+        let previous = wave.flatMap { now - $0.time < StreamingTextRevealStyle.duration ? $0 : nil }
+        wave = StreamingTextWave(count: count, time: now, previous: previous)
       }
       .onChange(of: enabled) { _, enabled in
-        if !enabled { arrivals = []; revealing = false }
+        if !enabled { wave = nil }
       }
-      .task(id: enabled ? revision : nil) {
-        guard enabled, let latest = arrivals.last else { return }
-        let remaining = max(0, latest.time + StreamingTextRevealStyle.duration - CACurrentMediaTime())
+      .task(id: wave?.time) {
+        guard let wave else { return }
+        let remaining = max(0, wave.time + StreamingTextRevealStyle.duration - CACurrentMediaTime())
         do { try await Task.sleep(for: .seconds(remaining)) } catch { return }
-        guard !Task.isCancelled, arrivals.last?.time == latest.time else { return }
-        revealing = false
+        guard !Task.isCancelled, self.wave?.time == wave.time else { return }
+        self.wave = nil
       }
   }
 }
 
 /// A finite, drawing-only animation. SwiftUI retains the laid-out text; no
 /// parsing, string operations or view state mutations run in the renderer.
-/// Settled lines/runs use their normal batched draw. At most 96 new glyphs get
-/// individual opacity values, regardless of the response length.
+/// Settled lines/runs use their normal batched draw. Only the small tail fades,
+/// in groups of four glyphs to keep drawing work low regardless of response length.
 struct StreamingTextRenderer: TextRenderer {
-  static let maximumTail = 96
-  var time: TimeInterval
-  var arrivals: [StreamingTextArrival]
-
-  var animatableData: Double {
-    get { time }
-    set { time = newValue }
-  }
+  var remaining: Double
+  var tailCount: Int
 
   func draw(layout: Text.Layout, in context: inout GraphicsContext) {
-    guard let latest = arrivals.last, time < latest.time + StreamingTextRevealStyle.duration else {
+    guard remaining > 0, tailCount > 0 else {
       for line in layout { context.draw(line) }
       return
     }
-    let tailCount = arrivals.reduce(0) { $0 + $1.count }
     // Walk backwards only far enough to locate the small animated tail.
-    var remaining = min(tailCount, Self.maximumTail)
+    let fadingCount = min(tailCount, StreamingTextWave.maximumTail, Int(ceil(remaining)))
+    var glyphsToEnd = 0
     var firstLine = layout.endIndex
     for index in layout.indices.reversed() {
       firstLine = index
-      for run in layout[index] { remaining -= run.count }
-      if remaining <= 0 { break }
+      for run in layout[index] { glyphsToEnd += run.count }
+      if glyphsToEnd >= fadingCount { break }
     }
-    var offset = min(0, remaining)
-    var arrivalIndex = 0
-    var arrivalStart = 0
     for index in layout.indices {
       let line = layout[index]
       guard index >= firstLine else { context.draw(line); continue }
-      for run in line {
-        if offset + run.count <= 0 {
+      // Layout runs are in visual order. Reorder mixed/RTL lines by source
+      // position so only the newly appended end fades, in either direction.
+      let logicalRuns = line.contains { $0.layoutDirection == .rightToLeft } ? line.sorted {
+        guard let lhs = $0.characterIndices.min(), let rhs = $1.characterIndices.min() else { return false }
+        return lhs < rhs
+      } : nil
+      for runIndex in line.indices {
+        let run = logicalRuns?[runIndex] ?? line[runIndex]
+        let stable = min(run.count, max(0, glyphsToEnd - fadingCount))
+        defer { glyphsToEnd -= run.count }
+        if stable == run.count {
           context.draw(run)
-          offset += run.count
           continue
         }
-        let stable = min(run.count, max(0, -offset))
         let rtl = run.layoutDirection == .rightToLeft
         if stable > 0 {
           context.draw(rtl ? run[(run.count - stable)..<run.count] : run[0..<stable])
         }
-        for glyph in stable..<run.count {
-          // A soft leading-to-trailing gradient, preserving each glyph's
-          // original foreground (including syntax colors and link styles).
-          let index = max(0, offset + glyph) + max(0, remaining)
-          while arrivalIndex < arrivals.count - 1,
-            index >= arrivalStart + arrivals[arrivalIndex].count {
-            arrivalStart += arrivals[arrivalIndex].count
-            arrivalIndex += 1
-          }
-          let arrival = arrivals[arrivalIndex]
-          let position = Double(index - arrivalStart) / Double(max(1, arrival.count - 1))
+        // Anchor groups to the run so the fading boundary can move without
+        // reshuffling every group on each frame.
+        for group in stride(from: stable / 4 * 4, to: run.count, by: 4) {
+          let start = max(stable, group)
+          let end = min(run.count, group + 4)
+          let distance = Double(glyphsToEnd - 1 - group)
           var ink = context
           ink.opacity *= StreamingTextRevealStyle.opacity(
-            progress: (time - arrival.time) / StreamingTextRevealStyle.duration, position: position)
-          ink.draw(run[rtl ? run.count - 1 - glyph : glyph])
+            progress: 1 + (distance - remaining) / StreamingTextWave.width)
+          ink.draw(rtl ? run[(run.count - end)..<(run.count - start)] : run[start..<end])
         }
-        offset += run.count
       }
     }
   }
