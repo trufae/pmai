@@ -217,11 +217,20 @@ enum TerminalTheme {
       styled(text, foreground: ui.infoForeground, background: ui.background)
     }
     func row(_ text: String, foreground: String, background: String? = nil,
-      bold: Bool = false, italic: Bool = false, prompt: Bool = false) -> String
+      bold: Bool = false, italic: Bool = false, prompt: Bool = false,
+      toolCall: ToolCall? = nil) -> String
     {
-      // Names and sample text are ASCII, so character counts equal cell widths.
+      // Each sample character occupies one terminal cell.
       let text = String(text.prefix(width))
-      let padded = text + String(repeating: " ", count: width - text.count)
+      let shown: String
+      if colors, let toolCall {
+        shown = TerminalToolBlock.highlightedCall(text, call: toolCall, display: .truncate) {
+          TerminalThemeStyle.resolve($0.marker, ui: ui)
+        }
+      } else {
+        shown = text
+      }
+      let padded = shown + String(repeating: " ", count: width - text.count)
       let content: String
       if prompt {
         let prefix = String(padded.prefix(2))
@@ -235,6 +244,8 @@ enum TerminalTheme {
       return frame("| ") + content + frame(" |")
     }
     let border = frame("+" + String(repeating: "-", count: width + 2) + "+")
+    let call = ToolCall(id: "preview", name: "files_find",
+      arguments: .object(["path": .string("."), "query": .string("*")]))
     return [
       border,
       row(name, foreground: ui.infoForeground, background: ui.backgroundLine, bold: true),
@@ -245,9 +256,9 @@ enum TerminalTheme {
         background: ui.bubbleBackground.isEmpty ? ui.background : ui.bubbleBackground,
         bold: ui.bold),
       row("Thinking... inspecting the project", foreground: ui.thinkingForeground),
-      row("-> files_list .", foreground: ui.toolCallForeground,
+      row(ToolCallPreview.render(call), foreground: ui.toolCallForeground,
         background: ui.toolCallBackground.isEmpty ? ui.background : ui.toolCallBackground,
-        bold: ui.toolCallBold),
+        bold: ui.toolCallBold, toolCall: call),
       row("<- README.md  Sources/  Tests/", foreground: ui.toolResultForeground,
         background: ui.toolResultBackground.isEmpty ? ui.background : ui.toolResultBackground),
       row("pmai: Project files listed. Ready!", foreground: ui.successForeground),

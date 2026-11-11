@@ -41,7 +41,7 @@ actor TerminalWriter {
   private var tools = ConfiguredTerminalUI().tools
   /// Compact calls are printed once their outcome is known. Scope IDs by run
   /// because different agents can issue the same provider-generated call ID.
-  private var compactToolCalls: [UUID: [String: (text: String, display: ToolCallDisplay)]] = [:]
+  private var compactToolCalls: [UUID: [String: (text: String, display: ToolCallDisplay, call: ToolCall)]] = [:]
   private var iconToolCalls: [UUID: Set<String>] = [:]
   private var iconLinePrefix: String?
   private var bufferToolCalls: [UUID: [String: Int]] = [:]
@@ -695,8 +695,9 @@ actor TerminalWriter {
     // Progress must announce a call before it finishes, even with compact/icon UI settings.
     if progress {
       let preview = ToolCallPreview.render(call, display: .truncate)
-      compactToolCalls[context.runID, default: [:]][call.id] = (String(preview.dropFirst(2)), .truncate)
-      toolStatus(preview, context: context, color: .toolCallForeground, background: .toolCallBackground)
+      compactToolCalls[context.runID, default: [:]][call.id] = (String(preview.dropFirst(2)), .truncate, call)
+      toolStatus(preview, context: context, color: .toolCallForeground, background: .toolCallBackground,
+        call: call)
       return
     }
     if let screen, screen.isBufferMode, REPLRedirection.current == nil {
@@ -714,10 +715,10 @@ actor TerminalWriter {
       iconToolCalls[context.runID, default: []].insert(call.id)
       toolIcon(ToolIcon.emoji(for: call.name), context: context)
     } else if tools == .lines(0) {
-      compactToolCalls[context.runID, default: [:]][call.id] = (String(preview.dropFirst(2)), ui.toolCalls)
+      compactToolCalls[context.runID, default: [:]][call.id] = (String(preview.dropFirst(2)), ui.toolCalls, call)
     } else {
       toolStatus(preview, context: context, color: .toolCallForeground, background: .toolCallBackground,
-        truncate: ui.toolCalls == .truncate)
+        truncate: ui.toolCalls == .truncate, call: call, calls: ui.toolCalls)
     }
   }
 
@@ -727,7 +728,8 @@ actor TerminalWriter {
       if compactToolCalls[context.runID]?.isEmpty == true { compactToolCalls[context.runID] = nil }
       let marker = result.isError ? "✘" : "✔"
       toolStatus("\(marker) \(call?.text ?? result.callID)", context: context,
-        color: result.isError ? .errorForeground : .toolCallForeground, background: .toolCallBackground)
+        color: result.isError ? .errorForeground : .toolCallForeground, background: .toolCallBackground,
+        call: call?.call)
       if result.isError {
         toolStatus(ToolResultPreview.render(result, display: .lines(3)), context: context,
           color: .errorForeground, background: .toolResultBackground)
@@ -761,7 +763,8 @@ actor TerminalWriter {
       toolStatus(
         "\(marker) \(call?.text ?? (result.isError ? "error" : "done"))",
         context: context, color: result.isError ? .errorForeground : .toolCallForeground,
-        background: .toolCallBackground, truncate: (call?.display ?? ui.toolCalls) == .truncate)
+        background: .toolCallBackground, truncate: (call?.display ?? ui.toolCalls) == .truncate,
+        call: call?.call, calls: call?.display ?? ui.toolCalls)
     } else {
       toolStatus(
         ToolResultPreview.render(result, display: tools), context: context,
@@ -772,12 +775,18 @@ actor TerminalWriter {
 
   private func toolStatus(
     _ text: String, context: AgentEventContext, color: TerminalThemeStyle,
-    background: TerminalThemeStyle, diff: Bool = false, truncate: Bool = false
+    background: TerminalThemeStyle, diff: Bool = false, truncate: Bool = false,
+    call: ToolCall? = nil, calls: ToolCallDisplay = .truncate
   ) {
     let prefix = context.depth > 0 ? context.pid.map { childPrefix($0) } ?? "" : ""
-    let text = truncate && terminalOutput && REPLRedirection.current == nil
+    var text = truncate && terminalOutput && REPLRedirection.current == nil
       ? TerminalToolBlock.truncatedCall(text, width: TerminalLineEditor.terminalColumns(), prefix: prefix)
       : text
+    if colorsStatus, let call {
+      text = TerminalToolBlock.highlightedCall(text, call: call, display: calls, color: color) { role in
+        TerminalThemeStyle.resolve(role.marker, ui: ui) + (retainsThemeStyles ? role.marker : "")
+      }
+    }
     if context.depth > 0, let pid = context.pid {
       childBlock(pid, text, color: color, background: background, diff: diff)
     } else {

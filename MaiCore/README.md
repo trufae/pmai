@@ -815,6 +815,10 @@ and save it. `/theme color bold on` enables bold input;
 `/theme color boldtoolcall on` enables bold tool calls. These colors and bold settings
 are managed entirely by `/theme`; `/set` contains behavior settings.
 
+Tool previews use `fgtoolcall` for tool names, `fginfo` for parameter names, and
+`fgcolor` for parameter values, including bare paths and commands. Failed calls
+keep their status marker and tool name in `fgerror`.
+
 After tweaking colors with `/theme color`, `/theme save mine` writes the current
 colors and bold setting to `~/.pmai/themes/mine`, replacing that file if it
 exists. `PMAI_HOME` or `--home` relocates the themes directory. Files are plain
@@ -839,12 +843,12 @@ Old configuration files and saved themes using `/set ui.COLOR VALUE` remain vali
 | `bgline` | Input/status-line background |
 | `fgcolor`, `bgcolor` | Text foreground and background (including empty space in buffer mode) |
 | `fgprompt`, `bgprompt` | Prompt marker foreground; entire input area background |
-| `fgtoolcall`, `fgtoolresult` | Tool calls and successful results |
+| `fgtoolcall`, `fgtoolresult` | Tool names and successful results |
 | `bgtoolcall`, `bgtoolresult` | Tool-call and result backgrounds (full rows in buffer mode) |
 | `fgerror` | Errors and failed tool results |
 | `fgwarning` | Warnings, retries, interruptions, and approval requests |
 | `fgsuccess` | Successful run status |
-| `fginfo` | Context notices, tool-help headings, and chat-log headers |
+| `fginfo` | Tool parameter names, context notices, tool-help headings, and chat-log headers |
 | `fgthinking` | Thinking previews and full reasoning text |
 | `fgdiffadd`, `bgdiffadd` | Added lines in tool-output diffs |
 | `fgdiffdel`, `bgdiffdel` | Removed lines in tool-output diffs |

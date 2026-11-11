@@ -14,15 +14,20 @@ struct TerminalToolBlock {
     func styled(_ text: String, color: TerminalThemeStyle,
       background: TerminalThemeStyle = .toolCallBackground, diff: Bool = false,
       truncate: Bool = false) -> String {
-      TerminalThemeStyle.lineRoles(text, color: color, background: background, diff: diff).map { line in
+      var text = text.components(separatedBy: "\n").map { line in
+        truncate ? Self.truncatedCall(line, width: width, prefix: prefix) : line
+      }.joined(separator: "\n")
+      if colors, background == .toolCallBackground, display != .icons, let call {
+        text = Self.highlightedCall(text, call: call, display: calls, color: color)
+      }
+      return TerminalThemeStyle.lineRoles(text, color: color, background: background, diff: diff).map { line in
         let markers =
           colors ? [line.background,
             background == .toolCallBackground ? .toolCallBold : nil, line.foreground]
             .compactMap { $0?.marker }.joined() : ""
-        let row = truncate ? Self.truncatedCall(prefix + line.text, width: width) : prefix + line.text
-        let styledRow = row.hasPrefix(prefix)
-          ? prefix + markers + row.dropFirst(prefix.count) : markers + row
-        return styledRow + (colors ? "\u{1B}[0m" : "")
+        let visiblePrefix = truncate && TerminalLineEditor.displayWidth(of: prefix) >= width
+          ? Self.truncatedCall(prefix + " ", width: width) : prefix
+        return visiblePrefix + markers + line.text + (colors ? "\u{1B}[0m" : "")
       }.joined(separator: "\n")
     }
     if display == .icons {
@@ -52,6 +57,26 @@ struct TerminalToolBlock {
           background: .toolResultBackground, diff: true))
     }
     return output.joined(separator: "\n")
+  }
+
+  /// Apply semantic colors after clipping, preserving the status glyph and ellipsis.
+  /// Values may contain spaces, equals signs or JSON, so do not tokenize the preview.
+  static func highlightedCall(_ text: String, call: ToolCall, display: ToolCallDisplay,
+    color: TerminalThemeStyle = .toolCallForeground,
+    style: (TerminalThemeStyle) -> String = { $0.marker }) -> String
+  {
+    var remaining = text[...]
+    return ToolCallPreview.parts(call, display: display).map { part in
+      let shown = remaining.prefix(part.text.count)
+      remaining = remaining.dropFirst(shown.count)
+      guard !shown.isEmpty else { return "" }
+      let role: TerminalThemeStyle = switch part.role {
+      case .name: color
+      case .parameter: .infoForeground
+      case .value: .foreground
+      }
+      return shown.components(separatedBy: "\n").map { style(role) + $0 }.joined(separator: "\n")
+    }.joined()
   }
 
   /// Clip before styling, reserving cells for the child prefix and ellipsis.

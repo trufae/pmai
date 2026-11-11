@@ -244,31 +244,42 @@ public struct ToolOutput: Codable, Equatable, Sendable {
 /// Readable tool arguments with path-like ones first. Multiline values are
 /// folded by default; terminal surfaces clip complete previews to their width.
 package enum ToolCallPreview {
+  package enum Role { case name, parameter, value }
+
   /// Arguments shown first, and shown bare when they are the only one.
   static let leadingKeys = ["path", "name", "query", "command", "script", "keywords", "task"]
   package static func render(
     _ call: ToolCall, display: ToolCallDisplay = .truncate, maxLength: Int = .max
   ) -> String {
+    let line = parts(call, display: display).map(\.text).joined()
+    guard display == .truncate, line.count > max(1, maxLength) else { return line }
+    return String(line.prefix(max(1, maxLength))) + "…"
+  }
+
+  /// Keep argument boundaries available to terminal styling, including bare values.
+  package static func parts(_ call: ToolCall, display: ToolCallDisplay)
+    -> [(text: String, role: Role)]
+  {
     let arguments = call.arguments.objectValue ?? ["input": call.arguments]
-    var line = "→ \(call.name)"
-    guard !arguments.isEmpty else { return line }
+    var parts: [(text: String, role: Role)] = [("→ \(call.name)", .name)]
     let ordered = arguments.keys.sorted { a, b in
       let ia = leadingKeys.firstIndex(of: a) ?? leadingKeys.count
       let ib = leadingKeys.firstIndex(of: b) ?? leadingKeys.count
       return ia == ib ? a < b : ia < ib
     }
-    let parts = ordered.map { key -> String in
+    for key in ordered {
       let value = summary(of: arguments[key] ?? .null, display: display)
       let bare = arguments.count == 1 && leadingKeys.contains(key)
-      return bare ? value : "\(key)=\(value)"
+      parts.append((" ", .name))
+      if !bare { parts.append(("\(key)=", .parameter)) }
+      parts.append((value, .value))
     }
-    line += " " + parts.joined(separator: " ")
-    if display == .truncate {
-      return ToolResultPreview.safeLine(line, maximumLength: max(1, maxLength))
+    return parts.map { part in
+      let lines = display == .truncate ? [part.text] : part.text.components(separatedBy: "\n")
+      let safe = lines.map { ToolResultPreview.safeLine($0, maximumLength: .max) }
+        .joined(separator: "\n  ")
+      return (safe, part.role)
     }
-    return line.components(separatedBy: "\n").enumerated().map { index, line in
-      (index == 0 ? "" : "  ") + ToolResultPreview.safeLine(line, maximumLength: .max)
-    }.joined(separator: "\n")
   }
 
   static func summary(of value: JSONValue, display: ToolCallDisplay) -> String {
