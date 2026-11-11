@@ -244,7 +244,12 @@ def main():
                             wait_for('Messages go to this chat again.')
                             send(f'/fork --empty {title}\n')
                             fork = wait_for('and switched to it.')
-                            pids.append(re.search(r'into agent#(\d+)', fork)[1])
+                            pid = re.search(r'into agent#(\d+)', fork)[1]
+                            pids.append(pid)
+                            # The input editor switches drafts when it paints the new prompt.
+                            prompt = f'#{pid}> '
+                            if prompt not in fork:
+                                wait_for(prompt)
                             send('slow\n')
                             assert user_texts() == ['slow']
                         # Any addressed slash command is dispatched, including
