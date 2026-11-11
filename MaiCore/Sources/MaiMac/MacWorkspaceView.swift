@@ -48,9 +48,17 @@ struct MacWorkspaceView: View {
     }
     .focusedSceneValue(\.macSidebarVisibility, $columns)
     .sheet(isPresented: $workspace.showConnection) { MacConnectionSheet(workspace: workspace) }
-    .alert("Couldn’t complete the operation", isPresented: Binding(
+    .alert(workspace.error == MacCLI.installationInstructions ? "Install pmai CLI" : "Couldn’t complete the operation", isPresented: Binding(
       get: { workspace.error != nil }, set: { if !$0 { workspace.error = nil } }
-    )) { Button("OK") { workspace.error = nil } } message: { Text(workspace.error ?? "") }
+    )) {
+      if workspace.error == MacCLI.installationInstructions {
+        Button("Copy Install Command") {
+          NSPasteboard.general.clearContents()
+          NSPasteboard.general.setString(MacCLI.installCommand, forType: .string)
+        }
+      }
+      Button("OK") { workspace.error = nil }
+    } message: { Text(workspace.error ?? "") }
     .onChange(of: scenePhase) { _, phase in
       if phase == .active { Task { await workspace.refresh() } }
     }

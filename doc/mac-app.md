@@ -4,6 +4,19 @@ Build with `make mac`, then open `build/pmai.app`. `make mac-run` builds and
 launches it. The minimum system is macOS 15; building with Xcode 27 adopts the
 current macOS 27 system appearance. No iOS Simulator build is needed.
 
+Local chats, ACP hosting, and **Open in Terminal** use `pmai` from `PATH`.
+Finder launches also search `~/.local/bin`, `/opt/homebrew/bin`, and
+`/usr/local/bin`. If the CLI is missing, the app offers a copyable command to
+install it in `~/.local/bin`; run it in Terminal, then try again:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/trufae/pmai/main/www/install.sh | PMAI_INSTALL_DIR="$HOME/.local/bin" sh
+```
+
+For local development, `make repl-install` updates that CLI from this checkout.
+Unavailable MCP servers emit a warning and leave their tools unavailable for
+that session instead of preventing the worker from starting.
+
 `make mac-install` builds and installs into `~/Applications/pmai.app`. Override
 the destination with `MAC_INSTALL_DIR=/Applications` (which may require write
 permission). `MAC_APP` overrides the build bundle path for all Mac targets.
@@ -171,7 +184,8 @@ products reuse those compiled modules within the same SwiftPM build graph.
 
 The app bundle contains one executable. Launched without arguments it runs the
 SwiftUI interface; launched with CLI arguments it runs the existing CLI entry
-point. Each open local conversation uses that executable as a stdio ACP worker.
+point. Each open local conversation launches the installed `pmai` from `PATH`
+as a stdio ACP worker.
 This keeps shell tools, plugins, MCP, provider authentication, project settings,
 approvals, and agent execution in the established CLI path. Workers do not start
 AppKit or windows, and there is no listening network port for local chat.
@@ -193,7 +207,7 @@ remote connections, pairing, configuration options, Markdown parsing, storage,
 and agent orchestration are shared rather than copied.
 
 **Conversation → Open in Terminal** disconnects the app's writer and resumes
-the selected chat in the bundled CLI, providing the full REPL command surface.
+the selected chat in the installed CLI, providing the full REPL command surface.
 It uses a new Therm2 instance when installed, otherwise the default application
 for `.command` scripts (normally Terminal).
 Finish the terminal session before reconnecting the same chat in the app.

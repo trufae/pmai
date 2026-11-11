@@ -50,7 +50,7 @@ public struct RemoteHostingSnapshot: Sendable {
 }
 
 /// App-facing access to the CLI's hosting lifecycle and durable pairing state.
-/// ACP workers use the app's executable in --acp mode, just like local chats.
+/// ACP workers use the supplied CLI executable in --acp mode.
 public actor RemoteHosting {
   private let home: AgentHome
   private let server: RemoteREPLServer

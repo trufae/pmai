@@ -2,8 +2,8 @@ import AppKit
 import MaiCLI
 import SwiftUI
 
-/// The app is also its own stdio worker. There is only one copy of the engine
-/// in the bundle, and worker startup never initializes AppKit or a window.
+/// Explicit command-line arguments still enter the shared CLI for diagnostics.
+/// The GUI launches the installed pmai from PATH for local conversations.
 @main
 enum MaiMacEntry {
   @MainActor static func main() async {

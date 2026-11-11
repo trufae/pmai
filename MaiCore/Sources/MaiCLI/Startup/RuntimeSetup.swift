@@ -1,6 +1,7 @@
 import Foundation
 import MaiCore
 import MaiLocalProviders
+import MaiMCP
 import MaiPluginHost
 import MaiStandardTools
 import MaiVisionOCR
@@ -310,8 +311,20 @@ extension MaiCLI {
         let source = try await plugins.makeMCPToolSource(
           kind: server.kind, configuration: server, environment: environment)
         if !(await runtime.internetAccessPolicy()).allows(source) { continue }
-        catalogs.append(try await runtime.register(mcp: source))
-        startup.mark("MCP \(server.id) connected")
+        do {
+          catalogs.append(try await runtime.register(mcp: source))
+          startup.mark("MCP \(server.id) connected")
+        } catch {
+          await source.close()
+          try Task.checkCancellation()
+          guard (error as? URLError)?.code != .cancelled,
+            MCPClient.isAvailabilityFailure(error) || error is MCPStdioTransportError
+          else { throw error }
+          // A stopped tool server must not prevent opening a chat or starting
+          // the ACP worker. Keep its saved configuration for the next launch.
+          FileHandle.standardError.write(Data(
+            "warning: MCP server '\(server.id)' is unavailable; continuing without its tools: \(error.localizedDescription)\n".utf8))
+        }
       }
       await runtime.configureDelegation(
         prompt: configuration.prompts?.delegation,

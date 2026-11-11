@@ -1,5 +1,5 @@
 #!/bin/sh
-# One SwiftPM graph and one executable: the GUI launches itself in ACP mode.
+# Build the GUI and shared hosting engine in one SwiftPM graph.
 set -eu
 cd "$(dirname "$0")/.."
 config=${CONFIG:-debug}

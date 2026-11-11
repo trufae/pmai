@@ -103,7 +103,12 @@ struct MacServersView: View {
             .font(.caption).foregroundStyle(.secondary)
         }
         if let error = server.error ?? server.snapshot.failure {
-          Section { Text(error).foregroundStyle(.red).textSelection(.enabled) }
+          Section {
+            Text(error).foregroundStyle(.red).textSelection(.enabled)
+            if error == MacCLI.installationInstructions {
+              Button("Copy Install Command") { copy(MacCLI.installCommand) }
+            }
+          }
         }
         if let notice = server.notice { Section { Text(notice).foregroundStyle(.secondary) } }
       }.formStyle(.grouped)

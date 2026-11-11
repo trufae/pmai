@@ -244,7 +244,7 @@ final class MacWorkspace {
             if let host {
               client = try hostStore.connection(for: host).makeSession(cwd: session.cwd)
             } else {
-              client = ACPClient(configuration: localConfiguration(cwd: session.cwd))
+              client = ACPClient(configuration: try localConfiguration(cwd: session.cwd))
             }
             temporaryClient = client
           }
@@ -355,23 +355,21 @@ final class MacWorkspace {
       return try profile.makeSession(cwd: conversation.cwd, sessionID: conversation.sessionID,
         onUpdate: update, onPermission: permission, onDisconnect: disconnect)
     }
-    return ACPClient(configuration: localConfiguration(cwd: conversation.cwd, sessionID: conversation.sessionID),
+    return ACPClient(configuration: try localConfiguration(cwd: conversation.cwd, sessionID: conversation.sessionID),
       onUpdate: update, onPermission: permission, onDisconnect: disconnect)
   }
 
-  func localConfiguration(cwd: String, sessionID: String? = nil) -> ACPClient.Configuration {
-    var environment = ProcessInfo.processInfo.environment
-    // Finder does not inherit shell startup files. Keep explicit environment
-    // values and add the conventional locations for installed provider tools.
-    environment["PATH"] = (environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin")
-      + ":/opt/homebrew/bin:/usr/local/bin:" + NSHomeDirectory() + "/.local/bin"
+  func localConfiguration(cwd: String, sessionID: String? = nil) throws -> ACPClient.Configuration {
+    let environment = MacCLI.environment
+    let directory = URL(fileURLWithPath: cwd, isDirectory: true)
+    let executable = try MacCLI.executable(environment: environment, workingDirectory: directory)
     var arguments = ["--acp", "--home", home.rootURL.path]
     // CLI startup restores the chat's runtime configuration before registering
     // providers, agents, MCP and skills. ACP then opens that same conversation.
     if let sessionID { arguments += ["--resume", sessionID] }
-    return .init(command: Bundle.main.executableURL!.path,
+    return .init(command: executable,
       arguments: arguments, environment: environment,
-      workingDirectory: URL(fileURLWithPath: cwd), permission: .reject,
+      workingDirectory: directory, permission: .reject,
       readClientFiles: false, sessionID: sessionID)
   }
 
@@ -444,10 +442,12 @@ final class MacWorkspace {
 
   private func launchTerminal(cwd: String, sessionID: String?) async {
     func quote(_ value: String) -> String { "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'" }
-    var arguments = [Bundle.main.executableURL!.path, "--home", home.rootURL.path]
-    if let sessionID { arguments += ["--resume", sessionID] }
-    let command = "#!/bin/sh\ncd " + quote(cwd) + " || exit 1\nexec " + arguments.map(quote).joined(separator: " ") + "\n"
     do {
+      let executable = try MacCLI.executable(environment: MacCLI.environment,
+        workingDirectory: URL(fileURLWithPath: cwd, isDirectory: true))
+      var arguments = [executable, "--home", home.rootURL.path]
+      if let sessionID { arguments += ["--resume", sessionID] }
+      let command = "#!/bin/sh\ncd " + quote(cwd) + " || exit 1\nexec " + arguments.map(quote).joined(separator: " ") + "\n"
       let file = FileManager.default.temporaryDirectory.appendingPathComponent("pmai-\(UUID()).command")
       try command.write(to: file, atomically: true, encoding: .utf8)
       try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: file.path)

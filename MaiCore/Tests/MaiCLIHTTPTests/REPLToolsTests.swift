@@ -1,9 +1,71 @@
 import Foundation
 import MaiCore
 import MaiMarkdown
+import MaiMCP
 import Testing
 
 @testable import MaiCLI
+
+private struct StartupMCPFixture: MaiPlugin, ConfiguredMCPToolSourceFactory {
+  let failure: any Error
+  let kind = "startup-fixture"
+  let manifest = PluginManifest(id: "test.startup-mcp", displayName: "Startup MCP", version: "1",
+    capabilities: [.mcpToolSource])
+
+  func register(in registry: PluginRegistry) async throws {
+    try await registry.register(mcpFactory: self, from: manifest.id)
+  }
+
+  func makeMCPToolSource(from configuration: ConfiguredMCPServer,
+    environment: [String: String]) throws -> any MCPToolSource {
+    Source(id: configuration.id, failure: configuration.id == "unavailable" ? failure : nil)
+  }
+
+  private struct Source: MCPToolSource {
+    let id: String
+    let failure: (any Error)?
+    func connect() throws -> MCPServerCatalog {
+      if let failure { throw failure }
+      return MCPServerCatalog(serverID: id, serverName: nil, protocolVersion: "2025-11-25",
+        tools: [], resources: [])
+    }
+    func agentTools() -> [any AgentTool] { [] }
+    func close() {}
+  }
+}
+
+// A stopped MCP must not prevent the Mac app's ACP worker from opening chats.
+// Cancellation and catalog validation failures must still stop startup.
+@Test("ACP startup tolerates unavailable MCP servers and preserves other startup errors")
+func replToolsMCPStartup() async throws {
+  let failures: [any Error] = [
+    URLError(.cannotConnectToHost),
+    MCPStdioTransportError.processExited(status: 1, stderr: "fixture stopped"),
+    CancellationError(), URLError(.cancelled), AgentToolError.invalidName,
+  ]
+  for (index, failure) in failures.enumerated() {
+    let plugins = PluginRegistry()
+    try await plugins.install(MaiCoreBuiltinsPlugin())
+    try await plugins.install(StartupMCPFixture(failure: failure))
+    let runtime = AgentRuntime()
+    let configuration = MaiConfiguration(
+      providers: [.init(id: "hello", kind: .hello)],
+      mcpServers: ["unavailable", "healthy"].map { .init(id: $0, kind: "startup-fixture") },
+      agents: [.init(id: "main", provider: "hello", model: "hello")])
+    do {
+      let setup = try await MaiCLI.configureRuntime(runtime, plugins: plugins,
+        configuration: configuration, options: CLIOptions(arguments: ["--acp"], environment: [:]),
+        selectedProvider: "hello", resumingChat: false, environment: [:],
+        startup: CLIStartupTiming(started: .now, environment: [:]))
+      #expect(index < 2, "Startup swallowed \(failure)")
+      #expect(setup.catalogs.map(\.serverID) == ["healthy"])
+      #expect(await runtime.availableAgents().map(\.id) == ["main"])
+    } catch {
+      #expect(index >= 2, "Unavailable MCP prevented startup: \(error)")
+      #expect(String(reflecting: error) == String(reflecting: failure))
+    }
+  }
+}
 
 @Test("Tool completion includes disabled runtime, plugin and MCP groups")
 func replToolsCompleteCatalog() {

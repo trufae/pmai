@@ -28,14 +28,16 @@ final class MacServerStore: ApprovalHandler {
   var publicURL = ""
   var loopback = false
   var allowTools = false
-  private let service: RemoteHosting
+  private let home: AgentHome
+  private var service: RemoteHosting
   private var operation: Task<Void, Never>?
   private var monitor: Task<Void, Never>?
   private var prepared = false
   private var operationID = UUID()
 
   init(home: AgentHome) {
-    service = RemoteHosting(home: home, executable: Bundle.main.executablePath ?? CommandLine.arguments[0])
+    self.home = home
+    service = RemoteHosting(home: home, executable: "pmai")
   }
 
   var attentionCount: Int { snapshot.requests.count + permissions.count }
@@ -53,6 +55,7 @@ final class MacServerStore: ApprovalHandler {
   }
 
   func start() {
+    guard !snapshot.running else { return }
     perform { [self] in
       guard let port = Int(self.port), (1...65535).contains(port) else {
         throw JSONRPCError.invalidParams("Port must be between 1 and 65535.")
@@ -61,6 +64,12 @@ final class MacServerStore: ApprovalHandler {
       var isDirectory: ObjCBool = false
       guard FileManager.default.fileExists(atPath: cwd.path, isDirectory: &isDirectory), isDirectory.boolValue else {
         throw JSONRPCError.invalidParams("Choose an existing working directory.")
+      }
+      if self.protocolName != "openai" {
+        let executable = try MacCLI.executable(environment: MacCLI.environment, workingDirectory: cwd)
+        await self.service.stop()
+        try Task.checkCancellation()
+        self.service = RemoteHosting(home: self.home, executable: executable)
       }
       var arguments = ["--protocol", self.protocolName, "--port", String(port)]
       if self.protocolName == "openai" {
