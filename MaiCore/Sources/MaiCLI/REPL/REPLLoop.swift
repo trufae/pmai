@@ -951,7 +951,7 @@ extension MaiCLI {
         workspace.upsert(session.chat, selecting: true)
         await saveWorkspace(&workspace, store: store, terminal: terminal)
       }
-      let output = redirection != nil ? TerminalWriter()
+      let output = redirection != nil ? TerminalWriter(progress: terminal.progress)
         : kind == .btw ? TerminalWriter(capturesOutput: true) : terminal
       if kind == .btw || redirection != nil {
         let ui = configuration?.ui ?? .init()

@@ -195,6 +195,20 @@ does not exist, pmai creates it from the example configuration. This always
 edits the user config, regardless of `--config`, `PMAI_CONFIG`, or `./pmai.json`,
 and works even when the existing JSON is invalid.
 
+Use `--progress` to follow a run while collecting its final answer:
+
+```sh
+pmai --progress "review this project" > review.md
+pmai --progress "review this project" > review.md 2> progress.log
+```
+
+Model turns, tool starts and outcomes, retries, and streamed assistant messages go
+straight to stderr; stdout receives only the final reply for each prompt. Tool starts
+are visible even when `ui.tools` uses compact lines or icons. `--progress` also works
+in the REPL, and `--no-stream` still disables model text streaming without hiding
+turn and tool activity. Normal output behavior remains the default.
+For ghadv, use `GHADV_AI='pmai --progress "$(cat)"'`.
+
 Inside the REPL, `/models` queries the current provider's model catalog and
 `/models PROVIDER` queries another registered provider without switching the
 session. Use `/model NAME` to select a model for chat and all tasks, including

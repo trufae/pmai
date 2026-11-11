@@ -1090,6 +1090,7 @@ extension MaiCLI {
         --save-defaults     save explicit model/provider/URL/agent/task choices
         --no-markdown       print replies verbatim
         --no-stream         disable response streaming
+        --progress          live activity on stderr; final replies on stdout
         --plugin PATH       load a native .dylib plugin (repeatable)
         --print-config      print a complete example configuration
         --projects          list every project pmai has been started in, then exit

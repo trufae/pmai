@@ -322,7 +322,7 @@ extension MaiCLI {
       memoryState.adopt(project: project, settings: configuration?.memory ?? .init())
       todoState.focus(project: project)
       skillState.focus(project: project)
-      let terminal = TerminalWriter()
+      let terminal = TerminalWriter(progress: options.progress)
       await terminal.configureColors(configuration?.ui ?? .init())
       await runtime.configureMemory(memoryState.promptSection)
       await runtime.configureWorkingDirectoryContext(true)

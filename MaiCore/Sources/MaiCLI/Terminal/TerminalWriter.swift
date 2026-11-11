@@ -30,6 +30,8 @@ actor TerminalWriter {
   private var childReasoning: [AgentPID: String] = [:]
   private var wroteRootDelta = false
   private var rootLineOpen = false
+  nonisolated let progress: Bool
+  private var progressLineOpen = false
   /// When set, output is collected for another surface instead of hitting the tty.
   private let capturesOutput: Bool
   private var captured: [String] = []
@@ -96,8 +98,9 @@ actor TerminalWriter {
     }
   }
 
-  init(capturesOutput: Bool = false) {
+  init(capturesOutput: Bool = false, progress: Bool = false) {
     self.capturesOutput = capturesOutput
+    self.progress = progress && !capturesOutput
     let environment = ProcessInfo.processInfo.environment
     let noColor = environment["NO_COLOR"] != nil || environment["TERM"] == "dumb"
     colorsStatus = !capturesOutput && isatty(STDERR_FILENO) != 0 && !noColor
@@ -277,7 +280,7 @@ actor TerminalWriter {
     let context = event.terminalContext
     let destination = screen?.conversationID(for: context)
     if let voiceProcess, context.pid == voiceProcess, context.depth > 0, screen?.isBufferMode != true {
-      if voiceOutput == nil { voiceOutput = TerminalWriter() }
+      if voiceOutput == nil { voiceOutput = TerminalWriter(progress: progress) }
       await voiceOutput?.consumeConversation(
         event.terminalForegroundEvent, destination: nil, screen: screen,
         ui: ui, markdown: markdown, redactor: redactor)
@@ -295,14 +298,14 @@ actor TerminalWriter {
       let writer: TerminalWriter
       if let existing = conversationWriters[pid] { writer = existing }
       else {
-        writer = TerminalWriter()
+        writer = TerminalWriter(progress: progress)
         conversationWriters[pid] = writer
       }
       await writer.consumeConversation(
         event.terminalForegroundEvent, destination: destination, screen: screen,
         ui: ui, markdown: markdown, redactor: redactor)
       if let voiceProcess, context.pid == voiceProcess, let echo = screen.voiceOutputDestination {
-        if voiceOutput == nil { voiceOutput = TerminalWriter() }
+        if voiceOutput == nil { voiceOutput = TerminalWriter(progress: progress) }
         await voiceOutput?.consumeConversation(
           event.terminalForegroundEvent, destination: echo, screen: screen,
           ui: ui, markdown: markdown, redactor: redactor, replyOwner: "voice:\(voiceProcess.rawValue)")
@@ -344,16 +347,23 @@ actor TerminalWriter {
         finishReply()
         closeRootLine()
       }
-      if thinkingDisplay != .full { showThinking("") }
+      if progress {
+        status("[pmai] model turn \(turn)", color: .infoForeground)
+      } else if thinkingDisplay != .full { showThinking("") }
     case .provider(let context, .reasoningDelta(let text)) where context.depth == 0:
-      showThinking(text)
+      if !progress { showThinking(text) }
     case .provider(let context, .toolCallDelta) where context.depth == 0:
       finishThinking()
     case .provider(let context, .textDelta(let text)) where context.depth == 0:
       finishThinking()
-      writeReply(text)
+      if progress {
+        emit(text, to: .standardError, continuingProgress: true)
+        if !text.isEmpty { progressLineOpen = !text.hasSuffix("\n") }
+      } else {
+        writeReply(text)
+        rootLineOpen = true
+      }
       wroteRootDelta = true
-      rootLineOpen = true
     case .toolStarted(let context, let call) where context.depth == 0:
       finishReply()
       closeRootLine()
@@ -392,13 +402,16 @@ actor TerminalWriter {
       bufferToolCalls[context.runID] = nil
       finishThinking()
       let responseText = redactor?.unredact(result.response.text) ?? result.response.text
-      if wroteRootDelta {
+      if wroteRootDelta && !progress {
         finishReply()
       } else if result.interruption == nil {
         writeReply(responseText)
         finishReply()
       }
       closeRootLine(force: true)
+      if progress {
+        status("[pmai] " + (result.interruption == nil ? "done" : "paused"), color: .infoForeground)
+      }
     case .childStarted(let parent, let child):
       guard let pid = child.pid else { return }
       childAgents[pid] = child.agentID
@@ -453,16 +466,16 @@ actor TerminalWriter {
       guard let pid = context.pid else { return }
       flushChildText(pid)
       childToolCalls[pid, default: 0] += 1
-      guard subagentOutput == .all || subagentOutput == .tools else { return }
+      guard progress || subagentOutput == .all || subagentOutput == .tools else { return }
       toolStarted(call, context: context)
     case .toolFinished(let context, let result):
-      guard context.pid != nil, subagentOutput == .all || subagentOutput == .tools else {
+      guard context.pid != nil, progress || subagentOutput == .all || subagentOutput == .tools else {
         compactToolCalls[context.runID]?[result.callID] = nil
         return
       }
       toolFinished(result, context: context)
     case .toolUpdated(let context, let call):
-      guard context.pid != nil, subagentOutput == .all || subagentOutput == .tools else { return }
+      guard context.pid != nil, progress || subagentOutput == .all || subagentOutput == .tools else { return }
       toolStarted(call, context: context, updating: true)
     case .userMessage(let context, let message):
       guard let pid = context.pid else { return }
@@ -679,6 +692,13 @@ actor TerminalWriter {
   // MARK: - Tool output
 
   private func toolStarted(_ call: ToolCall, context: AgentEventContext, updating: Bool = false) {
+    // Progress must announce a call before it finishes, even with compact/icon UI settings.
+    if progress {
+      let preview = ToolCallPreview.render(call, display: .truncate)
+      compactToolCalls[context.runID, default: [:]][call.id] = (String(preview.dropFirst(2)), .truncate)
+      toolStatus(preview, context: context, color: .toolCallForeground, background: .toolCallBackground)
+      return
+    }
     if let screen, screen.isBufferMode, REPLRedirection.current == nil {
       finishReply()
       closeRootLine()
@@ -702,6 +722,18 @@ actor TerminalWriter {
   }
 
   private func toolFinished(_ result: ToolResult, context: AgentEventContext) {
+    if progress {
+      let call = compactToolCalls[context.runID]?.removeValue(forKey: result.callID)
+      if compactToolCalls[context.runID]?.isEmpty == true { compactToolCalls[context.runID] = nil }
+      let marker = result.isError ? "✘" : "✔"
+      toolStatus("\(marker) \(call?.text ?? result.callID)", context: context,
+        color: result.isError ? .errorForeground : .toolCallForeground, background: .toolCallBackground)
+      if result.isError {
+        toolStatus(ToolResultPreview.render(result, display: .lines(3)), context: context,
+          color: .errorForeground, background: .toolResultBackground)
+      }
+      return
+    }
     let block = bufferToolCalls[context.runID]?.removeValue(forKey: result.callID)
     if bufferToolCalls[context.runID]?.isEmpty == true { bufferToolCalls[context.runID] = nil }
     if let screen, screen.isBufferMode, REPLRedirection.current == nil {
@@ -942,7 +974,12 @@ actor TerminalWriter {
     emit(value, to: .standardOutput)
   }
 
-  private func emit(_ value: String, to handle: FileHandle, continuingIcons: Bool = false) {
+  private func emit(_ value: String, to handle: FileHandle, continuingIcons: Bool = false,
+    continuingProgress: Bool = false) {
+    if !continuingProgress && progressLineOpen {
+      progressLineOpen = false
+      emit("\n", to: .standardError, continuingProgress: true)
+    }
     if !value.isEmpty && !continuingIcons { finishIconLine() }
     if handle === FileHandle.standardOutput, let redirection = REPLRedirection.current {
       redirection.write(value)

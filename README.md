@@ -193,9 +193,13 @@ one; `/about` shows setup options and `/help provider` explains provider command
 
 ```sh
 pmai "explain this project"
+pmai --progress "review this project" > review.md
 git diff | pmai --stdin "review this change"
 pmai --vim install
 ```
+
+Use `--progress` for live model-turn, tool, and message feedback on stderr while
+stdout contains only the final reply. It also works in the REPL and with redirected output.
 
 In Vim, select lines and press `m` to choose a prompt, review the reply, and apply
 it. Use `pmai --vim update` to refresh the integration or `pmai --vim uninstall`

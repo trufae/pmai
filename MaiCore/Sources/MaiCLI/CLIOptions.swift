@@ -55,6 +55,8 @@ struct CLIOptions {
   var maxModelTurns: Int?
   var maxSubagents: Int?
   var stream = true
+  /// Show live activity on stderr and reserve stdout for final replies.
+  var progress = false
   /// Override the project approval policy for this process.
   var approvalMode: ToolApprovalMode?
   /// Reopen the most recently updated chat instead of starting a fresh one.
@@ -148,6 +150,8 @@ struct CLIOptions {
         pluginPaths.append(try Self.value(after: argument, in: arguments, index: &index))
       case "--no-stream":
         stream = false
+      case "--progress":
+        progress = true
       case "--tool-approval", "--tool-aproval":
         let value = try Self.value(after: argument, in: arguments, index: &index)
         guard let mode = ToolApprovalMode(rawValue: value) else {
