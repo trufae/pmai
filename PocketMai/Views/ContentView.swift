@@ -52,7 +52,7 @@ struct ContentView: View {
             .equatable()
             .ignoresSafeArea(.container, edges: .horizontal)
             .frame(width: panelWidth).frame(maxHeight: .infinity)
-            .background { SidebarBlurBackground() }
+            .background { SidebarPanelBackground() }
             .transition(.identity)
             .opacity(layout.pinsSidebar && !hostsVisible ? 0 : 1)
             .allowsHitTesting(panelOffset >= panelWidth * 3)
@@ -99,11 +99,12 @@ struct ContentView: View {
           .ignoresSafeArea(.container, edges: .horizontal)
           .frame(width: panelWidth)
           .frame(maxHeight: .infinity)
-          .background { SidebarBlurBackground() }
+          .background { SidebarPanelBackground() }
           .transition(.identity)
           .opacity(layout.pinsSidebar && !foldersVisible ? 0 : 1)
           .allowsHitTesting(panelOffset >= panelWidth * 2 && panelOffset < panelWidth * 3)
           .accessibilityHidden(panelOffset < panelWidth * 2 || panelOffset >= panelWidth * 3)
+          .geometryGroup()
           .offset(x: foldersOffset)
           .zIndex(0)
         }
@@ -139,12 +140,13 @@ struct ContentView: View {
           .ignoresSafeArea(.container, edges: .horizontal)
           .frame(width: panelWidth)
           .frame(maxHeight: .infinity)
-          .background { SidebarBlurBackground() }
+          .background { SidebarPanelBackground() }
           .overlay { SidebarDistanceTone(progress: revealProgress) }
           .transition(.identity)
           .opacity(layout.pinsSidebar && !historyVisible ? 0 : 1)
           .allowsHitTesting(panelOffset >= panelWidth && panelOffset < panelWidth * 2)
           .accessibilityHidden(panelOffset < panelWidth || panelOffset >= panelWidth * 2)
+          .geometryGroup()
           .offset(x: sidebarOffset)
           .zIndex(1)
         }
@@ -201,12 +203,13 @@ struct ContentView: View {
         .frame(maxHeight: .infinity)
         .allowsHitTesting(layout.pinsSidebar || panelOffset == 0)
         .overlay {
-          if !layout.pinsSidebar && panelOffset > 0 {
-            Color.black.opacity(Double(revealProgress) * 0.25)
-              .ignoresSafeArea(.container)
-              .contentShape(Rectangle())
-              .onTapGesture { closeHistoryPanel() }
-          }
+          // Keep one scrim across interrupted swipes instead of inserting/removing fades.
+          Color.black.opacity(layout.pinsSidebar ? 0 : Double(revealProgress) * 0.25)
+            .ignoresSafeArea(.container)
+            .contentShape(Rectangle())
+            .allowsHitTesting(!layout.pinsSidebar && panelOffset > 0)
+            .accessibilityHidden(true)
+            .onTapGesture { closeHistoryPanel() }
         }
         .mask {
           RoundedRectangle(
@@ -224,6 +227,8 @@ struct ContentView: View {
         .padding(.leading, layout.sidebarInset)
         .padding(.vertical, layout.pinsSidebar ? 8 : 0)
         .padding(.trailing, layout.pinsSidebar ? 8 : 0)
+        // Move the opaque background, mask, and native scroll views as one surface.
+        .geometryGroup()
         .offset(x: layout.pinsSidebar ? 0 : panelOffset)
         .zIndex(2)
       }
@@ -1007,13 +1012,10 @@ struct ToolCallApprovalView: View {
   }
 }
 
-// Identity-stable wrapper so the material's CALayer survives drag-tick body runs.
-private struct SidebarBlurBackground: View, Equatable {
+// Stacked panels need a solid surface, including while another panel slides over them.
+private struct SidebarPanelBackground: View {
   var body: some View {
-    Rectangle().fill(.regularMaterial)
-      .background(Color(uiColor: .systemGroupedBackground))
+    Color(uiColor: .systemGroupedBackground)
       .ignoresSafeArea(.container)
   }
-
-  nonisolated static func == (lhs: Self, rhs: Self) -> Bool { true }
 }
