@@ -264,14 +264,9 @@ public struct MarkdownStreamLayout: Equatable, Sendable {
     return MarkdownSpan(text, role: .fence)
   }
 
-  /// Keep the code literal, with a gutter on every row, including wrapped and empty rows.
+  /// Keep code rows free of decorations so selecting them copies only the code.
   private mutating func codeEvents(_ text: String) -> [MarkdownLayoutEvent] {
-    let marker = MarkdownSpan(options.unicode ? "│ " : "| ", role: .fence)
     var events: [MarkdownLayoutEvent] = []
-    if codeColumn == 0 {
-      events.append(.spans([marker]))
-      codeColumn = 2
-    }
     var piece = ""
     for char in text {
       if char == "\t" {
@@ -281,11 +276,11 @@ public struct MarkdownStreamLayout: Equatable, Sendable {
         continue
       }
       let cells = MarkdownDisplayWidth.width(of: char)
-      if codeColumn > 2, codeColumn + cells > max(4, options.width) {
+      if codeColumn > 0, codeColumn + cells > max(4, options.width) {
         if !piece.isEmpty { events.append(.spans([MarkdownSpan(piece, role: .code)])) }
-        events += [.lineBreak, .spans([marker])]
+        events.append(.lineBreak)
         piece = ""
-        codeColumn = 2
+        codeColumn = 0
       }
       piece.append(char)
       codeColumn += cells

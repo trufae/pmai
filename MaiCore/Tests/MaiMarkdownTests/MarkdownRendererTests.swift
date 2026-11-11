@@ -211,7 +211,7 @@ func partialEmission() {
   #expect(renderer.feed("ad\n") == "\u{1B}[1mHead\u{1B}[0m\n")
   let code = stripANSI(renderer.feed("```py\nprint(1"))
   #expect(code.hasPrefix("┌─ py "))
-  #expect(code.hasSuffix("\n│ print(1"))
+  #expect(code.hasSuffix("\nprint(1"))
   #expect(renderer.feed(")\n``") == ")\n")
   #expect(stripANSI(renderer.feed("`\ntail")) == "└" + String(repeating: "─", count: 39) + "\n")
   #expect(renderer.flush() == "tail")
@@ -236,7 +236,6 @@ func fencedReplyRendering() {
   for unicode in [true, false] {
     for width in [24, 100] {
       let options = MarkdownLayoutOptions(width: width, unicode: unicode)
-      let marker = unicode ? "│ " : "| "
       for size in [1, 7, source.count] {
         var renderer = MarkdownTerminalRenderer(theme: .plain, options: options)
         let chars = Array(source)
@@ -247,9 +246,10 @@ func fencedReplyRendering() {
         output += renderer.flush()
         let plain = stripANSI(output)
         let rows = plain.components(separatedBy: "\n")
-        let code = rows.filter { $0.hasPrefix(marker) }
+        let code = rows.drop(while: { !$0.hasPrefix(unicode ? "┌─" : "+-") }).dropFirst()
+          .prefix(while: { !$0.hasPrefix(unicode ? "└─" : "+-") })
         #expect(!plain.contains("```"))
-        #expect(code.map { String($0.dropFirst(2)) }.joined() == command)
+        #expect(code.joined() == command)
         #expect(code.allSatisfy { MarkdownDisplayWidth.width(of: $0) <= width })
         #expect(rows.contains { $0.hasPrefix(unicode ? "┌─" : "+-") })
         #expect(rows.contains { $0.hasPrefix(unicode ? "└─" : "+-") })
@@ -262,20 +262,21 @@ func fencedReplyRendering() {
 
 @Test("Code blocks keep literal content and empty rows, and close at the end of a reply")
 func fencedReplyLiteralContent() {
-  let code = "  **literal** `code` $PWD\n\n界🙂"
+  let code = "  **literal** `code` $PWD\n\n| literal pipe\n界🙂"
   for ending in ["", "\n", "\n```", "\n```\n"] {
     var renderer = MarkdownTerminalRenderer(theme: .plain)
     let output = stripANSI(renderer.feed("```sh\n" + code + ending) + renderer.flush())
-    let rows = output.split(separator: "\n").map(String.init)
+    var rows = output.components(separatedBy: "\n")
+    if rows.last == "" { rows.removeLast() }
     #expect(rows.first?.hasPrefix("┌─ sh ") == true)
-    #expect(rows.filter { $0.hasPrefix("│ ") }.map { String($0.dropFirst(2)) }.joined(separator: "\n") == code)
+    #expect(rows.dropFirst().dropLast().joined(separator: "\n") == code)
     #expect(rows.last?.hasPrefix("└─") == true)
     #expect(stripANSI(renderer.feed("After `code`.\n") + renderer.flush()) == "After code.\n")
   }
   let narrow = stripANSI(MarkdownTerminalRenderer.render(
     "```sh\n\t界🙂\n```", theme: .plain, options: .init(width: 8)))
   #expect(narrow.components(separatedBy: "\n").allSatisfy { MarkdownDisplayWidth.width(of: $0) <= 8 })
-  #expect(narrow.contains("│       \n│ 界🙂\n"))
+  #expect(narrow.contains("\n        \n界🙂\n"))
 }
 
 @Test("Tables buffer until complete, then render with styled cells")
@@ -382,12 +383,12 @@ func blockRendering() {
   #expect(colored.contains("\u{1B}[93m􀟈  \u{1B}[0mtodo\n"))
   #expect(colored.contains("\u{1B}[93m  1. \u{1B}[0msub\n"))
   #expect(colored.contains("\u{1B}[90m────────────────────\u{1B}[0m\n"))
-  #expect(stripANSI(colored).contains("┌───────────────────\n│ code\n└───────────────────"))
+  #expect(stripANSI(colored).contains("┌───────────────────\ncode\n└───────────────────"))
 
   let ascii = stripANSI(
     MarkdownTerminalRenderer.render(
       source, theme: .plain, options: MarkdownLayoutOptions(width: 20, unicode: false)))
-  #expect(ascii.contains("| quote\n[ ] todo\n  1. sub\n--------------------\n+-------------------\n| code\n+-------------------"))
+  #expect(ascii.contains("| quote\n[ ] todo\n  1. sub\n--------------------\n+-------------------\ncode\n+-------------------"))
 }
 
 @Test("Terminal palettes replace Markdown colors without changing text or emphasis")
