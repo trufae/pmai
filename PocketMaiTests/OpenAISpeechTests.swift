@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 import MaiCore
 import MaiOpenAI
@@ -220,6 +221,100 @@ final class OpenAISpeechTests: XCTestCase {
     XCTAssertNil(player.errorMessage)
     XCTAssertEqual(calls, 0, "Stopping before synthesis starts must not send a request")
   }
+
+  func testPlaybackControlsKeepPauseStateAndQueuedMessages() async throws {
+    let synthesizer = PlaybackSpeechSynthesizer()
+    let player = TTSPlayer(
+      integratesWithSystemPlayback: false, synthesizer: synthesizer)
+    defer { player.stop() }
+    let messageID = UUID()
+    player.speak(text: "First message.", voice: .defaults, role: .assistant, messageID: messageID)
+    player.enqueue(text: "Second message.", voice: .defaults, role: .assistant)
+    let original = try XCTUnwrap(synthesizer.utterances.last)
+
+    player.toggleMute()
+    XCTAssertTrue(player.isMuted)
+    XCTAssertEqual(synthesizer.utterances.last?.volume, 0)
+    XCTAssertEqual(player.currentMessageID, messageID)
+    XCTAssertFalse(player.isPaused)
+
+    player.pause()
+    // Changing controls immediately after Pause must not resume the message.
+    player.rewind()
+    player.changeLanguage("es_ES")
+    player.toggleMute()
+    XCTAssertTrue(player.isPaused)
+    XCTAssertFalse(player.isMuted)
+    XCTAssertNil(synthesizer.activeUtterance, "Playback controls must not resume paused speech")
+    XCTAssertEqual(player.currentVoice?.language, "es-ES")
+    XCTAssertEqual(player.currentVoice?.voiceIdentifier, "")
+
+    // A callback already dispatched by the old utterance must not finish the replacement.
+    player.speechSynthesizer(synthesizer, didFinish: original)
+    player.resume()
+    XCTAssertEqual(synthesizer.utterances.last?.speechString, "First message.")
+    XCTAssertEqual(synthesizer.utterances.last?.volume, 1)
+    let next = expectation(description: "Next queued message starts")
+    synthesizer.onSpeak = { utterance in
+      XCTAssertEqual(utterance.speechString, "Second message.")
+      next.fulfill()
+    }
+    synthesizer.finish()
+    await fulfillment(of: [next], timeout: 5)
+    XCTAssertEqual(player.currentText, "Second message.")
+    XCTAssertEqual(player.currentVoice, .defaults, "Language changes apply only to the current message")
+
+    let stopped = expectation(description: "Queue finishes")
+    let stopObservation = player.$isSpeaking.sink { if !$0 { stopped.fulfill() } }
+    synthesizer.finish()
+    await fulfillment(of: [stopped], timeout: 5)
+    stopObservation.cancel()
+    XCTAssertNil(player.currentMessageID)
+    XCTAssertNil(player.currentVoice)
+  }
+
+  func testChangingLanguageCancelsProviderChunksAndKeepsNextMessage() async throws {
+    let endpoint = OpenAIEndpoint()
+    let voice = RoleVoiceSettings(
+      provider: .openAICompatible, openAIEndpointID: endpoint.id, openAIVoice: "coral")
+    let synthesizer = PlaybackSpeechSynthesizer()
+    let started = expectation(description: "Provider synthesis starts")
+    let cancelled = expectation(description: "Provider synthesis is cancelled")
+    let player = TTSPlayer(
+      integratesWithSystemPlayback: false, synthesizer: synthesizer
+    ) { _, _, _ in
+      started.fulfill()
+      do {
+        try await Task.sleep(for: .seconds(30))
+        XCTFail("The replaced provider request must be cancelled")
+      } catch {
+        cancelled.fulfill()
+        throw error
+      }
+      return Data()
+    }
+    defer { player.stop() }
+    // Just over the provider's chunk limit, so a stale chunk would play next.
+    let text = String(repeating: "a", count: 2_001)
+    player.speak(text: text, voice: voice, role: .assistant, openAIEndpoints: [endpoint])
+    player.enqueue(text: "Next message.", voice: .defaults, role: .assistant)
+    await fulfillment(of: [started], timeout: 5)
+    player.changeLanguage("fr-FR")
+    await fulfillment(of: [cancelled], timeout: 5)
+    XCTAssertEqual(synthesizer.utterances.last?.speechString, text)
+    XCTAssertEqual(player.currentVoice?.provider, .system)
+    XCTAssertEqual(player.currentVoice?.language, "fr-FR")
+    XCTAssertNil(player.errorMessage)
+
+    let next = expectation(description: "Later message survives language change")
+    synthesizer.onSpeak = { utterance in
+      XCTAssertEqual(utterance.speechString, "Next message.")
+      next.fulfill()
+    }
+    synthesizer.finish()
+    await fulfillment(of: [next], timeout: 5)
+  }
+
   func testAppSpeechRequestDoesNotUseChatModel() async throws {
     StubChatEndpoint.install()
     defer { StubChatEndpoint.uninstall() }
@@ -361,4 +456,38 @@ final class OpenAISpeechTests: XCTestCase {
       "Real audio playback requires PMAI_TEST_AUDIO_PLAYBACK=1 and a working audio service")
   }
 
+}
+
+/// Drives speech completion explicitly without a voice service or audio hardware.
+private final class PlaybackSpeechSynthesizer: AVSpeechSynthesizer {
+  var utterances: [AVSpeechUtterance] = []
+  var activeUtterance: AVSpeechUtterance?
+  var onSpeak: ((AVSpeechUtterance) -> Void)?
+
+  override var isSpeaking: Bool { activeUtterance != nil }
+
+  override func speak(_ utterance: AVSpeechUtterance) {
+    activeUtterance = utterance
+    utterances.append(utterance)
+    onSpeak?(utterance)
+  }
+
+  override func stopSpeaking(at boundary: AVSpeechBoundary) -> Bool {
+    guard let utterance = activeUtterance else { return false }
+    activeUtterance = nil
+    delegate?.speechSynthesizer?(self, didCancel: utterance)
+    return true
+  }
+
+  override func pauseSpeaking(at boundary: AVSpeechBoundary) -> Bool {
+    guard let utterance = activeUtterance else { return false }
+    delegate?.speechSynthesizer?(self, didPause: utterance)
+    return true
+  }
+
+  func finish() {
+    guard let utterance = activeUtterance else { return }
+    activeUtterance = nil
+    delegate?.speechSynthesizer?(self, didFinish: utterance)
+  }
 }

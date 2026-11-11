@@ -22,11 +22,61 @@ struct NowSpeakingBar: View {
   }
 
   private var bar: some View {
-    ChatTitleBar(
-      title: roleLabel + (ttsPlayer.isPaused ? " • Paused" : ""),
-      subtitle: ttsPlayer.currentText, systemImage: roleIcon,
-      onTap: ttsPlayer.currentMessageID.map { id in { onTap(id) } }
-    ) {
+    HStack(spacing: 12) {
+      Button { ttsPlayer.toggleMute() } label: {
+        Image(systemName: ttsPlayer.isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
+          .foregroundStyle(.tint)
+          .frame(width: 30, height: 36)
+          .contentShape(Rectangle())
+      }
+      .accessibilityLabel(ttsPlayer.isMuted ? "Unmute" : "Mute")
+
+      Menu {
+        Picker(
+          ttsPlayer.currentVoice?.provider == .openAICompatible ? "System Voice Language" : "Language",
+          selection: Binding(
+            get: {
+              ttsPlayer.currentVoice?.provider == .openAICompatible
+                ? "provider" : ttsPlayer.currentVoice?.language ?? ""
+            },
+            set: { if $0 != "provider" { ttsPlayer.changeLanguage($0) } })
+        ) {
+          if ttsPlayer.currentVoice?.provider == .openAICompatible {
+            Text("Current Provider Voice").tag("provider")
+          }
+          Text("System Default").tag("")
+          ForEach(SystemLanguageSupport.textToSpeechLanguageIdentifiers, id: \.self) { language in
+            Text(SystemLanguageSupport.languageDisplayName(language)).tag(language)
+          }
+        }
+        .pickerStyle(.menu)
+        .disabled(!ttsPlayer.canChangeLanguage)
+
+        Button("Rewind to Start", systemImage: "backward.end.fill") { ttsPlayer.rewind() }
+        Button(
+          ttsPlayer.isMuted ? "Unmute" : "Mute",
+          systemImage: ttsPlayer.isMuted ? "speaker.wave.2" : "speaker.slash"
+        ) { ttsPlayer.toggleMute() }
+        if let messageID = ttsPlayer.currentMessageID {
+          Button("Show Message", systemImage: "text.bubble") { onTap(messageID) }
+        }
+      } label: {
+        HStack(spacing: 6) {
+          VStack(alignment: .leading, spacing: 2) {
+            Text(roleLabel + (ttsPlayer.isPaused ? " • Paused" : "")
+              + (ttsPlayer.isMuted ? " • Muted" : ""))
+              .font(.caption.weight(.semibold)).foregroundStyle(.secondary).lineLimit(1)
+            if let text = ttsPlayer.currentText, !text.isEmpty {
+              Text(text).font(.subheadline).foregroundStyle(.primary).lineLimit(1)
+            }
+          }
+          .frame(maxWidth: .infinity, alignment: .leading)
+          Image(systemName: "chevron.down").font(.caption2).foregroundStyle(.secondary)
+        }
+        .contentShape(Rectangle())
+      }
+      .accessibilityLabel("Playback options")
+
       Button {
         if ttsPlayer.isPaused { ttsPlayer.resume() } else { ttsPlayer.pause() }
       } label: {
@@ -39,6 +89,9 @@ struct NowSpeakingBar: View {
       }
       .accessibilityLabel("Stop")
     }
+    .buttonStyle(.plain)
+    .padding(.horizontal, 12)
+    .padding(.vertical, 8)
   }
 
   private var roleLabel: String {
@@ -47,13 +100,6 @@ struct NowSpeakingBar: View {
     case .user: return "User"
     case .assistant: return "Assistant"
     case .none: return "Speaking"
-    }
-  }
-
-  private var roleIcon: String {
-    switch ttsPlayer.currentRole {
-    case .user: return "person.wave.2"
-    case .assistant, .none: return "speaker.wave.2"
     }
   }
 }

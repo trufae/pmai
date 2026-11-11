@@ -9,6 +9,8 @@ final class TTSPlayer: NSObject, ObservableObject {
 
   @Published private(set) var isSpeaking: Bool = false
   @Published private(set) var isPaused: Bool = false
+  @Published private(set) var isMuted: Bool = false
+  @Published private(set) var currentVoice: RoleVoiceSettings?
   @Published private(set) var currentRole: VoiceRole?
   @Published private(set) var currentTitle: String?
   @Published private(set) var currentText: String?
@@ -18,11 +20,18 @@ final class TTSPlayer: NSObject, ObservableObject {
 
   typealias SpeechSynthesis = @MainActor (OpenAIEndpoint, String, String) async throws -> Data
   private let synthesizeSpeech: SpeechSynthesis
+  private let makeSynthesizer: () -> AVSpeechSynthesizer
   private let integratesWithSystemPlayback: Bool
   private let carPlayAudio: Bool
   private var ownsCarPlayAudioSession = false
 
   private var synthesizer: AVSpeechSynthesizer?
+  private var currentUtterance: AVSpeechUtterance?
+  private var systemSpeechStarted = false
+  private var systemSpeechOffset = 0
+  private var systemSpeechPosition = 0
+  private var currentSpeech: QueuedSpeech?
+  private var originalSpeech: QueuedSpeech?
   private var remoteCommandsConfigured = false
   private var queuedSpeech: [QueuedSpeech] = []
   private var pendingSpeechAfterCancel: QueuedSpeech?
@@ -38,6 +47,7 @@ final class TTSPlayer: NSObject, ObservableObject {
   init(
     integratesWithSystemPlayback: Bool = true,
     carPlayAudio: Bool = false,
+    synthesizer: AVSpeechSynthesizer? = nil,
     synthesizeSpeech: @escaping SpeechSynthesis = { endpoint, text, voice in
       try await OpenAICompatibleProvider.synthesizeSpeechAudio(
         endpoint: endpoint, input: text, voice: voice)
@@ -46,6 +56,7 @@ final class TTSPlayer: NSObject, ObservableObject {
     self.integratesWithSystemPlayback = integratesWithSystemPlayback
     self.carPlayAudio = carPlayAudio
     self.synthesizeSpeech = synthesizeSpeech
+    self.makeSynthesizer = { synthesizer ?? AVSpeechSynthesizer() }
     super.init()
   }
 
@@ -224,7 +235,8 @@ final class TTSPlayer: NSObject, ObservableObject {
     beginSpeaking(first)
   }
 
-  private func beginSpeaking(_ requestedSpeech: QueuedSpeech) {
+  private func beginSpeaking(_ requestedSpeech: QueuedSpeech, paused: Bool = false) {
+    if currentSpeech?.id != requestedSpeech.id { originalSpeech = requestedSpeech }
     var speech = requestedSpeech
     if speech.voice.provider == .openAICompatible,
       speech.openAIEndpoint?.isDirectOpenAI == true || speech.openAIEndpoint?.isDirectGroq == true
@@ -244,13 +256,17 @@ final class TTSPlayer: NSObject, ObservableObject {
     if !carPlayAudio { activateAudioSession() }
     speechGeneration += 1
 
+    currentUtterance = nil
+    systemSpeechStarted = false
+    currentSpeech = speech
+    currentVoice = speech.voice
     currentRole = speech.role
     currentTitle = speech.title
-    currentText = speech.text
+    currentText = originalSpeech?.text ?? speech.text
     currentTag = speech.tag
     currentMessageID = speech.messageID
     isSpeaking = true
-    isPaused = false
+    isPaused = paused
     updateNowPlaying()
 
     if speech.voice.provider == .openAICompatible {
@@ -288,8 +304,9 @@ final class TTSPlayer: NSObject, ObservableObject {
       }
       let player = try AVAudioPlayer(contentsOf: url)
       player.delegate = self
+      player.volume = isMuted ? 0 : 1
       player.prepareToPlay()
-      if player.play() {
+      if isPaused || player.play() {
         audioPlayer = player
         return
       }
@@ -307,6 +324,7 @@ final class TTSPlayer: NSObject, ObservableObject {
 
     let engine = AVAudioEngine()
     let playerNode = AVAudioPlayerNode()
+    playerNode.volume = isMuted ? 0 : 1
     let gainUnit = AVAudioUnitEQ(numberOfBands: 1)
     gainUnit.bands.first?.bypass = true
     gainUnit.globalGain = speechPlaybackGainDecibels(for: file)
@@ -340,11 +358,15 @@ final class TTSPlayer: NSObject, ObservableObject {
     return true
   }
 
-  private func beginSystemSpeaking(_ speech: QueuedSpeech) {
-    let synthesizer = self.synthesizer ?? AVSpeechSynthesizer()
+  private func beginSystemSpeaking(_ speech: QueuedSpeech, from position: Int = 0) {
+    let synthesizer = self.synthesizer ?? makeSynthesizer()
     synthesizer.delegate = self
     self.synthesizer = synthesizer
-    let utterance = AVSpeechUtterance(string: speech.text)
+    systemSpeechOffset = position
+    systemSpeechPosition = position
+    let utterance = AVSpeechUtterance(string: (speech.text as NSString).substring(from: position))
+    currentUtterance = utterance
+    systemSpeechStarted = false
     if !speech.voice.voiceIdentifier.isEmpty,
       let v = AVSpeechSynthesisVoice(identifier: speech.voice.voiceIdentifier)
     {
@@ -354,13 +376,16 @@ final class TTSPlayer: NSObject, ObservableObject {
     }
     utterance.rate = Float(max(0, min(1, speech.voice.rate)))
     utterance.pitchMultiplier = Float(max(0.5, min(2, speech.voice.pitch)))
-    utterance.volume = 1.0
+    utterance.volume = isMuted ? 0 : 1
 
     if carPlayAudio {
       synthesizer.usesApplicationAudioSession = true
       activateAudioSession()
     }
-    synthesizer.speak(utterance)
+    if !isPaused {
+      systemSpeechStarted = true
+      synthesizer.speak(utterance)
+    }
   }
 
   private func beginProviderSpeaking(
@@ -421,7 +446,7 @@ final class TTSPlayer: NSObject, ObservableObject {
       }
       let player = try AVAudioPlayer(contentsOf: url)
       player.delegate = self
-      player.volume = 1.0
+      player.volume = isMuted ? 0 : 1
       player.prepareToPlay()
       if isPaused || player.play() {
         audioPlayer = player
@@ -444,6 +469,57 @@ final class TTSPlayer: NSObject, ObservableObject {
     return data.withRepairedWAVChunkSizes()
   }
 
+  var canChangeLanguage: Bool {
+    currentSpeech != nil && currentSpeech?.recordingURL == nil
+  }
+
+  func toggleMute() {
+    isMuted.toggle()
+    audioPlayer?.volume = isMuted ? 0 : 1
+    boostedAudioPlayerNode?.volume = isMuted ? 0 : 1
+    guard let speech = currentSpeech, currentUtterance != nil,
+      pendingSpeechAfterCancel == nil
+    else { return }
+    // An enqueued utterance ignores volume changes. Replace just its unspoken
+    // portion, keeping the queue and pause state intact.
+    let position = systemSpeechPosition
+    stopSystemSpeech()
+    beginSystemSpeaking(speech, from: position)
+  }
+
+  func rewind() {
+    guard let speech = originalSpeech, isSpeaking else { return }
+    restart(speech)
+  }
+
+  func changeLanguage(_ identifier: String) {
+    guard var speech = originalSpeech, canChangeLanguage else { return }
+    speech.voice.provider = .system
+    speech.voice.language = SystemLanguageSupport.canonicalLanguageIdentifier(identifier)
+    speech.voice.voiceIdentifier = ""
+    restart(speech)
+  }
+
+  private func restart(_ speech: QueuedSpeech) {
+    let paused = isPaused
+    // Remove only the current message's remaining provider chunks. Later
+    // messages from Speak From Here still follow the restarted message.
+    queuedSpeech.removeAll { $0.id == speech.id }
+    pendingSpeechAfterCancel = nil
+    stopSystemSpeech()
+    cancelProviderSpeech()
+    originalSpeech = speech
+    beginSpeaking(speech, paused: paused)
+  }
+
+  private func stopSystemSpeech() {
+    currentUtterance = nil
+    systemSpeechStarted = false
+    synthesizer?.delegate = nil
+    synthesizer?.stopSpeaking(at: .immediate)
+    synthesizer = nil
+  }
+
   func pause() {
     if providerSpeechTask != nil && !isPaused {
       isPaused = true
@@ -463,7 +539,10 @@ final class TTSPlayer: NSObject, ObservableObject {
       return
     }
     guard synthesizer?.isSpeaking == true, !isPaused else { return }
-    synthesizer?.pauseSpeaking(at: .word)
+    if synthesizer?.pauseSpeaking(at: .word) == true {
+      isPaused = true
+      updateNowPlaying()
+    }
   }
 
   func resume() {
@@ -485,7 +564,15 @@ final class TTSPlayer: NSObject, ObservableObject {
       updateNowPlaying()
       return
     }
-    synthesizer?.continueSpeaking()
+    if let currentUtterance, !systemSpeechStarted {
+      isPaused = false
+      systemSpeechStarted = true
+      synthesizer?.speak(currentUtterance)
+      updateNowPlaying()
+    } else if synthesizer?.continueSpeaking() == true {
+      isPaused = false
+      updateNowPlaying()
+    }
   }
 
   func stop() {
@@ -539,6 +626,7 @@ final class TTSPlayer: NSObject, ObservableObject {
 
   private func handleStopped() {
     speechGeneration += 1
+    stopSystemSpeech()
     queuedSpeech.removeAll()
     pendingSpeechAfterCancel = nil
     providerSpeechTask?.cancel()
@@ -554,12 +642,15 @@ final class TTSPlayer: NSObject, ObservableObject {
     currentText = nil
     currentTag = nil
     currentMessageID = nil
+    currentVoice = nil
+    currentSpeech = nil
+    originalSpeech = nil
     clearNowPlaying()
     deactivateAudioSession()
   }
 
   private var hasActiveSpeech: Bool {
-    synthesizer?.isSpeaking == true || providerSpeechTask != nil || audioPlayer != nil
+    currentUtterance != nil || providerSpeechTask != nil || audioPlayer != nil
       || boostedAudioPlayerNode != nil
   }
 
@@ -740,8 +831,9 @@ final class TTSPlayer: NSObject, ObservableObject {
   }
 
   private struct QueuedSpeech {
+    let id = UUID()
     var text: String
-    let voice: RoleVoiceSettings
+    var voice: RoleVoiceSettings
     let role: VoiceRole
     let title: String?
     let tag: String?
@@ -799,11 +891,22 @@ final class TTSPlayer: NSObject, ObservableObject {
 
 extension TTSPlayer: AVSpeechSynthesizerDelegate {
   nonisolated func speechSynthesizer(
+    _ synthesizer: AVSpeechSynthesizer, willSpeakRangeOfSpeechString characterRange: NSRange,
+    utterance: AVSpeechUtterance
+  ) {
+    let utteranceID = ObjectIdentifier(utterance)
+    Task { @MainActor in
+      guard self.currentUtterance.map(ObjectIdentifier.init) == utteranceID else { return }
+      self.systemSpeechPosition = self.systemSpeechOffset + characterRange.location
+    }
+  }
+
+  nonisolated func speechSynthesizer(
     _ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance
   ) {
-    let synthesizerID = ObjectIdentifier(synthesizer)
+    let utteranceID = ObjectIdentifier(utterance)
     Task { @MainActor in
-      guard self.synthesizer.map(ObjectIdentifier.init) == synthesizerID else { return }
+      guard self.currentUtterance.map(ObjectIdentifier.init) == utteranceID else { return }
       self.handleFinished()
     }
   }
@@ -811,9 +914,9 @@ extension TTSPlayer: AVSpeechSynthesizerDelegate {
   nonisolated func speechSynthesizer(
     _ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance
   ) {
-    let synthesizerID = ObjectIdentifier(synthesizer)
+    let utteranceID = ObjectIdentifier(utterance)
     Task { @MainActor in
-      guard self.synthesizer.map(ObjectIdentifier.init) == synthesizerID else { return }
+      guard self.currentUtterance.map(ObjectIdentifier.init) == utteranceID else { return }
       self.handleCancelled()
     }
   }
@@ -821,7 +924,9 @@ extension TTSPlayer: AVSpeechSynthesizerDelegate {
   nonisolated func speechSynthesizer(
     _ synthesizer: AVSpeechSynthesizer, didPause utterance: AVSpeechUtterance
   ) {
+    let utteranceID = ObjectIdentifier(utterance)
     Task { @MainActor in
+      guard self.currentUtterance.map(ObjectIdentifier.init) == utteranceID, !self.isPaused else { return }
       self.isPaused = true
       self.updateNowPlaying()
     }
@@ -830,7 +935,9 @@ extension TTSPlayer: AVSpeechSynthesizerDelegate {
   nonisolated func speechSynthesizer(
     _ synthesizer: AVSpeechSynthesizer, didContinue utterance: AVSpeechUtterance
   ) {
+    let utteranceID = ObjectIdentifier(utterance)
     Task { @MainActor in
+      guard self.currentUtterance.map(ObjectIdentifier.init) == utteranceID, self.isPaused else { return }
       self.isPaused = false
       self.updateNowPlaying()
     }
