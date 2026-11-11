@@ -89,6 +89,31 @@ elif action == 'fail':
                 if select.select([master], [], [], .01)[0]:
                     output.extend(os.read(master, 65536))
 
+        def vim_command(events):
+            path = str(events).replace("'", "''")
+            return shlex.join([
+                'vim', '-Nu', 'NONE', '-n', '-i', 'NONE',
+                '-c', f"autocmd VimEnter,VimResume * call writefile(['ready'], '{path}', 'a')",
+            ])
+
+        def wait_for_vim(events, count):
+            deadline = time.monotonic() + 15
+            while not events.exists() or len(events.read_text().splitlines()) < count:
+                assert time.monotonic() < deadline, (events.name, count, output.decode(errors='replace'))
+                if select.select([master], [], [], .1)[0]:
+                    output.extend(os.read(master, 65536))
+
+        def suspend_vim_twice(events):
+            for count in (2, 3):
+                send(b'\x1a')
+                wait_for('Stopped')
+                wait_for('SHELL_READY> ')
+                assert termios.tcgetattr(master) == cooked
+                send(b'fg\n')
+                wait_for(command)
+                # Bash can foreground pmai before Vim has restored its input mode.
+                wait_for_vim(events, count)
+
         try:
             fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack('HHHH', 40, 100, 0, 0))
             wait_for('SHELL_READY> ')
@@ -335,25 +360,12 @@ elif action == 'fail':
             # path too, including modified buffer retention across fg.
             if shutil.which('vim'):
                 ready = root / 'vim-ready'
-                vim = f"vim -Nu NONE -n -i NONE -c \"call writefile(['ready'], '{ready}')\""
-                send(('/set ui.editor ' + vim + '\r').encode())
+                send(('/set ui.editor ' + vim_command(ready) + '\r').encode())
                 wait_for('Set ui.editor =')
                 send(b'/edit provider other\r')
-                deadline = time.monotonic() + 15
-                while not ready.exists():
-                    assert time.monotonic() < deadline
-                    if select.select([master], [], [], .1)[0]:
-                        output.extend(os.read(master, 65536))
+                wait_for_vim(ready, 1)
                 send(b'gg0i \x1b')
-                for _ in range(2):
-                    send(b'\x1a')
-                    wait_for('Stopped')
-                    wait_for('SHELL_READY> ')
-                    assert termios.tcgetattr(master) == cooked
-                    send(b'fg\n')
-                    wait_for(command)
-                    wait_for_foreground()
-                    time.sleep(.1)
+                suspend_vim_twice(ready)
                 send(b':wq\r')
                 wait_for("Provider 'other' saved")
                 wait_for('and reloaded.')
@@ -395,24 +407,11 @@ elif action == 'fail':
             print('PASS: buffered slash-command pipe stop/resume', flush=True)
             if shutil.which('vim'):
                 ready = root / 'shell-vim-ready'
-                send((f'!vim -Nu NONE -n -i NONE -c "call writefile([\'ready\'], '
-                      f"'{ready}')\" shell-notes.txt\r").encode())
+                send((f'!{vim_command(ready)} shell-notes.txt\r').encode())
                 wait_for('\x1b[?1049l')
-                deadline = time.monotonic() + 15
-                while not ready.exists():
-                    assert time.monotonic() < deadline
-                    if select.select([master], [], [], .1)[0]:
-                        output.extend(os.read(master, 65536))
+                wait_for_vim(ready, 1)
                 send(b'iSHELL_VIM_EDIT\x1b')
-                for _ in range(2):
-                    send(b'\x1a')
-                    wait_for('Stopped')
-                    wait_for('SHELL_READY> ')
-                    assert termios.tcgetattr(master) == cooked
-                    send(b'fg\n')
-                    wait_for(command)
-                    wait_for_foreground()
-                    time.sleep(.1)
+                suspend_vim_twice(ready)
                 send(b':wq\r')
                 wait_for('\x1b[?1049h')
                 wait_for(PROMPT)

@@ -215,7 +215,7 @@ func terminalBufferMarkdown() {
     #expect(styled.first == "literal **tool output**")
     #expect(styled.contains { $0.contains("Heading") && !$0.contains("#") })
     #expect(styled.contains { $0.contains("bold") && !$0.contains("**") && !$0.contains("`") })
-    #expect(styled.contains { $0.contains("│ ") && $0.contains("docker run --rm alpine:latest") })
+    #expect(styled.contains("docker run --rm alpine:latest"))
     #expect(!styled.contains { $0.contains("```") })
     #expect(styled.last == "done")
     buffer.configureMarkdown(nil)
