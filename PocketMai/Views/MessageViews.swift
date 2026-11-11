@@ -322,8 +322,7 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
       }
     }
     .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
-    .contextMenu { messageContextMenu(visibleText: prepared.visibleText, rawText: displayText) }
-    .menuOrder(.fixed)
+    .messageActionsMenu { messageContextMenu(visibleText: prepared.visibleText, rawText: displayText) }
     .preference(
       key: ResponseScrollTargetsKey.self,
       value: responseScrollTarget(in: prepared).map { [message.id: $0] } ?? [:])
@@ -529,8 +528,7 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
     .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
     .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
 
-    let bubbleWithSheet =
-      bubbleView
+    bubbleView
       .sheet(isPresented: $showingTextSelection) {
         // Only the prose of the message: tool calls and reasoning are edited
         // from their own rows, and are spliced back untouched on save.
@@ -585,15 +583,6 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
         MessageImageFullscreenLoader(attachment: attachment)
       }
       .toast($imageSaveNotice)
-    if !isLiveAssistantResponse {
-      bubbleWithSheet
-        .contextMenu {
-          messageContextMenu(visibleText: messageText, rawText: rawText)
-        }
-        .menuOrder(.fixed)
-    } else {
-      bubbleWithSheet
-    }
   }
 
   /// Each step adds at most 1,000 characters or 12 source lines. Scan only as far
@@ -765,66 +754,20 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
     return nil
   }
 
-  @ViewBuilder
-  private func messageContextMenu(visibleText: String, rawText: String) -> some View {
-    ControlGroup {
-      if let onBeginSelection = actions.onBeginSelection {
-        Button("Select...", systemImage: "checkmark.circle", action: onBeginSelection)
-      }
-      if let onToggleBookmark = actions.onToggleBookmark {
-        Button(
-          isBookmarked ? "Unbookmark" : "Bookmark",
-          systemImage: isBookmarked ? "bookmark.slash" : "bookmark", action: onToggleBookmark
-        )
-        .disabled(!actions.allowsConversationMutation)
-      }
-      if let onTogglePin = actions.onTogglePin {
-        Button(
-          message.isPinned ? "Unpin Message" : "Pin Message",
-          systemImage: message.isPinned ? "pin.slash" : "pin", action: onTogglePin)
-      }
-      MessageDetailsMenu(message: message, conversationCreatedAt: conversationCreatedAt)
+  private func messageContextMenu(visibleText: String, rawText: String) -> UIMenu {
+    var shortcuts: [UIMenuElement] = []
+    if let onToggleBookmark = actions.onToggleBookmark {
+      shortcuts.append(MessageActionMenus.action(
+        isBookmarked ? "Unbookmark" : "Bookmark",
+        systemImage: isBookmarked ? "bookmark.slash" : "bookmark",
+        enabled: actions.allowsConversationMutation, perform: onToggleBookmark))
     }
-    .controlGroupStyle(.compactMenu)
-
-    Divider()
-
-    ForEach(Array(imageAttachments.enumerated()), id: \.element.id) { index, attachment in
-      Button(imageSaveMenuTitle(at: index), systemImage: "square.and.arrow.down") {
-        saveImageAttachment(attachment)
-      }
+    if let onTogglePin = actions.onTogglePin {
+      shortcuts.append(MessageActionMenus.action(
+        message.isPinned ? "Unpin Message" : "Pin Message",
+        systemImage: message.isPinned ? "pin.slash" : "pin", perform: onTogglePin))
     }
-    if !imageAttachments.isEmpty {
-      Divider()
-    }
-
-    Button(
-      actions.onEdit == nil ? "View Text" : "Edit Message",
-      systemImage: actions.onEdit == nil ? "text.cursor" : "square.and.pencil"
-    ) {
-      showingTextSelection = true
-    }
-    Button("Copy Message", systemImage: "doc.on.doc") {
-      UIPasteboard.general.string = visibleText
-    }
-    if rawText != visibleText {
-      Button(
-        actions.onEdit == nil ? "View Raw Message" : "Edit Raw Message",
-        systemImage: "chevron.left.forwardslash.chevron.right"
-      ) {
-        showingRawTextSelection = true
-      }
-    }
-    if message.role == .assistant, actions.onReply != nil {
-      Button("Reply…", systemImage: "arrowshape.turn.up.left") {
-        replyDraft = MessageReplyDraft(text: MarkdownQuote.quote(visibleText) + "\n\n")
-      }
-      .disabled(!actions.canReply)
-    }
-
-    Divider()
-
-    MessageSpeechMenu(
+    shortcuts.append(MessageActionMenus.speech(
       onSpeakMessage: { language in
         TTSPlayer.shared.speak(
           text: visibleText,
@@ -836,31 +779,70 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
           openAIEndpoints: openAIEndpoints,
           skipTechnicalContent: skipTechnicalContentInTTS)
       },
-      onSpeakFromHere: actions.onSpeakFromHere)
+      onSpeakFromHere: actions.onSpeakFromHere))
+    shortcuts.append(MessageActionMenus.details(
+      message: message, conversationCreatedAt: conversationCreatedAt))
+    let shortcutRow = UIMenu(options: .displayInline, children: shortcuts)
+    shortcutRow.preferredElementSize = .small
+    var sections: [UIMenuElement] = [shortcutRow]
 
+    var editing: [UIMenuElement] = []
+    if let onBeginSelection = actions.onBeginSelection {
+      editing.append(MessageActionMenus.action(
+        "Select…", systemImage: "checkmark.circle", perform: onBeginSelection))
+    }
+    for (index, attachment) in imageAttachments.enumerated() {
+      editing.append(MessageActionMenus.action(
+        imageSaveMenuTitle(at: index), systemImage: "square.and.arrow.down"
+      ) { saveImageAttachment(attachment) })
+    }
+    editing.append(MessageActionMenus.action(
+      actions.onEdit == nil ? "View Text" : "Edit",
+      systemImage: actions.onEdit == nil ? "text.cursor" : "square.and.pencil"
+    ) { showingTextSelection = true })
+    editing.append(MessageActionMenus.action("Copy", systemImage: "doc.on.doc") {
+      UIPasteboard.general.string = visibleText
+    })
+    if rawText != visibleText {
+      editing.append(MessageActionMenus.action(
+        actions.onEdit == nil ? "View Raw Message" : "Edit Raw Message",
+        systemImage: "chevron.left.forwardslash.chevron.right"
+      ) { showingRawTextSelection = true })
+    }
+    if message.role == .assistant, actions.onReply != nil {
+      editing.append(MessageActionMenus.action(
+        "Reply…", systemImage: "arrowshape.turn.up.left", enabled: actions.canReply
+      ) { replyDraft = MessageReplyDraft(text: MarkdownQuote.quote(visibleText) + "\n\n") })
+    }
+    sections.append(UIMenu(options: .displayInline, children: editing))
+
+    var history: [UIMenuElement] = []
     if message.role != .assistant {
       if let resend = actions.onTrimFromHere {
-        Button("Rewind", systemImage: "arrow.uturn.backward", action: resend)
-          .disabled(!actions.canRetry)
+        history.append(MessageActionMenus.action(
+          "Rewind", systemImage: "arrow.uturn.backward", enabled: actions.canRetry, perform: resend))
       }
       if let onRestartFresh = actions.onRestartFresh {
-        Button(
-          "Reset Chat From Here", systemImage: "arrow.triangle.2.circlepath", action: onRestartFresh
-        )
-        .disabled(!actions.canRetry)
+        history.append(MessageActionMenus.action(
+          "Reset Chat From Here", systemImage: "arrow.triangle.2.circlepath",
+          enabled: actions.canRetry, perform: onRestartFresh))
       }
     }
-
     if message.role == .user, let resubmit = actions.onResubmit {
-      Button("Resubmit Message", systemImage: "paperplane", action: resubmit)
-        .disabled(!actions.canResubmit)
+      history.append(MessageActionMenus.action(
+        "Resubmit Message", systemImage: "paperplane", enabled: actions.canResubmit, perform: resubmit))
     }
-
+    if !history.isEmpty {
+      sections.append(UIMenu(options: .displayInline, children: history))
+    }
     if let onDelete = actions.onDelete {
-      Divider()
-      Button("Delete Message", systemImage: "trash", role: .destructive, action: onDelete)
-        .disabled(!actions.allowsConversationMutation)
+      sections.append(UIMenu(options: .displayInline, children: [
+        MessageActionMenus.action(
+          "Delete Message", systemImage: "trash", enabled: actions.allowsConversationMutation,
+          destructive: true, perform: onDelete)
+      ]))
     }
+    return UIMenu(children: sections)
   }
 
   private var textAttachments: [ChatAttachment] {
