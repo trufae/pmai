@@ -228,8 +228,10 @@ public enum ToolProxy {
   }
 
   /// A native call already names call_tool. Some models repeat that envelope
-  /// inside its parameters. Peel only complete proxy envelopes, stopping at
-  /// the concrete tool so a skill's real `arguments` parameter stays intact.
+  /// inside its parameters. Peel only unambiguous proxy envelopes, stopping
+  /// at the concrete tool so a skill's real `arguments` parameter stays intact.
+  /// An omitted inner arguments object means no arguments; the target's
+  /// required parameters are still checked before execution.
   static func normalizedArguments(
     _ arguments: [String: AgentToolArgumentValue]
   ) -> [String: AgentToolArgumentValue] {
@@ -246,12 +248,13 @@ public enum ToolProxy {
       guard Set(nested.keys).isSubset(of: envelopeKeys),
         nameKeys.filter({ nested[$0] != nil }).count == 1,
         nameKeys.contains(where: { nested[$0]?.stringValue?.isEmpty == false }),
-        nested["arguments"]?.objectValue != nil
+        nested["arguments"] == nil || nested["arguments"]?.objectValue != nil
           || nested["arguments"]?.stringValue.flatMap({
             ToolCallParsing.jsonObject(from: $0)
           }) != nil
       else { break }
       result = nested
+      if result["arguments"] == nil { result["arguments"] = .object([:]) }
     }
     return result
   }

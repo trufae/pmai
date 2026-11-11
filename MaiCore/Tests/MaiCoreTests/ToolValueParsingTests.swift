@@ -96,6 +96,8 @@ func nativeProxyRejectsRecursion() throws {
      "web_search", ["query": JSONValue.string("radare2 pull request 27412 bug fix")]),
     (#"{"name":"call_tool","arguments":{"name":"skills_PrReview","arguments":{"arguments":"https://github.com/radareorg/radare2/pull/27412"}}}"#,
      "skills_PrReview", ["arguments": JSONValue.string("https://github.com/radareorg/radare2/pull/27412")]),
+    (#"{"name":"call_tool","arguments":{"name":"skills_PrReview"}}"#,
+     "skills_PrReview", [:]),
     (#"{"name":"call_tool","arguments":{"name":"list_tools","arguments":{}}}"#,
      ToolProxy.listName, [:]),
   ])
@@ -110,6 +112,7 @@ func exportedNativeProxyWrapper(fixture: (String, String, [String: JSONValue])) 
   let normalized = AgentTooling.normalized(call: parsed, tools: ToolProxy.definitions)
   #expect(normalized.toolCallID == "exported")
   #expect(normalized.argumentValues["name"] != .string("call_tool"))
+  #expect(AgentTooling.requiredArgumentsError(call: normalized, tools: ToolProxy.definitions) == nil)
   #expect(ToolProxy.requestedToolName(in: parsed.argumentValues) == (name == ToolProxy.listName ? "list_tools" : name))
   for call in [parsed, normalized] {
     let resolved = ToolProxy.resolveCall(arguments: call.argumentValues, definitions: definitions)

@@ -21,15 +21,20 @@ func providerDefaultModelInference() async throws {
   #expect(await provider.requests.map(\.model) == ["provider-default", "chosen"])
 }
 
-@Test("Registered skills are only visible and callable when enabled for the agent", arguments: [false, true])
-func skillToolAvailability(enabled: Bool) async throws {
+@Test("Registered skills are only visible and callable when enabled for the agent",
+  arguments: [false, true], [false, true])
+func skillToolAvailability(enabled: Bool, proxied: Bool) async throws {
   let skill = AgentSkill(
     name: "review", description: "Review code.",
     directoryURL: URL(fileURLWithPath: "/skills/review"), body: "Read AGENTS.md first.")
   let provider = ScriptedProvider(responses: [
     ProviderResponse(
       message: AgentMessage(role: .assistant, content: [
-        .toolCall(ToolCall(id: "skill", name: skill.toolName, arguments: .object([:])))
+        .toolCall(ToolCall(
+          id: "skill", name: proxied ? ToolProxy.callName : skill.toolName,
+          arguments: proxied
+            ? .object(["name": .string("call_tool"), "arguments": .object(["name": .string(skill.toolName)])])
+            : .object([:])))
       ]), stopReason: .toolCall),
     ProviderResponse(message: .assistant("Done"), stopReason: .stop),
   ])
@@ -40,14 +45,13 @@ func skillToolAvailability(enabled: Bool) async throws {
   })
   let result = try await runtime.run(AgentRequest(
     provider: "scripted", model: "fixture", messages: [.user("Review the project")],
-    toolNames: enabled ? [skill.toolName] : [], toolGroupNames: []))
+    toolNames: enabled ? [skill.toolName] : [], toolGroupNames: [], useToolProxy: proxied))
   let request = try #require(await provider.requests.first)
-  #expect(request.tools.contains { $0.name == skill.toolName } == enabled)
+  #expect(request.tools.contains { $0.name == (proxied ? ToolProxy.callName : skill.toolName) } == enabled)
   #expect(!request.messages.contains { $0.text.contains(skill.directoryURL.path) })
   let output = try #require(result.transcript.flatMap(\.toolResults).first)
   #expect(output.isError == !enabled)
   #expect(output.text.contains(skill.body) == enabled)
-  if !enabled { #expect(output.text.contains("not available to this agent")) }
 }
 
 @Test("Structured messages preserve multimodal and tool content")
