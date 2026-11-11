@@ -28,7 +28,9 @@ private struct MessageMenuLongPress: UIGestureRecognizerRepresentable {
   let onPress: (CGPoint) -> Void
 
   func makeUIGestureRecognizer(context: Context) -> UILongPressGestureRecognizer {
-    UILongPressGestureRecognizer()
+    let recognizer = UILongPressGestureRecognizer()
+    recognizer.minimumPressDuration *= 0.5
+    return recognizer
   }
 
   func handleUIGestureRecognizerAction(_ recognizer: UILongPressGestureRecognizer, context: Context) {

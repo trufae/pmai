@@ -804,7 +804,7 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
       }
       if let onRestartFresh = actions.onRestartFresh {
         history.append(MessageActionMenus.action(
-          "Reset Chat From Here", systemImage: "arrow.triangle.2.circlepath",
+          "New Chat With", systemImage: "arrow.triangle.2.circlepath",
           enabled: actions.canRetry, perform: onRestartFresh))
       }
     }
