@@ -11,6 +11,26 @@ import XCTest
 /// The catalog now keeps the first definition per name — built-ins, then
 /// servers in settings order — matching dispatch resolution order.
 final class ToolCatalogDuplicateNameTests: XCTestCase {
+  func testSystemPromptOnlyAdvertisesSelectedMCPServers() {
+    let selected = MCPServer(name: "Selected server", baseURL: "https://selected.example/mcp")
+    let unselected = MCPServer(name: "Unselected server", baseURL: "https://unselected.example/mcp")
+    var settings = AppSettings()
+    settings.mcpServers = [selected, unselected]
+    var conversation = Conversation()
+    conversation.toolsEnabled = true
+    conversation.enabledMCPServers = [selected.id]
+    let prompt = PromptComposer.systemPrompt(settings: settings, conversation: conversation)
+    XCTAssertTrue(prompt.contains(selected.baseURL))
+    XCTAssertFalse(prompt.contains(unselected.baseURL))
+    conversation.enabledMCPServers = []
+    XCTAssertFalse(PromptComposer.systemPrompt(settings: settings, conversation: conversation)
+      .contains(selected.baseURL))
+    conversation.enabledMCPServers = [selected.id]
+    conversation.toolsEnabled = false
+    XCTAssertFalse(PromptComposer.systemPrompt(settings: settings, conversation: conversation)
+      .contains(selected.baseURL))
+  }
+
   @MainActor
   func testHiddenToolsRemainCallableWithoutBeingListed() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(

@@ -6,6 +6,8 @@ extension AgentTooling {
     _ arguments: [String: AgentToolArgumentValue],
     for tool: ToolDefinition?
   ) -> [String: AgentToolArgumentValue] {
+    let arguments = tool?.name == ToolProxy.callName
+      ? ToolProxy.normalizedArguments(arguments) : arguments
     let repaired =
       tool.flatMap {
         ToolSchemaValidator.repairArgumentKeys(.object(arguments), definition: $0).objectValue

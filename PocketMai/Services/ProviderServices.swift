@@ -485,7 +485,9 @@ enum PromptComposer {
     let memory = settings.memory.trimmingCharacters(in: .whitespacesAndNewlines)
     let mcp: String = {
       guard conversation.toolsEnabled else { return "" }
-      return settings.mcpServers.filter { $0.isEnabled && $0.hasValidEndpointURL }
+      return settings.mcpServers.filter {
+        $0.isEnabled && $0.hasValidEndpointURL && conversation.enabledMCPServers.contains($0.id)
+      }
         .map { "- \($0.name): \($0.baseURL)" }
         .joined(separator: "\n")
     }()
@@ -506,7 +508,7 @@ enum PromptComposer {
       parts.append(
         """
         <mcp_servers>
-        Configured MCP servers:
+        MCP servers selected for this conversation (use only tools in the available tool catalog):
         \(mcp)
         </mcp_servers>
         """

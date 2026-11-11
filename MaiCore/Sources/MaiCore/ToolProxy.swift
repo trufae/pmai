@@ -97,7 +97,7 @@ public enum ToolProxy {
     var definition = ToolDefinition(
       name: callName,
       description:
-        "Run a concrete tool by exact name with JSON arguments. Call \(listAPIName) directly to discover tools. Some tools are callable by known name without appearing in discovery.",
+        "Run a concrete tool by exact name with JSON arguments. Set name to the target tool, never \(callAPIName), and arguments to that tool's parameter object; do not wrap them in another name/arguments envelope. Call \(listAPIName) only when you need to discover a tool or its arguments. Some tools are callable by known name without appearing in discovery.",
       parameters: [
         ToolParameterDef(
           name: "name",
@@ -175,6 +175,7 @@ public enum ToolProxy {
     arguments: [String: AgentToolArgumentValue],
     definitions: [ToolDefinition]
   ) -> (call: ParsedToolCall?, error: String?) {
+    let arguments = normalizedArguments(arguments)
     var argumentValues = argumentObject(from: arguments["arguments"])
     // Some models put the name inside the arguments object instead of next
     // to it: {"arguments": {"name": T, "arguments": {...}}}.
@@ -217,12 +218,42 @@ public enum ToolProxy {
 
   /// Also used when identifying a concrete call in a saved proxy exchange.
   public static func requestedToolName(in arguments: [String: AgentToolArgumentValue]) -> String {
+    let arguments = normalizedArguments(arguments)
     let outer =
       arguments["name"]?.stringValue ?? arguments["tool_name"]?.stringValue
       ?? arguments["tool"]?.stringValue ?? ""
     guard outer.isEmpty else { return outer }
     let inner = argumentObject(from: arguments["arguments"])
     return inner["name"]?.stringValue ?? inner["tool"]?.stringValue ?? ""
+  }
+
+  /// A native call already names call_tool. Some models repeat that envelope
+  /// inside its parameters. Peel only complete proxy envelopes, stopping at
+  /// the concrete tool so a skill's real `arguments` parameter stays intact.
+  static func normalizedArguments(
+    _ arguments: [String: AgentToolArgumentValue]
+  ) -> [String: AgentToolArgumentValue] {
+    var result = arguments
+    let nameKeys = ["name", "tool_name", "tool"]
+    let envelopeKeys = Set(nameKeys + ["arguments"])
+    for _ in 0..<8 {
+      let names = nameKeys.compactMap { result[$0]?.stringValue }
+      guard Set(result.keys).isSubset(of: envelopeKeys),
+        nameKeys.filter({ result[$0] != nil }).count == names.count,
+        names.isEmpty || names.allSatisfy({ proxyNames.canonicalName(for: $0) == callName })
+      else { break }
+      let nested = argumentObject(from: result["arguments"])
+      guard Set(nested.keys).isSubset(of: envelopeKeys),
+        nameKeys.filter({ nested[$0] != nil }).count == 1,
+        nameKeys.contains(where: { nested[$0]?.stringValue?.isEmpty == false }),
+        nested["arguments"]?.objectValue != nil
+          || nested["arguments"]?.stringValue.flatMap({
+            ToolCallParsing.jsonObject(from: $0)
+          }) != nil
+      else { break }
+      result = nested
+    }
+    return result
   }
 
   private static func searchableText(for definition: ToolDefinition) -> String {

@@ -85,3 +85,46 @@ func nativeProxyRejectsRecursion() throws {
   #expect(resolved.call == nil)
   #expect(resolved.error?.contains("cannot call itself") == true)
 }
+
+// The PR-review export wrapped every native call_tool invocation in another
+// call_tool envelope, so even fetching the supplied URL failed as recursion.
+@Test("Exported native proxy wrappers reach the intended tool and preserve skill arguments",
+  arguments: [
+    (#"{"name":"call_tool","arguments":{"name":"web_fetch","arguments":{"url":"https://github.com/radareorg/radare2/pull/27412"}}}"#,
+     "web_fetch", ["url": JSONValue.string("https://github.com/radareorg/radare2/pull/27412")]),
+    (#"{"name":"call_tool","arguments":{"name":"web_search","arguments":{"query":"radare2 pull request 27412 bug fix"}}}"#,
+     "web_search", ["query": JSONValue.string("radare2 pull request 27412 bug fix")]),
+    (#"{"name":"call_tool","arguments":{"name":"skills_PrReview","arguments":{"arguments":"https://github.com/radareorg/radare2/pull/27412"}}}"#,
+     "skills_PrReview", ["arguments": JSONValue.string("https://github.com/radareorg/radare2/pull/27412")]),
+    (#"{"name":"call_tool","arguments":{"name":"list_tools","arguments":{}}}"#,
+     ToolProxy.listName, [:]),
+  ])
+func exportedNativeProxyWrapper(fixture: (String, String, [String: JSONValue])) throws {
+  let (arguments, name, expected) = fixture
+  let parameter = expected.keys.first.map {
+    ToolParameterDef(name: $0, type: "string", description: "Input", required: name == "web_search")
+  }
+  let definitions = [ToolDefinition(name: name, description: "Fixture", parameters: parameter.map { [$0] } ?? [])]
+  let block = "<tool_call id=\"exported\" api_name=\"call_tool\">{\"name\":\"call-tool\",\"arguments\":\(arguments)}</tool_call>"
+  let parsed = try #require(AgentTooling.parseCalls(in: block, tools: ToolProxy.definitions, mode: .native).first)
+  let normalized = AgentTooling.normalized(call: parsed, tools: ToolProxy.definitions)
+  #expect(normalized.toolCallID == "exported")
+  #expect(normalized.argumentValues["name"] != .string("call_tool"))
+  #expect(ToolProxy.requestedToolName(in: parsed.argumentValues) == (name == ToolProxy.listName ? "list_tools" : name))
+  for call in [parsed, normalized] {
+    let resolved = ToolProxy.resolveCall(arguments: call.argumentValues, definitions: definitions)
+    #expect(resolved.error == nil)
+    #expect(resolved.call?.name == name)
+    #expect(resolved.call?.argumentValues == expected)
+  }
+}
+
+@Test("A wrapped proxy cannot make an unavailable tool callable")
+func wrappedUnavailableProxyTool() {
+  let result = ToolProxy.resolveCall(arguments: [
+    "name": .string("call_tool"),
+    "arguments": .object(["name": .string("r2mcp_pr_review"), "arguments": .object(["pr": .integer(27412)])]),
+  ], definitions: [])
+  #expect(result.call == nil)
+  #expect(result.error?.contains("unknown tool 'r2mcp_pr_review'") == true)
+}

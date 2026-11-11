@@ -1508,7 +1508,7 @@ enum AssistantToolLoop {
 
   private static func nativeToolLoopPrompt() -> String {
     """
-    When tools are available, use the provided native tools. After a host tool result, call another host tool if another host tool run is needed. If the result is enough, give the final answer directly. Do not describe a future tool call in prose.
+    When a tool is needed, use the provided native tools. Answer directly when the conversation already contains enough information. After a host tool result, call another tool only for an action or missing information needed for the user's request. If the result is enough, give the final answer directly. Do not describe a future tool call in prose.
 
     \(AgentToolLoopPolicy.nativeToolInstructions)
     """
@@ -1724,7 +1724,8 @@ enum AssistantToolLoop {
     }
     return ConversationDebugPromptMessage(
       role: message.role.rawValue,
-      content: message.text,
+      content: message.toolResults.isEmpty
+        ? message.text : message.toolResults.map(\.text).joined(separator: "\n\n"),
       reasoningContent: message.reasoning.isEmpty ? nil : message.reasoning,
       toolCallsJSON: toolCallsJSON,
       toolCallID: message.toolResults.first?.callID)

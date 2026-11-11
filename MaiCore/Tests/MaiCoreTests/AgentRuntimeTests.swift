@@ -480,8 +480,11 @@ func deniedApproval() async throws {
   #expect(toolResult.text.contains("test policy"))
 }
 
-@Test("Agent runtime resolves proxied calls before approval and execution")
-func proxiedToolLoop() async throws {
+@Test("Agent runtime resolves proxied calls before approval and execution", arguments: [false, true])
+func proxiedToolLoop(wrapped: Bool) async throws {
+  let arguments: JSONValue = .object([
+    "name": .string("uppercase"), "arguments": .object(["text": .string("hello")]),
+  ])
   let provider = ScriptedProvider(responses: [
     ProviderResponse(
       message: AgentMessage(
@@ -491,10 +494,8 @@ func proxiedToolLoop() async throws {
             ToolCall(
               id: "proxy-1",
               name: ToolProxy.callName,
-              arguments: .object([
-                "name": .string("uppercase"),
-                "arguments": .object(["text": .string("hello")]),
-              ])))
+              arguments: wrapped
+                ? .object(["name": .string("call_tool"), "arguments": arguments]) : arguments))
         ]),
       stopReason: .toolCall),
     ProviderResponse(message: .assistant("Proxied result received."), stopReason: .stop),

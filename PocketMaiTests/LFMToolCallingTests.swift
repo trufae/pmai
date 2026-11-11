@@ -126,7 +126,7 @@ final class LFMToolCallingTests: XCTestCase {
     }
   }
 
-  func testNativeProxyAliasesCompleteDiscoveryAndSearch() async throws {
+  func testNativeProxyAliasesAndExportedWrapperCompleteDiscoveryAndSearch() async throws {
     let conversation = conversation(mode: .native)
     StubChatEndpoint.script = { _ in
       let turn = StubChatEndpoint.requests.count
@@ -136,7 +136,7 @@ final class LFMToolCallingTests: XCTestCase {
       let name = turn == 1 ? "list_tools" : "call_tool"
       let arguments = turn == 1
         ? #"{"keywords":"web_search"}"#
-        : #"{"name":"web_search","arguments":{"query":"author of rizin"}}"#
+        : #"{"name":"call_tool","arguments":{"name":"web_search","arguments":{"query":"author of rizin"}}}"#
       return (["choices": [["index": 0, "finish_reason": "tool_calls", "message": [
         "role": "assistant", "content": "", "tool_calls": [[
           "id": "call_\(turn)", "type": "function",
@@ -154,6 +154,14 @@ final class LFMToolCallingTests: XCTestCase {
     let names = tools.compactMap { ($0["function"] as? [String: Any])?["name"] as? String }
     XCTAssertTrue(names.contains("list_tools") && names.contains("call_tool"))
     XCTAssertFalse(names.contains("list-tools") || names.contains("call-tool"))
+    let messages = StubChatEndpoint.requests[2]["messages"] as? [[String: Any]] ?? []
+    let followup = String(decoding: try JSONSerialization.data(withJSONObject: messages), as: UTF8.self)
+    XCTAssertTrue(followup.contains("Rizin search fixture"))
+    let call = messages.compactMap { $0["tool_calls"] as? [[String: Any]] }.flatMap { $0 }.last
+    let function = try XCTUnwrap(call?["function"] as? [String: Any])
+    let arguments = try XCTUnwrap(function["arguments"] as? String)
+    let parsed = try JSONSerialization.jsonObject(with: Data(arguments.utf8)) as? [String: Any]
+    XCTAssertEqual(parsed?["name"] as? String, "web_search")
   }
 
   func testHiddenToolStillRequiresApproval() async throws {
