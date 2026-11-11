@@ -246,15 +246,20 @@ enum TerminalTheme {
     let border = frame("+" + String(repeating: "-", count: width + 2) + "+")
     let call = ToolCall(id: "preview", name: "files_find",
       arguments: .object(["path": .string("."), "query": .string("*")]))
+    let bubble = TerminalOutputBuffer.userMessage("List the project files", prompt: "You: ",
+      width: width, colors: colors ? ui : nil).components(separatedBy: "\n").compactMap { line -> String? in
+      let plain = line.replacingOccurrences(of: "\u{1B}\\[[0-?]*[ -/]*[@-~]", with: "",
+        options: .regularExpression)
+      guard !plain.isEmpty else { return nil }
+      let padding = String(repeating: " ", count: max(0, width - TerminalLineEditor.displayWidth(of: plain)))
+      return frame("| ") + line + frame(padding + " |")
+    }.joined(separator: "\n")
     return [
       border,
       row(name, foreground: ui.infoForeground, background: ui.backgroundLine, bold: true),
       border,
       row("> Ask a follow-up", foreground: ui.foreground, bold: ui.bold, prompt: true),
-      row("You: List the project files",
-        foreground: ui.bubbleForeground.isEmpty ? ui.foreground : ui.bubbleForeground,
-        background: ui.bubbleBackground.isEmpty ? ui.background : ui.bubbleBackground,
-        bold: ui.bold),
+      bubble,
       row("Thinking... inspecting the project", foreground: ui.thinkingForeground),
       row(ToolCallPreview.render(call), foreground: ui.toolCallForeground,
         background: ui.toolCallBackground.isEmpty ? ui.background : ui.toolCallBackground,
