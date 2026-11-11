@@ -207,7 +207,6 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
   var isWaitingForResponse: Bool = false
   var showsResponsePlaceholder: Bool = true
   @State private var showingTextSelection = false
-  @State private var showingRawTextSelection = false
   @State private var selectedTextAttachment: ChatAttachment?
   @State private var selectedImageAttachment: ChatAttachment?
   @State private var imageSaveNotice: ToastNotice?
@@ -322,7 +321,7 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
       }
     }
     .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
-    .messageActionsMenu { messageContextMenu(visibleText: prepared.visibleText, rawText: displayText) }
+    .messageActionsMenu { messageContextMenu(visibleText: prepared.visibleText) }
     .preference(
       key: ResponseScrollTargetsKey.self,
       value: responseScrollTarget(in: prepared).map { [message.id: $0] } ?? [:])
@@ -542,19 +541,6 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
           isEditable: actions.onEdit != nil,
           onSave: messageEditAction(rawText: rawText))
       }
-      .sheet(isPresented: $showingRawTextSelection) {
-        // Escape hatch for the whole stored message, tags included.
-        MessageTextSelectionSheet(
-          title: "Raw Message",
-          text: rawText,
-          canFilter: rawText != messageText,
-          appearance: appearance,
-          initialFontSize: appearance.fontSize,
-          initialLineSpacing: appearance.lineSpacing,
-          fontFamily: appearance.fontFamily(for: message.role),
-          isEditable: actions.onEdit != nil,
-          onSave: actions.onEdit)
-      }
       .sheet(item: $selectedTextAttachment) { attachment in
         MessageTextSelectionSheet(
           title: attachment.displayName,
@@ -754,7 +740,7 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
     return nil
   }
 
-  private func messageContextMenu(visibleText: String, rawText: String) -> UIMenu {
+  private func messageContextMenu(visibleText: String) -> UIMenu {
     var shortcuts: [UIMenuElement] = []
     if let onToggleBookmark = actions.onToggleBookmark {
       shortcuts.append(MessageActionMenus.action(
@@ -803,12 +789,6 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
     editing.append(MessageActionMenus.action("Copy", systemImage: "doc.on.doc") {
       UIPasteboard.general.string = visibleText
     })
-    if rawText != visibleText {
-      editing.append(MessageActionMenus.action(
-        actions.onEdit == nil ? "View Raw Message" : "Edit Raw Message",
-        systemImage: "chevron.left.forwardslash.chevron.right"
-      ) { showingRawTextSelection = true })
-    }
     if message.role == .assistant, actions.onReply != nil {
       editing.append(MessageActionMenus.action(
         "Reply…", systemImage: "arrowshape.turn.up.left", enabled: actions.canReply
