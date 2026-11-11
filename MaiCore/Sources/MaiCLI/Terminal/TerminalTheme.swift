@@ -3,6 +3,8 @@ import MaiCore
 
 /// Themes are batches of the appearance settings accepted by `/theme color`.
 enum TerminalTheme {
+  static let lightNames: Set<String> = ["summer", "sand", "colit"]
+
   static let builtins: [String: ConfiguredTerminalUI] = [
     "default": .init(),
     "ansi": .init(
@@ -310,7 +312,7 @@ enum TerminalTheme {
   }
 
   static func script(_ ui: ConfiguredTerminalUI) -> String {
-    (colors.map { key, path in
+    (["/set ui.color \(ui.color.rawValue)"] + colors.map { key, path in
       "/theme color \(key) \(ui[keyPath: path].isEmpty ? "none" : ui[keyPath: path])"
     } + flags.map { key, path in
       "/theme color \(key) \(ui[keyPath: path] ? "on" : "off")"
@@ -333,7 +335,7 @@ enum TerminalTheme {
     return directory.appendingPathComponent(name)
   }
 
-  static func names(directory: URL) -> [String] {
+  static func names(directory: URL, color: TerminalColorMode) -> [String] {
     let files =
       (try? FileManager.default.contentsOfDirectory(
         at: directory, includingPropertiesForKeys: [.isRegularFileKey])) ?? []
@@ -341,22 +343,29 @@ enum TerminalTheme {
       validName($0.lastPathComponent)
         && (try? $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true
     }.map(\.lastPathComponent)
-    return Set(builtins.keys).union(custom).sorted()
+    return Set(builtins.keys).union(custom).sorted().filter {
+      (try? load($0, directory: directory, ui: .init()).color) == color
+    }
   }
 
-  static func load(_ name: String, directory: URL, ui: ConfiguredTerminalUI) throws
+  static func load(_ name: String, directory: URL, ui: ConfiguredTerminalUI,
+    requiredColor: TerminalColorMode? = nil) throws
     -> ConfiguredTerminalUI
   {
     let url = try file(name, directory: directory)
     let source: String
     if FileManager.default.fileExists(atPath: url.path) {
       source = try String(contentsOf: url, encoding: .utf8)
-    } else if let builtin = builtins[name == "light" ? "summer" : name] {
+    } else if var builtin = builtins[name == "light" ? "summer" : name] {
+      builtin.color = lightNames.contains(name) || name == "light" ? .light : .dark
       source = script(builtin)
     } else {
       throw Invalid(message: "Unknown theme '\(name)'. Use /theme list.")
     }
     var result = ui
+    // Legacy scripts have no color mode; retain the built-in classification when
+    // overriding one, and treat other unclassified themes as dark.
+    result.color = lightNames.contains(name) || name == "light" ? .light : .dark
     for (index, line) in source.components(separatedBy: .newlines).enumerated() {
       let line = line.trimmingCharacters(in: .whitespaces)
       if line.isEmpty || line.hasPrefix("#") { continue }
@@ -365,6 +374,11 @@ enum TerminalTheme {
       do {
         if parts.count == 4, parts[0] == "/theme", parts[1].lowercased() == "color" {
           try set(parts[2].lowercased(), value: parts[3], in: &result)
+        } else if parts.count == 3, parts[0] == "/set", parts[1].lowercased() == "ui.color" {
+          guard let color = TerminalColorMode(rawValue: parts[2].lowercased()) else {
+            throw Invalid(message: "Expected /set ui.color <dark|light>.")
+          }
+          result.color = color
         } else if parts.count == 3, parts[0] == "/set",
           parts[1].lowercased().hasPrefix("ui.")
         {
@@ -376,6 +390,10 @@ enum TerminalTheme {
       } catch {
         throw Invalid(message: "Theme '\(name)', line \(index + 1): \(error.localizedDescription)")
       }
+    }
+    if let requiredColor, result.color != requiredColor {
+      throw Invalid(message:
+        "Theme '\(name)' is \(result.color.rawValue). Run /set ui.color \(result.color.rawValue) first.")
     }
     return result
   }

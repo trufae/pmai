@@ -161,11 +161,13 @@ func terminalEditorSetting() throws {
   #expect(try JSONDecoder().decode(ConfiguredTerminalUI.self, from: saved) == configured)
 }
 
-@Test("Terminal output mode defaults to buffer and persists classic mode")
+@Test("Terminal color and output modes persist independently and default to dark and buffer")
 func terminalOutputModeSetting() throws {
   let decoder = JSONDecoder()
-  #expect(try decoder.decode(ConfiguredTerminalUI.self, from: Data("{}".utf8)).mode == .buffer)
-  let configured = ConfiguredTerminalUI(mode: .classic)
+  let defaults = try decoder.decode(ConfiguredTerminalUI.self, from: Data("{}".utf8))
+  #expect(defaults.mode == .buffer)
+  #expect(defaults.color == .dark)
+  let configured = ConfiguredTerminalUI(color: .light, mode: .classic)
   #expect(try decoder.decode(ConfiguredTerminalUI.self,
     from: JSONEncoder().encode(configured)) == configured)
 }

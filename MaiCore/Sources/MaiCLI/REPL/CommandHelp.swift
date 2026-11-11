@@ -444,14 +444,17 @@ extension MaiCLI {
     """
 
   static let themeHelp: String = """
-    /theme [list]        List built-in and saved themes
-    /theme show [NAME]   Preview all themes, or just NAME, without applying them
+    /theme [list]        List built-in and saved themes for ui.color
+    /theme show [NAME]   Preview themes for ui.color, or just NAME, without applying them
     /theme use NAME      Apply and persist a theme's UI settings
     /theme save NAME     Save current colors and bold as a theme (overwrites NAME)
     /theme color         List all current colors and bold
     /theme color KEY     Show one setting
     /theme color KEY VALUE  Change and persist one setting (KEY=VALUE also works)
 
+    /set ui.color dark|light selects the themes available to list, show, use, and Tab completion.
+    Light themes: summer, sand, colit. All other built-ins are dark. Default: dark.
+    Changing ui.color keeps current colors until /theme use NAME applies a theme.
     Buffer mode also recolors earlier prompts and themed output when colors change.
 
     Color settings:
@@ -491,8 +494,10 @@ extension MaiCLI {
     The old light name is an alias for summer.
     PMAI_THEME=NAME selects a theme at startup, overriding configured colors and bold.
     Custom themes live in ~/.pmai/themes/NAME ($PMAI_HOME or --home relocates it)
-    and take precedence over built-ins. Each line is /theme color KEY VALUE;
-    blank lines and # comments are allowed. Older /set ui.COLOR VALUE files still load.
+    and take precedence over built-ins. Saved files start with /set ui.color dark|light,
+    followed by /theme color KEY VALUE lines. Untagged custom themes default to dark;
+    overrides of summer, sand, colit, and the light alias default to light.
+    Blank lines and # comments are allowed. Older /set ui.COLOR VALUE files still load.
     Other settings stay as they are.
     """
 
@@ -602,6 +607,7 @@ extension MaiCLI {
       /set export.thinking BOOL    Include thinking blocks in documents (default off)
       /set ui.                     List terminal behavior settings
       /set ui.line MODE           single (one scrolling row) or multi (default: wrap input)
+      /set ui.color MODE          dark (default) or light: filter theme choices and previews
       /set ui.mode MODE           classic or buffer (default): scroll with Page Up/Down and mouse wheel
       /set ui.scroll N            Lines per mouse-wheel event in buffer mode (default 1)
       /set ui.highlight WORD      Highlight literal matches; none clears (also /highlight WORD)

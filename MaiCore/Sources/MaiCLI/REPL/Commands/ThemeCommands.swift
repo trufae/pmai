@@ -21,6 +21,7 @@ extension MaiCLI {
   ) async {
     let parts = argument.replacingOccurrences(of: "=", with: " ")
       .split(whereSeparator: \.isWhitespace).map(String.init)
+    let ui = configuration?.ui ?? .init()
     if parts.first == "color" {
       await handleThemeColorCommand(
         Array(parts.dropFirst()), configuration: &configuration,
@@ -28,18 +29,17 @@ extension MaiCLI {
       return
     }
     if parts.isEmpty || parts == ["list"] {
-      await terminal.line(TerminalTheme.names(directory: directory).joined(separator: "\n"))
+      await terminal.line(TerminalTheme.names(directory: directory, color: ui.color).joined(separator: "\n"))
       await terminal.line("/theme show [NAME] · /theme use NAME · /theme color · /theme save NAME · \(directory.path)")
       return
     }
     if parts.first == "show", parts.count <= 2 {
-      let names = parts.count == 2 ? [parts[1]] : TerminalTheme.names(directory: directory)
-      let ui = configuration?.ui ?? .init()
+      let names = parts.count == 2 ? [parts[1]] : TerminalTheme.names(directory: directory, color: ui.color)
       let colors = await terminal.paintsOutput
       var previews: [(name: String, ui: ConfiguredTerminalUI)] = []
       for name in names {
         do {
-          let previewUI = try TerminalTheme.load(name, directory: directory, ui: ui)
+          let previewUI = try TerminalTheme.load(name, directory: directory, ui: ui, requiredColor: ui.color)
           previews.append((name, previewUI))
         } catch {
           await terminal.line("error: \(error.localizedDescription)", to: .standardError)
@@ -66,7 +66,7 @@ extension MaiCLI {
         guard var draft = configuration, let configurationPath else {
           throw TerminalTheme.Invalid(message: "No writable configuration is active.")
         }
-        draft.ui = try TerminalTheme.load(parts[1], directory: directory, ui: draft.ui)
+        draft.ui = try TerminalTheme.load(parts[1], directory: directory, ui: draft.ui, requiredColor: ui.color)
         try draft.save(to: URL(fileURLWithPath: configurationPath))
         configuration = draft
         await terminal.configureColors(draft.ui)

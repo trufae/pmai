@@ -680,6 +680,8 @@ def main(binary):
                 assert visible.index('Current models') < visible.index('AFTER_COMMAND'), screen
                 # A light status bar must use the theme's dark foreground,
                 # rather than the terminal's default (often white) text.
+                send('/set ui.color light\r')
+                wait_for('Set ui.color = light.')
                 send('/theme use colit\r')
                 wait_for("Applied theme 'colit'.")
                 assert '38;2;51;51;51' in styled_screen[rows - 1], styled_screen[rows - 1]

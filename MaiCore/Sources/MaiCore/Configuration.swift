@@ -569,12 +569,19 @@ public enum TerminalOutputMode: String, Codable, Sendable {
   case buffer
 }
 
+public enum TerminalColorMode: String, Codable, Sendable {
+  case dark
+  case light
+}
+
 public enum TerminalInputLineMode: String, Codable, Sendable {
   case single
   case multi
 }
 
 public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
+  /// Light or dark themes offered by the terminal theme commands.
+  public var color: TerminalColorMode
   /// Classic terminal scrollback or an application-owned, reflowable transcript.
   public var mode: TerminalOutputMode
   /// One horizontally scrolling input row, or wrapped multiline editing.
@@ -636,6 +643,7 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
   public var editor: String
 
   public init(
+    color: TerminalColorMode = .dark,
     mode: TerminalOutputMode = .buffer,
     line: TerminalInputLineMode = .multi,
     scroll: Int = 1,
@@ -678,6 +686,7 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
     thinking: ThinkingDisplay = .status,
     editor: String = ""
   ) {
+    self.color = color
     self.mode = mode
     self.line = line
     self.scroll = max(1, scroll)
@@ -722,6 +731,7 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
   }
 
   private enum CodingKeys: String, CodingKey {
+    case color
     case mode
     case line
     case scroll
@@ -771,6 +781,7 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
     let legacy = try decoder.container(keyedBy: LegacyCodingKeys.self)
     let container = try decoder.container(keyedBy: CodingKeys.self)
     self.init(
+      color: (try? container.decodeIfPresent(TerminalColorMode.self, forKey: .color)) ?? .dark,
       mode: (try? container.decodeIfPresent(TerminalOutputMode.self, forKey: .mode)) ?? .buffer,
       line: (try? container.decodeIfPresent(TerminalInputLineMode.self, forKey: .line)) ?? .multi,
       scroll: (try? container.decodeIfPresent(Int.self, forKey: .scroll)) ?? 1,

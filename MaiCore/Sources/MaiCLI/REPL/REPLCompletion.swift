@@ -110,6 +110,7 @@ extension MaiCLI {
       "/set ui.fgbold ", "/set ui.fgbold none",
       "/set ui.fgitalic ", "/set ui.fgitalic none",
       "/set ui.tableborders on", "/set ui.tableborders off",
+      "/set ui.color dark", "/set ui.color light",
       "/set ui.mode classic", "/set ui.mode buffer",
       "/set ui.line single", "/set ui.line multi",
       "/set ui.scroll ",
@@ -206,7 +207,7 @@ extension MaiCLI {
       values.append("/project tint \(tint)")
     }
     values += TerminalTheme.keys.map { "/theme color \($0) " }
-    let themeNames = TerminalTheme.names(directory: themesDirectory)
+    let themeNames = TerminalTheme.names(directory: themesDirectory, color: configuration?.ui.color ?? .dark)
     values += themeNames.map { "/theme use \($0)" }
     values += themeNames.map { "/theme show \($0)" }
     for (index, chat) in chronologicalChats(workspace).enumerated() {

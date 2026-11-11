@@ -908,7 +908,7 @@ extension MaiCLI {
 
   static func uiSettings(_ ui: ConfiguredTerminalUI) -> [String] {
     let keys = [
-      "ui.mode", "ui.line", "ui.scroll", "ui.scrollbar", "ui.highlight", "ui.editor", "ui.markdown", "ui.tools", "ui.toolcalls", "ui.toolgroups",
+      "ui.color", "ui.mode", "ui.line", "ui.scroll", "ui.scrollbar", "ui.highlight", "ui.editor", "ui.markdown", "ui.tools", "ui.toolcalls", "ui.toolgroups",
       "ui.subagents", "ui.thinking", "ui.tableborders",
       "ui.broadcast",
       "ui.fgbold", "ui.fgitalic",
@@ -919,6 +919,7 @@ extension MaiCLI {
   static func uiSetting(_ key: String, in ui: ConfiguredTerminalUI) -> String {
     let value: String
     switch key.lowercased() {
+    case "ui.color": return ui.color.rawValue
     case "ui.mode": return ui.mode.rawValue
     case "ui.line": return ui.line.rawValue
     case "ui.scroll": return String(ui.scroll)

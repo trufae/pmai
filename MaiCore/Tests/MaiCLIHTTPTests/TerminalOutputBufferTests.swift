@@ -341,6 +341,43 @@ func terminalThemeToolSettings() throws {
   #expect(ansi.background.isEmpty)
 }
 
+@Test("Theme choices and completion follow the mode and saved theme overrides")
+func terminalThemeModes() throws {
+  let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+  try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: directory) }
+  let light: Set<String> = ["summer", "sand", "colit"]
+  let dark = Set(TerminalTheme.builtins.keys).subtracting(light)
+  #expect(Set(TerminalTheme.names(directory: directory, color: .light)) == light)
+  #expect(Set(TerminalTheme.names(directory: directory, color: .dark)) == dark)
+
+  let saved = try TerminalTheme.load("colit", directory: directory, ui: .init(mode: .classic))
+  #expect(saved.mode == .classic)
+  try TerminalTheme.script(saved).write(to: directory.appendingPathComponent("daylight"),
+    atomically: true, encoding: .utf8)
+  // A user override takes precedence over a built-in's usual classification.
+  try TerminalTheme.script(saved).write(to: directory.appendingPathComponent("night"),
+    atomically: true, encoding: .utf8)
+  try "/set ui.fgprompt green\n".write(to: directory.appendingPathComponent("legacy"),
+    atomically: true, encoding: .utf8)
+  for mode in [TerminalColorMode.dark, .light] {
+    var configuration = MaiConfiguration()
+    configuration.ui.color = mode
+    let names = Set(TerminalTheme.names(directory: directory, color: mode))
+    let expected = mode == .light ? light.union(["daylight", "night"]) : dark.subtracting(["night"]).union(["legacy"])
+    #expect(names == expected)
+    let completions = Set(MaiCLI.completionCandidates(
+      workspace: .init(), configuration: configuration, availableProviders: [], toolGroups: [],
+      themesDirectory: directory))
+    for command in ["use", "show"] {
+      let prefix = "/theme \(command) "
+      let choices = Set(completions.filter { $0.hasPrefix(prefix) && $0 != prefix }
+        .map { String($0.dropFirst(prefix.count)) })
+      #expect(choices == names)
+    }
+  }
+}
+
 @Test(
   "Tool previews retain complete results when switching between compact, limited and full output")
 func terminalBufferTools() {

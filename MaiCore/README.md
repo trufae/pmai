@@ -788,7 +788,12 @@ The status line distinguishes waiting for HTTP, waiting for stream data, and
 receiving model output. For a credential-free upstream reproduction, see
 [the upload diagnostic](../sys/diagnostics/README.md).
 
-`/theme` (or `/theme list`) lists terminal themes. Thirteen are built in:
+`/set ui.color dark` (the default) or `/set ui.color light` selects which themes
+are available in `/theme`, `/theme list`, `/theme show`, and Tab completion.
+The light themes are `summer`, `sand`, and `colit`; all other built-ins are dark.
+Changing `ui.color` keeps your current colors until you apply a theme with `/theme use NAME`.
+Named previews and theme selection require a theme from the selected color mode.
+`/theme` (or `/theme list`) lists matching terminal themes. Thirteen are built in:
 `default` preserves the original styling, `slime` is green, `summer` uses a sunny
 cream background, `ember` uses warm colors, and `pink` and `night`
 provide pink and blue palettes. `codark` combines a dark grey background with
@@ -799,7 +804,7 @@ black, white, and bold input. `blood` uses red and white on a dark red backgroun
 with dark text. Markdown and subagent labels also follow the selected palette.
 `summer`, `codark`, `plum`, `pink`, and `blood` use bold tool calls and subtle backgrounds
 for tool calls and results. `light` remains an alias for `summer`.
-Use `/theme show` to compare all built-in and saved themes in named frames,
+Use `/theme show` to compare built-in and saved themes from the selected color mode in named frames,
 each with a five-line sample session. `/theme show slime` previews just one theme.
 Wide terminals show two themes per row; narrow terminals stack the previews.
 Previews keep your current theme and configuration unchanged. Colors appear on
@@ -820,12 +825,13 @@ Tool previews use `fgtoolcall` for tool names, `fginfo` for parameter names, and
 keep their status marker and tool name in `fgerror`.
 
 After tweaking colors with `/theme color`, `/theme save mine` writes the current
-colors and bold setting to `~/.pmai/themes/mine`, replacing that file if it
+color mode, colors, and bold setting to `~/.pmai/themes/mine`, replacing that file if it
 exists. `PMAI_HOME` or `--home` relocates the themes directory. Files are plain
-scripts with one `/theme color` per line; for example:
+scripts with a mode declaration and one `/theme color` per line; for example:
 
 ```text
 # ~/.pmai/themes/mine
+/set ui.color light
 /theme color bgline rgb:eee
 /theme color fgcolor rgb:222
 /theme color fgprompt rgb:046
@@ -833,7 +839,9 @@ scripts with one `/theme color` per line; for example:
 ```
 
 Use `/theme use mine` or `PMAI_THEME=mine` to load it. User files take
-precedence over built-ins of the same name. Themes accept all the color settings
+precedence over built-ins of the same name. Custom themes without a mode declaration
+default to dark, except overrides of `summer`, `sand`, `colit`, and the `light` alias.
+Themes accept all the color settings
 listed below, `bold`, and `boldtoolcall`; omitted settings keep their current values. Blank
 lines and `#` comment lines are ignored, and invalid scripts leave the UI unchanged.
 Old configuration files and saved themes using `/set ui.COLOR VALUE` remain valid.

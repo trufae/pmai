@@ -662,7 +662,7 @@ extension MaiCLI {
     }
     let booleanKeys = ["ui.markdown", "ui.tableborders", "ui.broadcast", "ui.toolgroups"]
     let countKeys = ["ui.tools", "ui.toolcalls", "ui.scroll", "ui.scrollbar"]
-    let levelKeys = ["ui.subagents", "ui.thinking", "ui.mode", "ui.line"]
+    let levelKeys = ["ui.subagents", "ui.thinking", "ui.color", "ui.mode", "ui.line"]
     if key == "ui.title" {
       await terminal.line("Use /chat title [TEXT|none] for a temporary prompt and terminal/tab title.")
       return
@@ -733,6 +733,12 @@ extension MaiCLI {
         return
       }
       ui.line = mode
+    } else if key == "ui.color" {
+      guard let mode = TerminalColorMode(rawValue: parts[1].lowercased()) else {
+        await terminal.line("Usage: /set ui.color <dark|light>")
+        return
+      }
+      ui.color = mode
     } else if key == "ui.mode" {
       guard let mode = TerminalOutputMode(rawValue: parts[1].lowercased()) else {
         await terminal.line("Usage: /set ui.mode <classic|buffer>")

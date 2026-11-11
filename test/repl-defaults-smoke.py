@@ -84,6 +84,43 @@ def main():
         original = config.read_bytes()
         assert 'Unknown color' in run(['/set ui.fgitalic invalid-color'], allow_errors=True)
         assert config.read_bytes() == original
+
+        # Theme choices and previews must never mix light and dark palettes,
+        # including after a restart and when loading a saved custom theme.
+        light = {'summer', 'sand', 'colit'}
+        dark = {'default', 'ansi', 'mono', 'plum', 'slime', 'ember', 'pink', 'blood', 'night', 'codark'}
+        for mode, included, excluded in [('dark', dark, light), ('light', light, dark)]:
+            assert f'Set ui.color = {mode}.' in run([f'/set ui.color {mode}'])
+            listing, preview = run(['/theme', '/theme show'], split=True)
+            listed = {line.removeprefix('> ') for line in listing.splitlines()}
+            assert included <= listed and not excluded & listed, listing
+            for name in included:
+                assert re.search(r'\| ' + name + r' +\|', preview), preview
+            for name in excluded:
+                assert not re.search(r'\| ' + name + r' +\|', preview), preview
+            assert json.loads(config.read_text())['ui']['color'] == mode
+        run(['/theme use colit', '/theme save daylight'])
+        assert 'daylight' in run(['/theme list']).splitlines()
+        run(['/set ui.color dark'])
+        assert 'daylight' not in run(['/theme list']).splitlines()
+        original = config.read_bytes()
+        for command in ['/theme use colit', '/theme show summer', '/theme show light', '/theme use daylight']:
+            assert 'Run /set ui.color light first.' in run([command], allow_errors=True)
+            assert config.read_bytes() == original, command
+        assert 'Usage: /set ui.color <dark|light>' in run(['/set ui.color invalid'])
+        assert config.read_bytes() == original
+        run(['/set ui.color light', '/theme use daylight'])
+        assert json.loads(config.read_text())['ui']['bgcolor'] == '#ffffff'
+        run(['/reset ui.color'])
+        assert 'ui.color = dark' in run(['/set ui.color'])
+        # Color filtering and classic/buffer output remain independent.
+        assert 'ui.mode = buffer' in run(['/set ui.mode'])
+        run(['/set ui.mode classic', '/set ui.color light'])
+        assert json.loads(config.read_text())['ui']['mode'] == 'classic'
+        run(['/set ui.mode buffer'])
+        assert json.loads(config.read_text())['ui']['color'] == 'light'
+        run(['/set ui.color dark', '/theme use default'])
+
         for value, stored, displayed in [('first', 1, 'first'), ('5', 5, '5'),
                                          ('truncate', 'truncate', 'truncate')]:
             assert f'Set ui.toolcalls = {displayed}.' in run([f'/set ui.toolcalls {value}'])
