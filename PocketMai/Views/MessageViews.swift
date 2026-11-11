@@ -32,22 +32,6 @@ private struct MessageReplyDraft: Identifiable {
   let text: String
 }
 
-private extension View {
-  func messageActionsMenu<MenuItems: View>(@ViewBuilder menuItems: () -> MenuItems) -> some View {
-    self
-      .background {
-        // Lift only this transparent layer, leaving the message in the chat.
-        Color.clear.contentShape(.contextMenuPreview, Rectangle())
-      }
-      .contextMenu(menuItems: menuItems) {
-        Color.clear
-          .frame(width: 1, height: 1)
-          .accessibilityHidden(true)
-      }
-      .menuOrder(.fixed)
-  }
-}
-
 private extension Error {
   var imageSaveMessage: String {
     (self as? LocalizedError)?.errorDescription ?? localizedDescription
@@ -228,8 +212,6 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
   @State private var selectedImageAttachment: ChatAttachment?
   @State private var imageSaveNotice: ToastNotice?
   @State private var replyDraft: MessageReplyDraft?
-  @State private var showingDetails = false
-  @State private var showingSpeechOptions = false
   @State private var userPreviewSteps: [Int: Int] = [:]
 
   private var isUser: Bool { message.role == .user }
@@ -340,39 +322,14 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
       }
     }
     .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
-    .messageActionsMenu { messageContextMenu(visibleText: prepared.visibleText, rawText: displayText) }
+    .contextMenu { messageContextMenu(visibleText: prepared.visibleText, rawText: displayText) }
+    .menuOrder(.fixed)
     .preference(
       key: ResponseScrollTargetsKey.self,
       value: responseScrollTarget(in: prepared).map { [message.id: $0] } ?? [:])
     .frame(maxWidth: 720, alignment: isUser ? .trailing : .leading)
     .padding(.leading, isUser ? 36 : 0)
     .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
-    .popover(isPresented: $showingDetails) {
-      MessageDetailsPopover(message: message, conversationCreatedAt: conversationCreatedAt)
-        .presentationCompactAdaptation(.popover)
-    }
-    .popover(isPresented: $showingSpeechOptions) {
-      MessageSpeechPopover(
-        onSpeakMessage: { language in
-          showingSpeechOptions = false
-          TTSPlayer.shared.speak(
-            text: prepared.visibleText,
-            voice: toolSettings.voices.settings(for: message.role == .user ? .user : .assistant),
-            language: language,
-            role: message.role == .user ? .user : .assistant,
-            title: message.role.displayName,
-            messageID: message.id,
-            openAIEndpoints: openAIEndpoints,
-            skipTechnicalContent: skipTechnicalContentInTTS)
-        },
-        onSpeakFromHere: actions.onSpeakFromHere.map { speak in
-          { language in
-            showingSpeechOptions = false
-            speak(language)
-          }
-        })
-        .presentationCompactAdaptation(.popover)
-    }
   }
 
   @ViewBuilder
@@ -630,9 +587,10 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
       .toast($imageSaveNotice)
     if !isLiveAssistantResponse {
       bubbleWithSheet
-        .messageActionsMenu {
+        .contextMenu {
           messageContextMenu(visibleText: messageText, rawText: rawText)
         }
+        .menuOrder(.fixed)
     } else {
       bubbleWithSheet
     }
@@ -825,9 +783,7 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
           message.isPinned ? "Unpin Message" : "Pin Message",
           systemImage: message.isPinned ? "pin.slash" : "pin", action: onTogglePin)
       }
-      Button("Details…", systemImage: "info.circle") {
-        showingDetails = true
-      }
+      MessageDetailsMenu(message: message, conversationCreatedAt: conversationCreatedAt)
     }
     .controlGroupStyle(.compactMenu)
 
@@ -868,9 +824,19 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
 
     Divider()
 
-    Button("Speak…", systemImage: "speaker.wave.2") {
-      showingSpeechOptions = true
-    }
+    MessageSpeechMenu(
+      onSpeakMessage: { language in
+        TTSPlayer.shared.speak(
+          text: visibleText,
+          voice: toolSettings.voices.settings(for: message.role == .user ? .user : .assistant),
+          language: language,
+          role: message.role == .user ? .user : .assistant,
+          title: message.role.displayName,
+          messageID: message.id,
+          openAIEndpoints: openAIEndpoints,
+          skipTechnicalContent: skipTechnicalContentInTTS)
+      },
+      onSpeakFromHere: actions.onSpeakFromHere)
 
     if message.role != .assistant {
       if let resend = actions.onTrimFromHere {
