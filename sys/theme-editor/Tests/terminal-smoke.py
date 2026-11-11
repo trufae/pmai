@@ -86,16 +86,20 @@ def main():
         session = Session(binary, root)
         try:
             session.wait('Ready. Edits stay in memory')
-            session.wait('You: Update the greeting.')
+            session.wait('◢')
+            session.wait('Update the greeting and add a test.')
+            session.wait('Tool call')
+            session.wait('Markdown italic')
             session.send(b'e#123456\r', 'default.backgroundLine = #123456')
-            session.send(b'\r\x1b[B\r', 'PMAI THEME EDITOR  |  ansi')
-            # Select foreground, then choose None through the mode selector.
-            session.send(b'\t\x1b[C\t\x1b[D', 'ansi.foreground = none')
-            # Select background and enter an actual ANSI name.
-            session.send(b'\x1b[Z\x1b[Ceblue\r', 'ansi.background = blue')
-            # Switch to mono without losing either theme's draft; exercise sliders.
-            session.send(b'\x1b[Z\r\x1b[B\r', 'PMAI THEME EDITOR  |  mono')
-            session.send(b'e#808080\r\t\t\t\t\x1b[C\x1b[1;2C', 'mono.background = #918080')
+            session.send(b'\t', 'PMAI THEME EDITOR  |  ansi')
+            # The Text row contains foreground, background and the bold flag.
+            session.send(b'jfn', 'ansi.foreground = none')
+            session.send(b'beblue\r', 'ansi.background = blue')
+            session.send(b'\t', 'PMAI THEME EDITOR  |  mono')
+            session.send(b'e#808080\r1\x1b[C\x1b[1;2C', 'mono.background = #918080')
+            # Both directions retain the selected component and unsaved drafts.
+            session.send(b'\x1b[Z', 'bgcolor = blue')
+            session.send(b'\t', 'bgcolor = #918080')
             session.send(b's', 'Saved 4 changes')
             saved = (root / theme_path).read_text()
             expected = original.replace('"default": .init()', '"default": .init(\n      backgroundLine: "#123456")')
@@ -108,7 +112,13 @@ def main():
             session.wait('Resize to at least 78 x 24')
             session.resize(80, 24)
             session.output = b''
-            session.wait('You: Update the greeting.')
+            session.wait('◢')
+            session.wait('Ask a follow-up…')
+            # Selecting Error reveals its sample even in a short terminal.
+            session.send(b'jjjjjf', 'error: expected')
+            session.send(b'\x1b[6~', 'GreetingTests.swift')
+            session.send(b'.', 'error: expected')
+            session.send(b'gjb', 'bgcolor = #918080')
             session.send(b'e#ffffff\r', 'mono.background = #ffffff')
             session.send(b'q', 'Unsaved edits:')
             session.finish(b'd')

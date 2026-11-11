@@ -312,11 +312,11 @@ enum ThemeColor {
 
 enum Key: Equatable {
   case character(Character), up, down, left, right, fastLeft, fastRight
-  case tab, backTab, enter, escape, backspace, home, end, pageUp, pageDown, interrupt, eof
+  case tab, backTab, enter, escape, backspace, home, end, pageUp, pageDown, interrupt, eof, listPageUp, listPageDown
 }
 
 // Signal handlers only set a flag; terminal restoration happens on the main loop.
-nonisolated(unsafe) private var stopSignal: Int32 = 0
+nonisolated(unsafe) var stopSignal: Int32 = 0
 private func editorSignal(_ number: Int32) { stopSignal = number }
 
 struct Terminal {
@@ -341,8 +341,10 @@ struct Terminal {
     guard let byte = readByte(timeout: 100) else { return nil }
     switch byte {
     case -1: return .eof
-    case 3, 4: return .interrupt
+    case 3: return .interrupt
     case 9: return .tab
+    case 21: return .listPageUp
+    case 4: return .listPageDown
     case 10, 13: return .enter
     case 8, 127: return .backspace
     case 27:
@@ -385,279 +387,6 @@ struct Terminal {
   }
 }
 
-struct ThemeEditorUI {
-  var document: ThemeDocument
-  var themeIndex = 0
-  var fieldIndex = 0
-  var focus = 0
-  var popup: (options: [String], selected: Int)?
-  var input: String?
-  var confirmation: String?
-  var status = "Ready. Edits stay in memory until you save."
-  var theme: String { document.themes[themeIndex].name }
-  var field: ThemeField { document.fields[fieldIndex] }
-  var value: String { document.values[theme]![field.name]! }
-  var mode: Int { value.isEmpty ? 0 : ThemeColor.rgb(value) == nil ? 1 : 2 }
-  var focusCount: Int { !field.isFlag && mode == 2 ? 7 : 4 }
-  var controlRow: Int { [4, 6, 8, 10, 12, 13, 14][focus] }
-
-  mutating func setValue(_ value: String) {
-    document.values[theme]![field.name] = value
-    status = "\(theme).\(field.name) = \(value.isEmpty ? "none" : value)"
-    focus = min(focus, focusCount - 1)
-  }
-
-  func choices() -> (options: [String], selected: Int) {
-    switch focus {
-    case 0: return (document.themes.map(\.name), themeIndex)
-    case 1: return (document.fields.map(\.name), fieldIndex)
-    case 2:
-      return field.isFlag ? (["false", "true"], value == "true" ? 1 : 0)
-        : (["None", "ANSI", "RGB"], mode)
-    default:
-      return field.isFlag ? (["false", "true"], value == "true" ? 1 : 0)
-        : (ThemeColor.names, ThemeColor.names.firstIndex(of: ThemeColor.aliases[value] ?? value) ?? 0)
-    }
-  }
-
-  mutating func select(_ index: Int) {
-    switch focus {
-    case 0: themeIndex = index
-    case 1: fieldIndex = index
-    case 2:
-      if field.isFlag { setValue(index == 1 ? "true" : "false") }
-      else if index != mode { setValue(["", "white", "#808080"][index]) }
-    default: setValue(field.isFlag ? (index == 1 ? "true" : "false") : ThemeColor.names[index])
-    }
-    focus = min(focus, focusCount - 1)
-  }
-
-  mutating func save() -> Bool {
-    do {
-      let count = document.changedCount
-      try document.save()
-      status = count == 0 ? "No changes to save." : "Saved \(count) changes to TerminalTheme.swift."
-      return true
-    } catch { status = error.localizedDescription; return false }
-  }
-
-  mutating func handle(_ key: Key) -> Bool {
-    if key == .interrupt || key == .eof { return false }
-    if let confirmation {
-      if key == .escape || key == .character("n") { self.confirmation = nil }
-      else if confirmation == "quit" {
-        if key == .character("d") { return false }
-        if key == .character("s") { self.confirmation = nil; return !save() }
-      } else if key == .character("y") {
-        self.confirmation = nil
-        reload()
-      }
-      return true
-    }
-    if var input = input {
-      switch key {
-      case .escape: self.input = nil
-      case .backspace: if !input.isEmpty { input.removeLast() }; self.input = input
-      case .character(let character): if input.count < 32 { self.input = input + String(character) }
-      case .enter:
-        if let color = ThemeColor.normalize(input) { self.input = nil; setValue(color) }
-        else { status = "Invalid color. Use none, blue, bright-red, #aabbcc, or rgb:abc." }
-      default: break
-      }
-      return true
-    }
-    if var popup = popup {
-      switch key {
-      case .escape: self.popup = nil
-      case .enter: self.popup = nil; select(popup.selected)
-      case .up: popup.selected = max(0, popup.selected - 1); self.popup = popup
-      case .down: popup.selected = min(popup.options.count - 1, popup.selected + 1); self.popup = popup
-      case .home: popup.selected = 0; self.popup = popup
-      case .end: popup.selected = popup.options.count - 1; self.popup = popup
-      case .pageUp: popup.selected = max(0, popup.selected - 8); self.popup = popup
-      case .pageDown: popup.selected = min(popup.options.count - 1, popup.selected + 8); self.popup = popup
-      case .character(let c):
-        let indices = Array(popup.options.indices.dropFirst(popup.selected + 1))
-          + Array(popup.options.indices.prefix(popup.selected + 1))
-        if let index = indices.first(where: { popup.options[$0].lowercased().hasPrefix(String(c).lowercased()) }) {
-          popup.selected = index; self.popup = popup
-        }
-      default: break
-      }
-      return true
-    }
-    switch key {
-    case .character("q"), .escape:
-      if !document.dirty { return false }
-      confirmation = "quit"
-    case .character("s"): _ = save()
-    case .character("r"): setValue(document.original[theme]![field.name]!)
-    case .character("R"):
-      if document.dirty { confirmation = "reload" } else { reload() }
-    case .character("e") where !field.isFlag: input = ""
-    case .tab, .down: focus = (focus + 1) % focusCount
-    case .backTab, .up: focus = (focus + focusCount - 1) % focusCount
-    case .enter, .character(" "):
-      if focus == 3 && !field.isFlag && mode != 1 { input = "" }
-      else if focus < 4 { popup = choices() }
-    case .left, .right, .fastLeft, .fastRight, .character("-"), .character("+"), .home, .end:
-      let direction = [.left, .fastLeft, .character("-")].contains(key) ? -1 : 1
-      if focus >= 4, var rgb = ThemeColor.rgb(value) {
-        let channel = focus - 4
-        let step = key == .fastLeft || key == .fastRight ? 16 : 1
-        rgb[channel] = key == .home ? 0 : key == .end ? 255 : max(0, min(255, rgb[channel] + direction * step))
-        setValue(String(format: "#%02x%02x%02x", rgb[0], rgb[1], rgb[2]))
-      } else if focus < 3 || field.isFlag || mode == 1 {
-        let items = choices()
-        select(key == .home ? 0 : key == .end ? items.options.count - 1
-          : (items.selected + items.options.count + direction) % items.options.count)
-      }
-    default: break
-    }
-    return true
-  }
-
-  mutating func reload() {
-    do {
-      let name = theme
-      let fieldName = field.name
-      document = try ThemeDocument(sourceURL: document.sourceURL, configurationURL: document.configurationURL)
-      themeIndex = document.themes.firstIndex(where: { $0.name == name }) ?? 0
-      fieldIndex = document.fields.firstIndex(where: { $0.name == fieldName }) ?? 0
-      focus = min(focus, focusCount - 1)
-      status = "Reloaded themes from disk."
-    } catch { status = error.localizedDescription }
-  }
-
-  func draw(columns: Int, rows: Int) {
-    var output = Terminal.reset + "\u{1b}[H\u{1b}[2J"
-    // UI labels are clipped separately from ANSI styling, so narrow windows
-    // never wrap escape sequences or overwrite the preview.
-    func put(_ x: Int, _ y: Int, _ text: String, width: Int, style: String = "") {
-      guard y > 0, y <= rows, x <= columns else { return }
-      let width = max(0, min(width, columns - x))
-      let safe = text.map { $0.isASCII && !$0.isNewline && $0.asciiValue! >= 32 ? $0 : "?" }
-      let clipped = String(safe.prefix(width))
-      output += "\u{1b}[\(y);\(x)H" + Terminal.reset + style + clipped
-        + String(repeating: " ", count: max(0, width - clipped.count)) + Terminal.reset
-    }
-    put(2, 1, "PMAI THEME EDITOR  |  \(theme)\(document.dirty ? "  * unsaved" : "")", width: columns - 3,
-      style: "\u{1b}[1m")
-    if columns < 78 || rows < 24 {
-      put(2, 3, "Resize to at least 78 x 24 (now \(columns) x \(rows)).", width: columns - 3)
-      put(2, 5, "s save  q quit  Ctrl-C exit", width: columns - 3)
-    } else {
-      func control(_ index: Int, _ row: Int, _ label: String, _ value: String) {
-        put(2, row - 1, label, width: 37, style: "\u{1b}[2m")
-        put(2, row, "\(focus == index ? ">" : " ") [ \(value) ]", width: 37,
-          style: focus == index ? "\u{1b}[7m" : "")
-      }
-      control(0, 4, "Theme", theme + (document.values[theme] != document.original[theme] ? " *" : ""))
-      control(1, 6, "Field  (\(field.shortName))", field.name)
-      control(2, 8, field.isFlag ? "Flag" : "Color type", field.isFlag ? value : ["None", "ANSI", "RGB"][mode])
-      control(3, 10, input == nil ? "Value  (e to type)" : "Type color, Enter apply, Esc cancel",
-        input.map { $0 + "_" } ?? (value.isEmpty ? "none" : value))
-      if !field.isFlag, let rgb = ThemeColor.rgb(value) {
-        for channel in 0..<3 {
-          let filled = rgb[channel] * 19 / 255
-          let bar = String(repeating: "=", count: filled) + "|" + String(repeating: "-", count: 19 - filled)
-          put(2, 12 + channel, "\(focus == channel + 4 ? ">" : " ") \(["R", "G", "B"][channel]) [\(bar)] \(rgb[channel])", width: 37,
-            style: focus == channel + 4 ? "\u{1b}[7m" : "")
-        }
-        put(2, 16, "Left/Right: 1   Shift+arrow: 16", width: 37)
-        put(2, 17, "Home/End: 0/255", width: 37)
-      } else {
-        put(2, 12, field.isFlag ? "Enter opens the selector." : mode == 1
-          ? "ANSI uses your terminal palette." : "None uses the terminal default", width: 37)
-        if !field.isFlag && mode == 0 { put(2, 13, "or the surrounding role's color.", width: 37) }
-      }
-      put(2, 19, "\(document.changedCount) changed fields across all themes", width: 37)
-      put(2, 20, "r reset field   R reload source", width: 37)
-      let x = 41
-      let width = columns - x - 2
-      let palette = document.values[theme]!
-      func color(_ key: String) -> String { palette[key] ?? "" }
-      func fallback(_ key: String, _ base: String) -> String { color(key).isEmpty ? color(base) : color(key) }
-      func style(_ fg: String, _ bg: String, bold: Bool = false, italic: Bool = false) -> String {
-        "\u{1b}[\(ThemeColor.code(fg));\(ThemeColor.code(bg, background: true));\(bold ? 1 : 22);\(italic ? 3 : 23)m"
-      }
-      let base = style(color("foreground"), color("background"))
-      let edge = style(color("infoForeground"), color("background"))
-      put(x, 3, "+" + String(repeating: "-", count: width - 2) + "+", width: width, style: edge)
-      for y in 4...21 {
-        put(x, y, "|", width: 1, style: edge)
-        put(x + 1, y, "", width: width - 2, style: base)
-        put(x + width - 1, y, "|", width: 1, style: edge)
-      }
-      func sample(_ y: Int, _ text: String, fg: String = "foreground", bg: String = "background",
-        inheritFG: Bool = false, inheritBG: Bool = false, bold: Bool = false, italic: Bool = false) {
-        put(x + 2, y, text, width: width - 4,
-          style: style(inheritFG ? fallback(fg, "foreground") : color(fg),
-            inheritBG ? fallback(bg, "background") : color(bg), bold: bold, italic: italic))
-      }
-      sample(4, " pmai / \(theme)", fg: "infoForeground", bg: "backgroundLine", bold: true)
-      let bubble = color("bubbleBackground").isEmpty
-      sample(5, bubble ? "+-----------------------------+" : "                               ",
-        fg: "bubbleForeground", bg: "bubbleBackground", inheritFG: true, inheritBG: true)
-      sample(6, bubble ? "| You: Update the greeting.    |" : "  You: Update the greeting.",
-        fg: "bubbleForeground", bg: "bubbleBackground", inheritFG: true, inheritBG: true, bold: color("bold") == "true")
-      sample(7, bubble ? "+-----------------------------+" : "                               ",
-        fg: "bubbleForeground", bg: "bubbleBackground", inheritFG: true, inheritBG: true)
-      sample(8, "Thinking... reading the source", fg: "thinkingForeground")
-      sample(9, "-> file_read Sources/main.swift", fg: "toolCallForeground", bg: "toolCallBackground",
-        inheritBG: true, bold: color("toolCallBold") == "true")
-      sample(10, "<- Found the greeting", fg: "toolResultForeground", bg: "toolResultBackground", inheritBG: true)
-      sample(11, "pmai: Here is the change:")
-      sample(12, "@@ main.swift @@", fg: "diffHeaderForeground")
-      sample(13, "- print(\"Hello\")", fg: "diffRemovedForeground", bg: "diffRemovedBackground")
-      sample(14, "+ print(\"Hello, world!\")", fg: "diffAddedForeground", bg: "diffAddedBackground")
-      sample(15, "Bold Markdown emphasis", fg: "boldForeground", inheritFG: true, bold: true)
-      sample(16, "Italic Markdown emphasis", fg: "italicForeground", inheritFG: true, italic: true)
-      sample(17, "Success: greeting updated", fg: "successForeground")
-      sample(18, "Warning: unsaved changes", fg: "warningForeground")
-      sample(19, "Error: example failure", fg: "errorForeground")
-      sample(20, "Selected conversation", fg: "selectionForeground", bg: "selectionBackground")
-      sample(21, "> Ask a follow-up", bg: "promptBackground", inheritBG: true, bold: color("bold") == "true")
-      put(x + 2, 21, ">", width: 1, style: style(color("promptForeground"), fallback("promptBackground", "background")))
-      put(x, 22, "+" + String(repeating: "-", count: width - 2) + "+", width: width, style: edge)
-      if let popup {
-        let top = controlRow + 1
-        let height = min(9, rows - top - 3, popup.options.count)
-        let start = max(0, min(popup.selected - height / 2, popup.options.count - height))
-        for offset in 0..<height {
-          let index = start + offset
-          put(2, top + offset, "\(index == popup.selected ? ">" : " ") \(popup.options[index])", width: 37,
-            style: index == popup.selected ? "\u{1b}[7m" : "\u{1b}[0m")
-        }
-        put(2, top + height, "  \(popup.selected + 1)/\(popup.options.count)  Enter select / Esc close", width: 37,
-          style: "\u{1b}[2m")
-      }
-    }
-    let message = confirmation == "quit" ? "Unsaved edits: s save & quit / d discard / Esc stay"
-      : confirmation == "reload" ? "Reload and discard unsaved edits? y yes / n no" : status
-    put(2, rows - 1, message, width: columns - 3, style: confirmation == nil ? "" : "\u{1b}[7m")
-    put(2, rows, "Tab focus | Enter select | Left/Right adjust | e color | s save | q quit", width: columns - 3,
-      style: "\u{1b}[2m")
-    Terminal.write(output)
-  }
-
-  mutating func run() throws {
-    try Terminal.run {
-      var previous = (columns: 0, rows: 0)
-      var redraw = true
-      while stopSignal == 0 {
-        let size = Terminal.size
-        if redraw || size != previous { draw(columns: size.columns, rows: size.rows); previous = size }
-        redraw = false
-        if let key = Terminal.readKey() {
-          if !handle(key) { break }
-          redraw = true
-        }
-      }
-    }
-  }
-}
-
 @main
 struct ThemeEditor {
   static func main() {
@@ -668,8 +397,11 @@ struct ThemeEditor {
           Usage: swift run --package-path sys/theme-editor ThemeEditor [--root REPOSITORY]
 
           Edit MaiCore/Sources/MaiCLI/Terminal/TerminalTheme.swift in a terminal.
-          Tab/Up/Down focus; Enter opens selectors; Left/Right changes values.
-          RGB sliders: arrows +/-1, Shift+arrows +/-16, Home/End 0/255.
+          Tab/Shift-Tab switch themes; j/k or Up/Down select grouped elements.
+          h/l cycle fg/bg/bold; f/b/v select a component; Enter/e edits.
+          Left/Right adjusts values; 1/2/3 selects an RGB channel; Shift+arrows +/-16.
+          c cycles None/ANSI/RGB; n clears; y/p copies/pastes; u/U undoes/redoes.
+          PgUp/PgDn scrolls the preview; . blinks the affected sample; ? shows help.
           e enters a color: none, an ANSI name, #rrggbb, or rgb:rgb.
           s/Ctrl-S saves all edited themes; r resets a field; R reloads; q quits.
           Ctrl-C exits without saving. Requires a terminal of at least 78 x 24.

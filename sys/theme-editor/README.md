@@ -9,20 +9,39 @@ swift run --package-path sys/theme-editor ThemeEditor
 Or run `swift run ThemeEditor` inside this directory. Pass `--root /path/to/pmai`
 to edit another checkout. The terminal must be at least 78 columns by 24 rows.
 
-The theme and field selectors read the existing Swift definitions, including
-defaults from `ConfiguredTerminalUI`. All themes retain their unsaved edits when
-you switch between them. The preview includes a conversation, tool calls, diff,
-Markdown emphasis, status messages, selection, and input prompt.
+The persistent element list reads every editable key from the existing Swift
+definitions, including defaults from `ConfiguredTerminalUI`. Foreground,
+background, and bold settings for an element share one row, with color swatches
+and an unsaved-change marker. The selected component's key and value appear
+below the list. Short terminals scroll the list to keep the selection visible.
+All themes retain their unsaved edits when you switch between them.
+
+The preview uses the available terminal height for a sample conversation with
+the REPL's filled or outlined `◢` user bubbles, tool calls and results, a diff,
+headings, emphasis, lists, a quote, code, a table, a link, status messages,
+selection, and input prompt. Selecting a component reveals its sample and
+briefly blinks the affected spans, then restores their normal colors. Page
+through the conversation to inspect more of it, or press `.` to find the
+selected component again.
 
 | Key | Action |
 | --- | --- |
-| Tab / Shift-Tab, Up / Down | Move focus |
-| Enter / Space | Open a selector; Enter accepts and Escape cancels |
-| Left / Right | Change a selection or adjust an RGB channel by 1 |
+| Tab / Shift-Tab | Next / previous theme |
+| j / k, Up / Down | Next / previous element |
+| g / G, Home / End | First / last element |
+| Ctrl-U / Ctrl-D | Move eight elements up / down |
+| h / l, [ / ], Space | Cycle an element's foreground, background, and bold components |
+| f / b / v | Select foreground / background / bold directly |
+| Enter / e | Type a replacement color, or toggle a Boolean; Enter applies, Escape cancels |
+| Left / Right, - / + | Cycle ANSI colors (including none), toggle a Boolean, or adjust an RGB channel by 1 |
 | Shift-Left / Shift-Right | Adjust an RGB channel by 16 |
-| Home / End | First/last option, or channel value 0/255 |
-| Page Up / Page Down | Move through an open selector |
-| e | Type a replacement color; Enter applies |
+| 1 / 2 / 3 | Select the red / green / blue channel |
+| c / n | Cycle None / ANSI / RGB mode, or clear the color to none |
+| y / p | Copy / paste a compatible color or Boolean value |
+| u / U | Undo / redo an edit, including across themes |
+| Page Up / Page Down | Scroll the preview conversation |
+| . | Reveal and blink the selected component again |
+| ? | Show keyboard help; ? or Escape closes it |
 | s / Ctrl-S | Save all changed themes |
 | r | Reset the current field to its last loaded/saved value |
 | R | Reload source, with confirmation if edits would be discarded |
@@ -33,7 +52,7 @@ Each color has **None**, **ANSI**, and **RGB** modes. None saves an empty string
 it uses the terminal default or the surrounding color according to the role.
 ANSI names use your terminal's actual palette, including bright variants.
 Typed values also accept the aliases supported by pmai and `rgb:abc` shorthand.
-RGB sliders save `#rrggbb`. Switching to ANSI starts at white; switching to RGB
+RGB adjustments save `#rrggbb`. Switching to ANSI starts at white; switching to RGB
 starts at `#808080`, since ANSI colors are controlled by the terminal.
 
 Saving updates `MaiCore/Sources/MaiCLI/Terminal/TerminalTheme.swift` atomically.
@@ -43,9 +62,11 @@ source or defaults changed since loading. The parser intentionally handles the
 literal `.init(...)` definitions used here, not arbitrary Swift expressions.
 Rebuild pmai to use the changed built-in themes.
 
-The implementation lives in `ThemeEditor.swift`, with source editing, input,
-and rendering separated into small types for possible future REPL integration.
-It uses POSIX terminals on macOS and Linux.
+Source editing and terminal input live in `ThemeEditor.swift`, the editor in
+`ThemeEditorUI.swift`, and the sample conversation in `ThemePreview.swift`.
+It uses POSIX terminals on macOS and Linux, without linking the CLI or calling
+a model. The preview's Markdown examples follow the REPL renderer's theme
+color mappings.
 
 Focused checks (source preservation, saves, conflicts, and terminal interaction):
 

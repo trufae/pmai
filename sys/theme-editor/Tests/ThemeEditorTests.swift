@@ -123,4 +123,35 @@ final class ThemeEditorTests: XCTestCase {
       XCTAssertEqual(try String(contentsOf: document.sourceURL, encoding: .utf8), source)
     }
   }
+
+  // Group navigation must not edit a sibling component or lose another theme's
+  // draft; undo must return to the actual edited theme and field.
+  func testGroupedEditingPreservesComponentsAndThemeDrafts() throws {
+    try fixture { document in
+      var ui = ThemeEditorUI(document: document)
+      func press(_ keys: [Key]) {
+        for key in keys { XCTAssertTrue(ui.handle(key)) }
+      }
+      press([.character("j"), .character("b"), .character("e")])
+      press("blue".map(Key.character) + [.enter, .tab, .character("f"), .character("n")])
+      XCTAssertEqual(ui.document.values["default"]?["background"], "blue")
+      XCTAssertEqual(ui.document.values["default"]?["foreground"], "")
+      XCTAssertEqual(ui.document.values["ansi"]?["foreground"], "")
+      XCTAssertEqual(ui.document.values["ansi"]?["background"], "")
+
+      press([.backTab, .character("b"), .character("y"), .character("v"), .character("p")])
+      XCTAssertEqual(ui.value, "false", "Pasting a color must not corrupt a Boolean")
+      press([.enter, .character("u"), .character("u")])
+      XCTAssertEqual(ui.theme, "ansi")
+      XCTAssertEqual(ui.field.name, "foreground")
+      XCTAssertEqual(ui.value, "red")
+      press([.character("U"), .character("U")])
+      XCTAssertEqual(ui.theme, "default")
+      XCTAssertEqual(ui.field.name, "bold")
+      XCTAssertEqual(ui.value, "true")
+      XCTAssertTrue(ui.save())
+      let reopened = try ThemeDocument(sourceURL: document.sourceURL, configurationURL: document.configurationURL)
+      XCTAssertEqual(reopened.values, ui.document.values)
+    }
+  }
 }
