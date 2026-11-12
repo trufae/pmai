@@ -49,7 +49,7 @@ struct MacActivityRow: View, @MainActor Equatable {
             }
           }
           .onChange(of: selectedSearchID, initial: true) { _, id in
-            if let id { proxy.scrollTo("message-\(id)", anchor: .top) }
+            if let id { proxy.scrollTo(id, anchor: .top) }
           }
         }.padding(.top, 8)
       }

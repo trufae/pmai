@@ -80,6 +80,7 @@ struct MacChatView: View {
   private struct ScrollLayout: Equatable {
     let contentSize: CGSize
     let containerSize: CGSize
+    let isNearTop: Bool
   }
 
   @Bindable var conversation: MacConversation
@@ -88,6 +89,7 @@ struct MacChatView: View {
   @State private var firstVisibleRunID: UUID?
   @State private var scrollPhase = ScrollPhase.idle
   @State private var searchScrollTarget: UUID?
+  @State private var historyScrollSession = MacHistoryScrollSession()
   @FocusState private var findFocused: Bool
   @State private var pinchBaseFontSize: Double?
   @GestureState private var isPinching = false
@@ -105,14 +107,6 @@ struct MacChatView: View {
         ScrollView {
           // A bounded eager stack avoids stale height estimates for streaming bubbles.
           VStack(alignment: .leading, spacing: 18) {
-            if firstVisibleIndex > 0 {
-              Button("Load earlier messages") {
-                let anchor = conversation.messageRuns[firstVisibleIndex].id
-                followsBottom = false
-                firstVisibleRunID = conversation.messageRuns[max(0, firstVisibleIndex - 8)].id
-                DispatchQueue.main.async { proxy.scrollTo(anchor, anchor: .top) }
-              }.buttonStyle(.borderless)
-            }
             if conversation.messages.isEmpty {
               VStack(alignment: .leading, spacing: 12) {
                 Image(systemName: "sparkle").font(.largeTitle).foregroundStyle(.tint)
@@ -133,7 +127,12 @@ struct MacChatView: View {
                     isStreaming: conversation.connected && conversation.busy
                       && conversation.messages.last?.id == message.id).equatable()
                 }
-              }.id(run.id)
+              }
+              .background(alignment: .top) {
+                MacHistoryScrollMarker(session: historyScrollSession, id: run.id)
+                  .frame(height: 1)
+              }
+              .id(run.id)
             }
             Color.clear.frame(height: 1).id("bottom")
           }
@@ -148,6 +147,7 @@ struct MacChatView: View {
               if pinchBaseFontSize == nil {
                 pinchBaseFontSize = typography.size
                 followsBottom = false
+                historyScrollSession.cancel()
               }
               typography.resize(to: (pinchBaseFontSize ?? typography.size) * value.magnification)
             }
@@ -162,36 +162,45 @@ struct MacChatView: View {
           }
         }
         .onScrollGeometryChange(for: ScrollLayout.self) { geometry in
-          ScrollLayout(contentSize: geometry.contentSize, containerSize: geometry.containerSize)
-        } action: { _, _ in
+          ScrollLayout(contentSize: geometry.contentSize, containerSize: geometry.containerSize,
+            isNearTop: geometry.visibleRect.minY < 160)
+        } action: { _, layout in
           // Follow layout, including asynchronously parsed Markdown and tool updates.
           // Content growth must never be mistaken for the user scrolling away.
           DispatchQueue.main.async {
             guard scrollPhase == .idle else { return }
+            historyScrollSession.restore()
             if let target = searchScrollTarget, conversation.find.isPresented {
-              proxy.scrollTo("message-\(target)", anchor: .top)
+              scrollToSearchResult(target, proxy: proxy)
             } else if followsBottom { proxy.scrollTo("bottom", anchor: .bottom) }
+            else if layout.isNearTop { revealEarlierMessages() }
           }
         }
         .onScrollPhaseChange { old, phase, context in
           scrollPhase = phase
           if phase == .interacting {
+            historyScrollSession.cancel()
             followsBottom = false
             searchScrollTarget = nil
           } else if phase == .idle, old == .interacting || old == .decelerating {
-            followsBottom = context.geometry.visibleRect.maxY >= context.geometry.contentSize.height - 80
+            if context.geometry.visibleRect.minY < 160, firstVisibleIndex > 0 {
+              revealEarlierMessages()
+            } else {
+              followsBottom = context.geometry.visibleRect.maxY >= context.geometry.contentSize.height - 80
+            }
           }
         }
         .onChange(of: followsBottom) { _, follows in
-          if follows { proxy.scrollTo("bottom", anchor: .bottom) }
+          if follows { historyScrollSession.cancel(); proxy.scrollTo("bottom", anchor: .bottom) }
         }
         .onChange(of: conversation.find.navigationRequest) { _, _ in
           searchScrollTarget = conversation.find.selectedID
+          historyScrollSession.cancel()
           guard let id = searchScrollTarget,
             let index = conversation.messageRuns.firstIndex(where: { $0.messages.contains { $0.id == id } }) else { return }
           followsBottom = false
           if index < firstVisibleIndex { firstVisibleRunID = conversation.messageRuns[index].id }
-          DispatchQueue.main.async { proxy.scrollTo("message-\(id)", anchor: .top) }
+          DispatchQueue.main.async { scrollToSearchResult(id, proxy: proxy) }
         }
         .overlay(alignment: .bottomTrailing) {
           if !followsBottom {
@@ -230,6 +239,20 @@ struct MacChatView: View {
     .sheet(isPresented: Binding(get: { conversation.permission != nil }, set: {
       if !$0 { conversation.answerPermission(nil) }
     })) { MacPermissionSheet(conversation: conversation) }
+  }
+
+  private func revealEarlierMessages() {
+    guard scrollPhase == .idle, !followsBottom, !isPinching,
+      searchScrollTarget == nil, firstVisibleIndex > 0,
+      historyScrollSession.prepareForPrepend(id: conversation.messageRuns[firstVisibleIndex].id)
+    else { return }
+    firstVisibleRunID = conversation.messageRuns[max(0, firstVisibleIndex - 8)].id
+  }
+
+  private func scrollToSearchResult(_ id: UUID, proxy: ScrollViewProxy) {
+    guard let run = conversation.messageRuns.first(where: { $0.messages.contains { $0.id == id } }) else { return }
+    // Activity owns a nested scroll view which reveals the matching tool.
+    proxy.scrollTo(run.id, anchor: .top)
   }
 
   private var findBar: some View {
