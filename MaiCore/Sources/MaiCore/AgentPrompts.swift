@@ -107,7 +107,7 @@ public struct UserPrompt: Identifiable, Codable, Equatable, Sendable {
 
   /// The prompts every host offers without configuration. A user prompt
   /// with the same command name takes precedence.
-  public static let builtins = [goal, newApp, tldr, followUp]
+  public static let builtins = [goal, newApp, tldr, followUp, qa]
 
   public static let goal = UserPrompt(
     id: UUID(uuidString: "3E95C9C9-9E2D-4E3F-A7A8-4AD40A69D0B1")!,
@@ -152,6 +152,22 @@ public struct UserPrompt: Identifiable, Codable, Equatable, Sendable {
       Suggest short, natural sentences the user could send next to continue this conversation.
       Make every option meaningfully different and directly relevant to the assistant's latest response.
       Write the options in the user's voice, not as advice about what the user should say.
+      """
+  )
+
+  public static let qa = UserPrompt(
+    id: UUID(uuidString: "DE4493B6-E633-43F5-9133-A60E2593C726")!,
+    name: "qa",
+    text: """
+      Review this conversation for unresolved corner cases and overlooked questions.
+
+      Use the full available conversation context: the user's goal, requirements, constraints, decisions, reviewed code, changes, and verification results. Honor any focus supplied after this prompt. Go deeper than suggesting follow-up messages: formulate and answer exactly 10 distinct, short yes/no questions that help the user assess their understanding of the problem and what remains unresolved.
+
+      Cover both positive cases (what should work) and negative cases (what must be rejected or handled safely). Choose concrete questions specific to this task, including consequential assumptions and questions the user has not asked. Consider boundaries, empty or invalid input, failures, cancellation, state and data integrity, permissions, compatibility, and missing verification only where relevant. Prioritize unresolved risks; avoid generic filler, duplicate questions, double negatives, and inventing defects or requirements to reach ten.
+
+      Ground each answer in available evidence. Inspect relevant code with read-only tools when needed and available; do not modify code or start fixing issues. Phrase every question so a yes confirms a requirement or safeguard is satisfied, while a no identifies an unresolved issue or gap. If evidence is missing, ask whether the specific behavior or assumption has been verified and answer no; do not present uncertainty as a proven bug. Do not force a mix of yes and no answers or claim these ten checks prove completeness.
+
+      Output only an unnumbered Markdown bullet list of exactly 10 lines. Each line must contain one short question followed by exactly one emoji: 🟢 for yes, 🔴 for no. Use the format "- Short question? 🟢" or "- Short question? 🔴". No written yes/no, explanations, headings, introduction, conclusion, or other emojis. Make each question specific enough that a red answer shows what still needs attention.
       """
   )
 }

@@ -947,9 +947,13 @@ extension MaiCLI {
     referenced by name in its systemPrompt field; several agents may share
     one, and editing the prompt updates all of them. A user prompt is a
     message sent by name (prompts.user), and MaiCore ships builtin ones —
-    goal, newapp, tldr, followup — that a user prompt of the same name
+    goal, newapp, tldr, followup, qa — that a user prompt of the same name
     replaces. Skills (/skills) are sent by name the same way when their tools
     are enabled for the agent.
+
+    $qa [FOCUS] asks and answers ten short questions about the conversation
+    and reviewed code, including failure cases and overlooked checks. Each
+    bullet ends in 🟢 (yes) or 🔴 (no); red flags unresolved or unverified points.
 
       /prompts                   List every prompt and skill by kind
       $NAME [TEXT]               Send prompt or skill NAME with TEXT after it: TEXT goes

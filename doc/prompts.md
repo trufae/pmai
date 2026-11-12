@@ -118,11 +118,18 @@ Created user prompt 'commit': $commit [TEXT] sends it.
 }
 ```
 
-MaiCore ships four **builtin prompts** — `goal`, `newapp`, `tldr`, and
-`followup` — that are available without configuration, in pmai and in the
+MaiCore ships five **builtin prompts** — `goal`, `newapp`, `tldr`, `followup`,
+and `qa` — that are available without configuration, in pmai and in the
 iOS app alike. A user prompt with the same name replaces the builtin one;
 `/edit user tldr` starts from the builtin text, which is how one is adjusted,
 and `/prompts del tldr` brings the builtin back.
+
+`$qa [FOCUS]` uses the conversation and reviewed code to ask and answer exactly
+ten short questions about expected behavior, failure cases, assumptions, and
+overlooked checks. Its output is only a bullet list, with one 🟢 (yes) or 🔴 (no)
+per question. Questions are phrased so red identifies an unresolved issue or
+verification gap; missing evidence is not treated as proof of a bug. `$followup`
+offers lighter suggestions for what to ask next.
 
 `$NAME` looks the name up in this order: system prompts, user prompts,
 builtin prompts, then **skills** (`doc`: `/skills`), which are sent whether

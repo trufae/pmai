@@ -75,7 +75,7 @@ func promptCatalogLookup() throws {
   #expect(catalog.entries(of: .skill).map(\.commandName) == ["review"])
   #expect(catalog.entries(of: .skill).first?.summary == "Review a diff")
   #expect(
-    catalog.entries(of: .builtin).map(\.commandName) == ["goal", "newapp", "tldr", "followup"])
+    catalog.entries(of: .builtin).map(\.commandName) == ["goal", "newapp", "tldr", "followup", "qa"])
   let skillEntry = try #require(catalog.entries(of: .skill).first)
   let restored = try JSONDecoder().decode(PromptCatalog.self, from: JSONEncoder().encode(catalog))
   #expect(restored == catalog)

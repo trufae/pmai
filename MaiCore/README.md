@@ -312,7 +312,7 @@ switches the agent to that prompt and then sends `TEXT`. User prompts are
 reusable messages kept under `prompts.user`: `/prompts add NAME TEXT`,
 `/prompts edit NAME` (or `/edit user NAME`), `/prompts show NAME`, and
 `/prompts del NAME` manage them, and one named like a builtin prompt — `goal`,
-`newapp`, `tldr`, `followup`, shared with the iOS app — replaces it. `/prompt`
+`newapp`, `tldr`, `followup`, `qa`, shared with the iOS app — replaces it. `/prompt`
 shows the active agent's system prompt and `/prompt NAME` points that agent at
 another one.
 `/prompt add NAME TEXT` creates a prompt from one line, `/prompt edit [NAME]`
@@ -321,6 +321,10 @@ edits or creates one in `$EDITOR`, `/prompt show NAME` prints one, and
 `systemPrompt`; several agents may share a prompt, and editing it updates all of
 them. Older inline `instructions` are migrated to a same-named prompt
 automatically. `doc/prompts.md` walks through registering prompts and agents.
+
+`$qa [FOCUS]` checks the conversation and reviewed code with ten short questions
+covering expected behavior, failure cases, and overlooked checks. Each bullet
+ends in 🟢 (yes) or 🔴 (no); red flags an unresolved issue or verification gap.
 
 `/edit compact` opens the chat-compaction template. Prompts are saved under
 `prompts` in the active configuration (normally `~/.config/pmai/config.json`).
