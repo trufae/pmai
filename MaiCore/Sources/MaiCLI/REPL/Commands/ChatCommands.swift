@@ -232,6 +232,29 @@ extension MaiCLI {
       await terminal.line(files.isEmpty ? "No recorded file accesses in this conversation."
         : files.joined(separator: "\n"))
       await terminal.line("Recorded Files tool accesses and attachments; shell-internal accesses are not tracked. Older chats may have incomplete records.")
+    case "rewind":
+      switch rest.lowercased() {
+      case "lastmsg":
+        guard let index = session.history.messages.lastIndex(where: { $0.role != .system && $0.role != .developer }) else {
+          await terminal.line("No conversation messages to rewind.")
+          return
+        }
+        await removeChatMessage(at: index, session: &session, terminal: terminal)
+      case "lastpin":
+        await handleMessageCommand("rewind", session: &session, runtime: runtime, terminal: terminal)
+      case "firstmsg":
+        guard let index = session.history.messages.firstIndex(where: { $0.role != .system && $0.role != .developer }) else {
+          await terminal.line("No conversation messages to rewind.")
+          return
+        }
+        await trimChatMessages(through: index, session: &session, terminal: terminal)
+      case "cancel":
+        await terminal.note("Rewind cancelled.")
+      case "":
+        await terminal.line("Use /chat rewind at the REPL prompt to choose cancel, lastmsg, lastpin, or firstmsg.")
+      default:
+        await terminal.line("Usage: /chat rewind [lastmsg|lastpin|firstmsg|cancel]")
+      }
     case "compact", "recap", "clear", "context", "edit":
       await handleChatCommand(
         argument,
@@ -245,7 +268,7 @@ extension MaiCLI {
       await terminal.line(chatHelp)
     case "close":
       await terminal.line("/chat close is now /chat del INDEX|ID|TITLE [...].")
-    case "messages", "log", "last", "pins", "pinlist", "undo", "trim", "rewind", "chop":
+    case "messages", "log", "last", "pins", "pinlist", "undo", "trim", "chop":
       await terminal.line("Message actions moved to /msg: use /msg \(action == "messages" ? "list" : action).")
     default:
       await terminal.line("Unknown /chat action '\(action)'.\n\n\(chatHelp)")

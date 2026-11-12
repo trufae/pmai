@@ -7,6 +7,7 @@ struct TerminalPrompt: Equatable, Sendable {
   var conversationID: String? = nil
   var id: String? = nil
   var choices: [String] = []
+  var submitOnChoice = false
 
   var isModal: Bool { id != nil }
 }
@@ -19,6 +20,7 @@ enum REPLModalPrompt {
   case limit(AgentRunInterruption, id: UUID)
   case chop(id: String)
   case reset(id: UUID)
+  case rewind(id: UUID, hasPins: Bool)
 
   static func approvalHelp(_ request: ApprovalRequest) -> String {
     request.tool.name == "files_path_access"
@@ -45,6 +47,10 @@ enum REPLModalPrompt {
       return TerminalPrompt(text: "chop [n/b/p/e/d/x/q]> ", id: "chop-\(id)", choices: ["n", "b", "p", "e", "d", "x", "q"])
     case .reset(let id):
       return TerminalPrompt(text: "reset [reset/cancel]> ", id: "reset-\(id)", choices: ["reset", "cancel"])
+    case .rewind(let id, let hasPins):
+      let choices = hasPins ? ["c", "m", "p", "f"] : ["c", "m", "f"]
+      return TerminalPrompt(text: "rewind [\(choices.joined(separator: "/"))]> ", id: "rewind-\(id)",
+        choices: choices, submitOnChoice: true)
     }
   }
 
@@ -63,7 +69,7 @@ enum REPLModalPrompt {
       return "Submit queued messages before this message, ignore them for this turn, or clear them?\nsubmit · ignore · clear"
     case .limit(let reason, _):
       return "\(reason.summary). What should happen next?\nextend [N] renews the run budget (optionally with a new \(reason.settingKey)) · stop keeps the work so far · answer continues without tools"
-    case .chop:
+    case .chop, .rewind:
       return nil
     case .reset:
       return "Restore all /set options to stock defaults for the current agent, global settings, and this project's approval/debug settings?\nActive voice will stop. Providers, credentials, chats, prompts, and tool selections are kept.\nreset · cancel (Ctrl+C cancels)"
@@ -101,6 +107,8 @@ enum REPLModalPrompt {
       return "CHAT CHOP · n next · b previous · p pin/unpin · e edit · d delete · x chop after · q / Ctrl+C quit"
     case .reset:
       return "RESET SETTINGS · choose reset or cancel · Ctrl+C cancels"
+    case .rewind(_, let hasPins):
+      return "REWIND · [c] cancel · [m] lastmsg" + (hasPins ? " · [p] lastpin" : "") + " · [f] firstmsg"
     }
   }
 }

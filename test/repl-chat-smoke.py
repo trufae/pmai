@@ -9,7 +9,7 @@ import sys
 import tempfile
 import time
 
-from smoke import project_storage, clean_environment, expect_pty, read_pty, run_repl
+from smoke import project_storage, clean_environment, expect_pty, read_chat, read_pty, run_repl
 
 
 def main():
@@ -70,7 +70,7 @@ path.write_text('Edited in editor: ' + path.read_text())
             saved.write_text(json.dumps(chat | {'messages': messages}))
 
         def messages():
-            return json.loads(saved.read_text())['messages']
+            return read_chat(saved)['messages']
 
         def run(commands, allow_errors=False):
             return run_repl(command, commands, cwd=root, env=env, split=True,
@@ -264,6 +264,25 @@ path.write_text('Edited in editor: ' + path.read_text())
         assert 'unfinished tool transaction' in output, output
         assert [m['id'] for m in messages()] == ['system', 'question', 'thinking'], messages()
 
+        # Explicit rewind choices persist the expected boundary and retain instructions.
+        instructions = [fixture[0], message('developer', 'developer', part('text', 'Developer instructions'))]
+        rewind_fixture = instructions + fixture[1:3] + [message('latest', 'assistant', part('text', 'Latest answer'))]
+        for choice, expected in [('lastmsg', rewind_fixture[:-1]), ('firstmsg', instructions + fixture[1:2]),
+                                 ('cancel', rewind_fixture)]:
+            reset(rewind_fixture)
+            run(['/chat rewind ' + choice])
+            assert messages() == expected, (choice, messages())
+        reset()
+        run(['/msg pin 2', '/chat rewind lastpin'])
+        assert messages() == [fixture[0], fixture[1] | {'isPinned': True}], messages()
+        reset(instructions)
+        for action in ('/chat rewind', '/chat rewind firstmsg', '/chat rewind lastmsg'):
+            assert 'No conversation messages to rewind.' in run([action])[0]
+            assert messages() == instructions
+        reset()
+        assert 'Usage: /chat rewind' in run(['/chat rewind invalid'])[0]
+        assert messages() == fixture
+
         output = run(['/chat clear'])[0]
         assert 'Conversation cleared.' in output, output
         assert all(m['role'] == 'system' for m in messages()), messages()
@@ -345,6 +364,47 @@ path.write_text('Edited in editor: ' + path.read_text())
                     send('/subagents main\r')
                     wait('Messages go to this chat again.')
                     wait('> ')
+
+                    # Rewind must accept a single key, keep cancellation harmless,
+                    # and find pins outside the loaded history window.
+                    def rewind_prompt(pinned=False):
+                        send('/clear\r/chat rewind\r')
+                        shown = wait('[f] firstmsg')
+                        for option in ('[c] cancel', '[m] lastmsg', '[f] firstmsg'):
+                            assert option in shown, (mode, shown)
+                        assert ('[p] lastpin' in shown) == pinned, (mode, shown)
+                        wait('rewind [c/m/p/f]> ' if pinned else 'rewind [c/m/f]> ')
+
+                    unchanged = messages()
+                    for cancel in ('c', '\x03', '/help rewind-cancel\r'):
+                        rewind_prompt()
+                        send(cancel)
+                        wait('Rewind cancelled.')
+                        if cancel.startswith('/'):
+                            wait("Unknown help topic 'rewind-cancel'")
+                        wait('> ')
+                        assert messages() == unchanged, messages()
+
+                    rewind_prompt()
+                    send('m')
+                    wait('Removed 1 message.')
+                    wait('> ')
+                    assert messages() == unchanged[:-1], messages()
+                    send('/msg pin row-002\r/msg pin row-005\r')
+                    wait('Pinned message 6 (id: row-005).')
+                    wait('> ')
+                    rewind_prompt(pinned=True)
+                    send('p')
+                    wait('Rewound to pinned message 6; removed 73 newer messages.')
+                    wait('> ')
+                    assert [m['id'] for m in messages()] == [m['id'] for m in unchanged[:6]], messages()
+                    assert messages()[-1]['isPinned'], messages()
+                    rewind_prompt(pinned=True)
+                    send('\x1b[102u')  # Kitty's f key also acts without Enter.
+                    wait('Trimmed 5 messages; kept through message 1.')
+                    wait('> ')
+                    assert messages() == unchanged[:1], messages()
+
                     send('/chat new Completion empty\r')
                     wait('> ')
                     send('/msg unpin \t\r')
@@ -458,7 +518,7 @@ path.write_text('Edited in editor: ' + path.read_text())
                         process.wait(timeout=5)
                     os.close(master)
         print('PASS temporary chat titles and chat logs: quiet/verbose/short, first paragraphs, pins on all roles across repeated compaction, stable indexes, redirection, '
-              'pinlist, pinned ID completion, rewind to the newest pin and its errors; editor aliases, inline text, attachment preservation, persistence and validation; newline input, editor composition and literal files')
+              'pinlist, pinned ID completion, one-key chat rewind and first-message/pin boundaries; editor aliases, inline text, attachment preservation, persistence and validation; newline input, editor composition and literal files')
 
 
 if __name__ == '__main__':

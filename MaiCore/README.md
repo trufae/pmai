@@ -261,6 +261,13 @@ messages through the selected index and removes newer ones; linked tool-call
 transactions are kept structurally valid when removing or trimming messages.
 `/msg rewind` does the same through the newest pinned message, so a pin acts as
 a rewind point; it reports an error when the chat has no pins.
+`/chat rewind` offers status bar choices: `c` cancel, `m` lastmsg, `p`
+lastpin (shown only when messages are pinned), and `f` firstmsg. Each choice needs one key,
+without Enter. Lastmsg removes the last conversation message; lastpin keeps
+the newest pin and removes newer messages; firstmsg keeps through the first
+conversation message and its preceding instructions. Ctrl+C or a slash command cancels.
+Use `/chat rewind lastmsg`, `/chat rewind lastpin`, or `/chat rewind firstmsg`
+to apply a choice directly.
 
 `/msg last` prints the latest assistant response. Slash commands support
 stdout redirection: `>` overwrites a file, `>>` appends, and `|` sends the output
@@ -611,7 +618,8 @@ in the selected copy, and `/chat use` returns to the original.
 moves a chat out of the active list (archiving the current chat starts a new
 one), `/chat unarchive` brings it back, `/chat del INDEX|ID|TITLE` permanently
 deletes a chat (deleting the current one switches to another), and `new` and
-`rename` manage chats. `/chat` always acts on the list of chats; `/msg` acts on
+`rename` manage chats. `/chat` manages chats, including the `/chat rewind`
+shortcut above; `/msg` acts on
 messages inside the current chat: `/msg list`, `log`, `pin`, `edit`, `del`,
 `undo`, `trim`, `rewind`, and `chop`. `/clear` clears the terminal screen while
 keeping the conversation; `/chat clear` clears the conversation and restores

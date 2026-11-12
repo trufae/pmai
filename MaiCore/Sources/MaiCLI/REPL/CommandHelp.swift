@@ -683,6 +683,7 @@ extension MaiCLI {
       /chat context rebuild  Restore original evidence, removing context edits and summaries
       /chat edit          Edit all retained messages and context selection in the editor
       /chat recap         Print a short recap using the compact model; keep the history
+      /chat rewind [lastmsg|lastpin|firstmsg|cancel]  Choose how to rewind, or apply a choice directly
       /chat clear         Clear the conversation and restore configured instructions
 
     Chat list indexes are 1-based. Negative indexes count back from the end;
@@ -691,6 +692,11 @@ extension MaiCLI {
     Pinning changes the display group only; pmai -r -1 works too.
     /chat title labels are kept only while this REPL is running, independently for
     each chat. `none` clears a label. Use /chat rename to change the saved chat name.
+    /chat rewind shows status bar choices: c cancel, m lastmsg, p lastpin (only
+    when messages are pinned), f firstmsg. Press one key, without Enter. lastmsg removes the
+    last conversation message; lastpin keeps the newest pin and removes newer
+    messages; firstmsg keeps through the first conversation message, including
+    preceding instructions. Linked tool transactions stay valid. Ctrl+C or a slash command cancels.
 
     /chat del resolves all arguments before deleting, so indexes do not shift.
     A single exact title may contain spaces; use indexes or IDs for bulk deletion.

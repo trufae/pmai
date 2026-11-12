@@ -643,6 +643,23 @@ final class TerminalLineEditor {
       // Any key but Tab or Shift+Tab closes the rotating completion menu:
       // the next edit starts fresh, and the status row comes back.
       if !isTabKey(key) { dismissCompletion() }
+      if activePrompt.submitOnChoice, bytes.isEmpty {
+        let choice: String?
+        switch key {
+        case .byte(let byte) where byte >= 32 && byte != 127 && byte != 47:
+          choice = String(decoding: readCharacter(startingWith: byte), as: UTF8.self).lowercased()
+        case .text(let text) where text != [47]:
+          choice = String(decoding: text, as: UTF8.self).lowercased()
+        default:
+          choice = nil
+        }
+        if let choice {
+          guard activePrompt.choices.contains(choice) else { surface?.bell(); continue }
+          renderSubmittedLine(prompt: prompt, bytes: Array(choice.utf8))
+          submittedPromptID = activePrompt.id
+          return choice
+        }
+      }
       switch key {
       case .refreshPrompt:
         guard var updated = takePromptUpdate() else { continue }

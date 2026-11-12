@@ -181,6 +181,7 @@ extension MaiCLI {
       "/chat pin", "/chat pin ", "/chat unpin", "/chat unpin ",
       "/chat archive", "/chat unarchive ", "/chat del ",
       "/chat files", "/msg", "/msg list", "/msg log", "/msg log quiet", "/msg log verbose", "/msg log short", "/msg pin", "/msg pin ", "/msg pins", "/msg pins short", "/msg pinlist", "/msg unpin ", "/msg last", "/msg edit ", "/msg del ", "/msg undo", "/msg chop", "/msg trim ", "/msg rewind",
+      "/chat rewind", "/chat rewind lastmsg", "/chat rewind lastpin", "/chat rewind firstmsg", "/chat rewind cancel",
       "/chat clear", "/project", "/project info", "/project list", "/project name ",
       "/project tint ", "/project tint none", "/project del ",
     ]

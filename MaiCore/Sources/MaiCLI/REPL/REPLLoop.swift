@@ -56,6 +56,13 @@ extension MaiCLI {
     let interrupt: REPLInterruptID
   }
 
+  private struct REPLChatRewind {
+    let id = UUID()
+    let chatID: UUID
+    let hasPins: Bool
+    let interrupt: REPLInterruptID
+  }
+
   private struct REPLSummary {
     let id: UUID
     let task: Task<Void, Never>
@@ -92,6 +99,7 @@ extension MaiCLI {
     var pendingQueueMessage: String?
     var pendingQueueRedirection: REPLRedirection?
     var chatChop: REPLChatChop?
+    var chatRewind: REPLChatRewind?
     /// Prompt/tab labels belong to this running REPL, never to saved configuration or chats.
     var chatTitles: [UUID: String] = [:]
     var resetID: UUID?
@@ -116,6 +124,7 @@ extension MaiCLI {
     }
 
     func modalPrompt(for chatID: UUID) -> REPLModalPrompt? {
+      if let rewind = chatRewind { return .rewind(id: rewind.id, hasPins: rewind.hasPins) }
       if let resetID { return .reset(id: resetID) }
       if let chop = chatChop {
         return .chop(id: "\(chop.interrupt.rawValue)-\(chop.messageID)")
@@ -998,6 +1007,7 @@ extension MaiCLI {
         loop.activeTurn = turn
       }
       if let chop = loop.chatChop { interruptHandler.restore(chop.interrupt) {} }
+      if let rewind = loop.chatRewind { interruptHandler.restore(rewind.interrupt) {} }
       Task {
         let outcome: Result<AgentResult, any Error>
         do {
@@ -1628,6 +1638,16 @@ extension MaiCLI {
         interruptHandler.restore(operation.id, cancellation: operation.cancel)
       }
       await terminal.note("Chat chop closed.")
+    }
+
+    func closeChatRewind(cancelled: Bool = true) async {
+      guard let rewind = loop.chatRewind else { return }
+      loop.chatRewind = nil
+      _ = interruptHandler.deactivate(rewind.interrupt)
+      if let operation = loop.interruptOperation {
+        interruptHandler.restore(operation.id, cancellation: operation.cancel)
+      }
+      if cancelled { await terminal.note("Rewind cancelled.") }
     }
 
     func showChatChopMessage() async {
@@ -2266,7 +2286,7 @@ extension MaiCLI {
       case .line(let raw, let isHeredoc, let promptID, _, let inputReleased):
         var heredoc = isHeredoc
         if !loop.drainingThen && !inputReleased { loop.readerParked = true }
-        let typed = heredoc ? raw : raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        var typed = heredoc ? raw : raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if !heredoc, typed.hasPrefix("@") {
           do {
             if let addressed = try addressedMessage(typed), addressed.body.hasPrefix("/") {
@@ -2350,6 +2370,27 @@ extension MaiCLI {
           }
           await releaseIfIdle(workspace: workspace)
           return false
+        }
+        if let rewind = loop.chatRewind {
+          let choice = typed.lowercased()
+          if !heredoc, typed.hasPrefix("/") {
+            await closeChatRewind()
+          } else if !heredoc, ["c", "cancel"].contains(choice) || rewind.chatID != session.id {
+            await closeChatRewind()
+            await refreshStatus()
+            await releaseIfIdle(workspace: workspace)
+            return false
+          } else if !heredoc, ["m", "lastmsg", "f", "firstmsg"].contains(choice)
+            || (rewind.hasPins && ["p", "lastpin"].contains(choice)) {
+            await closeChatRewind(cancelled: false)
+            let action = ["m", "lastmsg"].contains(choice) ? "lastmsg"
+              : ["f", "firstmsg"].contains(choice) ? "firstmsg" : "lastpin"
+            typed = "/chat rewind " + action
+          } else {
+            await terminal.line(REPLModalPrompt.rewind(id: rewind.id, hasPins: rewind.hasPins).status)
+            await releaseIfIdle(workspace: workspace)
+            return false
+          }
         }
         if loop.resetID != nil {
           if !heredoc, typed.lowercased() == "reset" {
@@ -3263,6 +3304,18 @@ extension MaiCLI {
               argument.split(whereSeparator: \.isWhitespace).first?.lowercased() ?? "")
           {
             let fields = argument.split(whereSeparator: \.isWhitespace)
+            if name == "/chat", fields.count == 1, fields.first?.lowercased() == "rewind" {
+              let hasPins = session.history.messages.contains(where: \.isPinned)
+              if hasPins || session.history.messages.contains(where: { $0.role != .system && $0.role != .developer }) {
+                loop.chatRewind = REPLChatRewind(
+                  chatID: session.id, hasPins: hasPins, interrupt: interruptHandler.activate {})
+              } else {
+                await terminal.line("No conversation messages to rewind.")
+              }
+              await refreshStatus()
+              await releaseIfIdle(workspace: workspace)
+              return false
+            }
             if name == "/msg", fields.first?.lowercased() == "chop" {
               if fields.count != 1 {
                 await terminal.line("Usage: /msg chop")
@@ -3426,6 +3479,12 @@ extension MaiCLI {
 
       case .interrupt(let cancelledOperation, let endedInput):
         if endedInput { loop.readerParked = true }
+        if let rewind = loop.chatRewind, cancelledOperation == rewind.interrupt {
+          await closeChatRewind()
+          await refreshStatus()
+          await releaseIfIdle(workspace: workspace)
+          return false
+        }
         if let cancelledOperation,
           var turn = ([loop.activeTurn].compactMap { $0 } + Array(loop.btwTurns.values)
             + Array(loop.conversationTurns.values)).first(where: { $0.interrupt == cancelledOperation })
@@ -3480,6 +3539,7 @@ extension MaiCLI {
         await stopVoice()
         loop.readerEnded = true
         loop.readerParked = true
+        await closeChatRewind()
         await closeChatChop()
         loop.beginExit()
         if loop.hasTurns { return false }
@@ -3493,6 +3553,7 @@ extension MaiCLI {
           interruptHandler.restore(operation.id, cancellation: operation.cancel)
         }
         if let chop = loop.chatChop { interruptHandler.restore(chop.interrupt) {} }
+        if let rewind = loop.chatRewind { interruptHandler.restore(rewind.interrupt) {} }
         if interrupted {
           await terminal.note("cancelled /chat")
         } else if let messages {
@@ -3555,6 +3616,7 @@ extension MaiCLI {
           interruptHandler.restore(remaining.id, cancellation: remaining.cancel)
         }
         if let chop = loop.chatChop { interruptHandler.restore(chop.interrupt) {} }
+        if let rewind = loop.chatRewind { interruptHandler.restore(rewind.interrupt) {} }
         var succeeded = false
         var modelStats: ModelCallStats?
         var paused: AgentRunInterruption?
