@@ -8,6 +8,7 @@ final class MacPromptCompletion {
   var matches: [PromptCatalog.Entry] = []
   var selected = -1
   var prefix = "$"
+  var aliasNames: Set<String> = []
   @ObservationIgnored var replacementRange = NSRange(location: 0, length: 0)
   @ObservationIgnored var choose: ((Int) -> Void)?
 
@@ -16,7 +17,7 @@ final class MacPromptCompletion {
     selected = -1
   }
 
-  func update(text: String, selection: NSRange, catalog: PromptCatalog) {
+  func update(text: String, selection: NSRange, catalog: PromptCatalog, aliases: [String: String] = [:]) {
     dismiss()
     guard selection.length == 0, let caret = Range(selection, in: text)?.lowerBound,
       let start = text.firstIndex(where: { !$0.isWhitespace }),
@@ -30,7 +31,15 @@ final class MacPromptCompletion {
     // Keep the catalog's lookup precedence when a configured prompt shadows
     // a builtin or skill. System prompts cannot be invoked by this composer.
     var seen = Set<String>()
-    matches = catalog.entries.filter { entry in
+    aliasNames = prefix == "/" ? Set(aliases.keys) : []
+    let aliasEntries: [PromptCatalog.Entry] = aliasNames.sorted().map {
+      .init(kind: .user, name: $0, commandName: $0, text: aliases[$0] ?? "")
+    }
+    let management: [PromptCatalog.Entry] = prefix == "/" ? [
+      .init(kind: .builtin, name: "alias", commandName: "alias", text: "List, show, or save a global alias"),
+      .init(kind: .builtin, name: "unalias", commandName: "unalias", text: "Unregister a global alias"),
+    ] : []
+    matches = (management + aliasEntries + catalog.entries).filter { entry in
       let name = PromptSlashCommand.normalized(entry.commandName)
       return seen.insert(name).inserted && entry.kind != .system && name.hasPrefix(fragment)
     }.sorted { $0.commandName < $1.commandName }
@@ -48,6 +57,7 @@ struct MacPromptCompletionList: View {
           LazyVStack(spacing: 2) {
             ForEach(Array(completion.matches.enumerated()), id: \.element.id) { index, entry in
               MacPromptCompletionRow(entry: entry, prefix: completion.prefix,
+                isAlias: completion.aliasNames.contains(entry.commandName),
                 selected: index == completion.selected) { completion.choose?(index) }
               .id(index)
             }
@@ -72,6 +82,7 @@ struct MacPromptCompletionList: View {
 private struct MacPromptCompletionRow: View {
   let entry: PromptCatalog.Entry
   let prefix: String
+  let isAlias: Bool
   let selected: Bool
   let choose: () -> Void
 
@@ -84,7 +95,8 @@ private struct MacPromptCompletionRow: View {
           HStack {
             Text(prefix + entry.commandName).font(.callout.weight(.medium))
             Spacer(minLength: 8)
-            Text(entry.kind.label).font(.caption).foregroundStyle(.secondary)
+            Text(isAlias ? "alias" : (["alias", "unalias"].contains(entry.commandName) ? "command" : entry.kind.label))
+              .font(.caption).foregroundStyle(.secondary)
           }
           Text(entry.summary).font(.caption).foregroundStyle(.secondary)
         }
@@ -97,7 +109,7 @@ private struct MacPromptCompletionRow: View {
       .contentShape(Rectangle())
     }
     .buttonStyle(.plain).focusable(false)
-    .accessibilityLabel(prefix + entry.commandName + ", " + entry.kind.label)
+    .accessibilityLabel(prefix + entry.commandName + ", " + (isAlias ? "alias" : entry.kind.label))
     .accessibilityAddTraits(selected ? .isSelected : [])
   }
 }

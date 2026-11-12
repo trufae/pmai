@@ -3,6 +3,53 @@ import Testing
 
 @testable import MaiCore
 
+@Test("Global aliases survive another frontend, forward arguments to the first action, and unregister")
+func globalCommandAliases() throws {
+  let root = FileManager.default.temporaryDirectory.appendingPathComponent("aliases-\(UUID())")
+  defer { try? FileManager.default.removeItem(at: root) }
+  let first = CommandAliasStore(home: AgentHome(rootURL: root))
+  #expect(try first.handle("/alias hello your name is\n\n/model next\nfollow up") == "Registered alias /hello.")
+  let second = CommandAliasStore(home: AgentHome(rootURL: root))
+  #expect(try second.expand("/hello john") == ["your name is john", "/model next", "follow up"])
+  #expect(try second.expand("/hello") == ["your name is", "/model next", "follow up"])
+  #expect(try second.expand("/hello john\nsmith")?.first == "your name is john\nsmith")
+  #expect(try second.handle("/alias")?.contains("/hello\nyour name is") == true)
+  #expect(try second.handle("/alias /hello")?.contains("/model next") == true)
+  _ = try second.handle("/alias hello /model")
+  #expect(try first.expand("/hello next") == ["/model next"])
+  _ = try second.handle("/unalias /hello")
+  #expect(try first.expand("/hello john") == nil)
+  #expect(try first.load().isEmpty)
+  #expect(throws: CommandAliasStore.Error.self) { try first.handle("/unalias hello") }
+}
+
+@Test("Aliases cannot shadow builtins, recurse, or call aliases through deferred and addressed input")
+func commandAliasRestrictions() throws {
+  let root = FileManager.default.temporaryDirectory.appendingPathComponent("aliases-\(UUID())")
+  defer { try? FileManager.default.removeItem(at: root) }
+  let store = CommandAliasStore(home: AgentHome(rootURL: root))
+  _ = try store.handle("/alias hello say hello")
+  for definition in [
+    "/alias alias forbidden", "/alias model forbidden", "/alias unalias forbidden",
+    "/alias recursive /recursive", "/alias bad /hello", "/alias bad /alias x prompt",
+    "/alias bad safe\n/hello", "/alias bad /then /hello",
+    "/alias bad @1,2 /hello", "/alias bad /then @1 /alias x prompt",
+  ] {
+    #expect(throws: CommandAliasStore.Error.self) { try store.handle(definition) }
+  }
+  // A rejected replacement must keep the working definition on disk.
+  #expect(throws: CommandAliasStore.Error.self) { try store.handle("/alias hello /hello") }
+  #expect(try store.expand("/hello") == ["say hello"])
+  _ = try store.handle("/alias forward /future")
+  #expect(throws: CommandAliasStore.Error.self) { try store.handle("/alias future prompt") }
+  #expect(try store.expand("/future") == nil)
+  _ = try store.handle("/alias later /then")
+  #expect(throws: CommandAliasStore.Error.self) { try store.expand("/later /hello") }
+  #expect(try store.expand("/later ordinary text") == ["/then ordinary text"])
+  // Extra text stays an argument, even when it looks like a command.
+  #expect(try store.expand("/hello /alias text") == ["say hello /alias text"])
+}
+
 // Prompts run by name: `/name` in the iOS app, `$name` in pmai. The catalog
 // resolves system prompts, user prompts, MaiCore's builtin prompts, and skills
 // in that order, and a user prompt takes the words after its name the way a

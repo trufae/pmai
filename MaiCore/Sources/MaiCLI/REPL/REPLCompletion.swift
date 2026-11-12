@@ -36,6 +36,7 @@ extension MaiCLI {
     themesDirectory: URL
   ) -> [String] {
     var values = [
+      "/alias", "/unalias ", "/help alias",
       "/recover", "/recover clear", "/help", "/help set", "/help reset", "/reset", "/exit", "/quit", "/set tool.approval yolo", "/set tool.approval ask",
       "/help shell", "/shell", "/shell local", "/help keys", "/help model",
       "/help history", "/history", "/history list", "/history search ", "/history del ",

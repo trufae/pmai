@@ -388,6 +388,19 @@ Relative paths use the current directory, and `~` expands to your home directory
 Tab completes file and directory paths in `.`, file arguments, and output redirects;
 directories keep their trailing `/` so you can continue into them.
 
+`/alias NAME TEXT` saves a global shortcut in `~/.pmai/aliases.json` (or the
+selected `--home` / `PMAI_HOME`). It is shared by the REPL and Mac app across
+projects and sessions. Shift+Enter separates actions in the definition; each
+line runs as an ordinary command or prompt, waiting for the preceding action.
+For example, `/alias hello your name is` makes `/hello john` send `your name is john`.
+Extra text is appended to the first line only. `/alias` lists definitions,
+`/alias NAME` shows one, and `/unalias NAME` removes it. Defining an existing
+name replaces it. Builtin command names are reserved, and an alias cannot call
+`/alias` or another alias, including through `/then` or an agent
+address. Ctrl+C or Stop discards remaining actions. The Mac composer completes
+alias names alongside prompts and skills; commands use the current frontend's
+capabilities (including Mac voice, `/model`, and `/set` session settings).
+
 `/then LINE` queues a prompt or CLI command until every running task (including
 side questions and background agents) finishes. Lines run one at a time in FIFO
 order through the normal command dispatcher, never inside the current tool loop.

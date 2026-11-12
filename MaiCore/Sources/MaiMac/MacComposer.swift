@@ -5,11 +5,12 @@ import SwiftUI
 struct MacComposer: View {
   @Binding var text: String
   var prompts: PromptCatalog
+  var aliases: CommandAliasStore
   var submit: () -> Void
   @State private var completion = MacPromptCompletion()
 
   var body: some View {
-    MacComposerEditor(text: $text, prompts: prompts, completion: completion, submit: submit)
+    MacComposerEditor(text: $text, prompts: prompts, aliases: aliases, completion: completion, submit: submit)
       .frame(maxWidth: .infinity)
       .overlay(alignment: .topLeading) {
         if !completion.matches.isEmpty {
@@ -28,6 +29,7 @@ struct MacComposer: View {
 private struct MacComposerEditor: NSViewRepresentable {
   @Binding var text: String
   var prompts: PromptCatalog
+  var aliases: CommandAliasStore
   var completion: MacPromptCompletion
   var submit: () -> Void
   private var typography = MacChatTypography()
@@ -62,7 +64,7 @@ private struct MacComposerEditor: NSViewRepresentable {
     editor.autoresizingMask = [.width]
     editor.textContainer?.widthTracksTextView = true
     editor.setAccessibilityLabel("Message")
-    editor.setAccessibilityHelp("Return sends. Shift-Return adds a new line. Type / or $ for prompts and skills; Tab completes.")
+    editor.setAccessibilityHelp("Return sends. Shift-Return adds a new line. Type / for aliases, prompts and skills, or /alias to manage aliases; Tab completes.")
     scroll.documentView = editor
     return scroll
   }
@@ -73,6 +75,7 @@ private struct MacComposerEditor: NSViewRepresentable {
     editor.submit = submit
     let catalogChanged = editor.prompts != prompts
     editor.prompts = prompts
+    editor.aliases = aliases
     if editor.font != typography.editorFont { editor.font = typography.editorFont }
     var replaced = false
     if editor.string != text, !editor.hasMarkedText() {
@@ -112,13 +115,15 @@ private struct MacComposerEditor: NSViewRepresentable {
 @MainActor private final class ComposerTextView: NSTextView {
   var submit: (() -> Void)?
   var prompts = PromptCatalog(builtins: [])
+  var aliases: CommandAliasStore?
   var completion: MacPromptCompletion?
   var updatingCompletion = false
 
   func refreshCompletions() {
     guard !updatingCompletion else { return }
     guard !hasMarkedText(), window?.firstResponder === self else { completion?.dismiss(); return }
-    completion?.update(text: string, selection: selectedRange(), catalog: prompts)
+    completion?.update(text: string, selection: selectedRange(), catalog: prompts,
+      aliases: (try? aliases?.load()) ?? [:])
   }
 
   func applyCompletion(at index: Int, finish: Bool) {

@@ -185,7 +185,7 @@ final class MacWorkspace {
     }
     do {
       let conversation = MacConversation(hostID: hostID, hostName: hostName,
-        cwd: info?.cwd ?? cwd, sessionID: info?.sessionID, title: info?.title ?? "New Chat")
+        cwd: info?.cwd ?? cwd, sessionID: info?.sessionID, title: info?.title ?? "New Chat", home: home)
       let profile = try host.map { try hostStore.connection(for: $0) }
       conversation.client = try makeClient(profile: profile, conversation: conversation)
       let backend = backend

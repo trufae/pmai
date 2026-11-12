@@ -205,6 +205,8 @@ extension MaiCLI {
         await terminal.line(shellHelp)
       case "history", "/history":
         await terminal.line(REPLHistoryCommand.help)
+      case "alias", "/alias", "unalias", "/unalias":
+        await terminal.line(CommandAliasStore.help)
       case "set", "/set":
         await terminal.line(setHelp)
       case "reset", "/reset":

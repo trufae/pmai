@@ -322,7 +322,7 @@ struct MacChatView: View {
         .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
         .disabled(conversation.importingAttachments)
         .help("Start a webxdc app or attach files").accessibilityLabel("Add attachments or apps")
-        MacComposer(text: $conversation.draft, prompts: conversation.prompts) { conversation.send(); followsBottom = true }
+        MacComposer(text: $conversation.draft, prompts: conversation.prompts, aliases: conversation.aliases) { conversation.send(); followsBottom = true }
           .id(conversation.id)
           .zIndex(1)
           .overlay(alignment: .topLeading) {

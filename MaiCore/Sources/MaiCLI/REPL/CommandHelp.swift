@@ -339,6 +339,8 @@ extension MaiCLI {
     /subagents [PID|main]  List or switch agent conversations
     /theme                 List, apply, or customize terminal themes
     /then [LINE]           Queue a prompt or command until all tasks finish; no args lists it
+    /alias [NAME [TEXT]]    List, show, or save a global alias; Shift+Enter separates actions
+    /unalias NAME          Unregister a global alias (/help alias for details)
     /todo                  Show or edit the project's todo list
     /tools                 List tool groups for this agent; /tools full includes tools
     /unthen                Clear all pending /then actions

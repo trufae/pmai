@@ -40,6 +40,7 @@ final class MacConversation: Identifiable {
       ?? model.currentValue.stringValue
   }
   var prompts = PromptCatalog(builtins: [])
+  let aliases: CommandAliasStore
   var agents: [AgentProcessRecord] = []
   var draft = "" {
     didSet { if let draftKey { UserDefaults.standard.set(draft, forKey: draftKey) } }
@@ -65,6 +66,7 @@ final class MacConversation: Identifiable {
   private var operation: Task<Void, Never>?
   @ObservationIgnored private var loadingMessages: [ACPConversationMessage]?
   private var closing = false
+  private var submissionCancelled = false
   private struct PermissionRequest {
     let id: UUID
     let value: JSONValue
@@ -75,7 +77,9 @@ final class MacConversation: Identifiable {
     sessionID.map { "mac.draft.\(hostID?.uuidString ?? "local").\($0)" }
   }
 
-  init(hostID: UUID?, hostName: String, cwd: String, sessionID: String?, title: String) {
+  init(hostID: UUID?, hostName: String, cwd: String, sessionID: String?, title: String,
+    home: AgentHome = .resolve()) {
+    aliases = CommandAliasStore(home: home)
     self.hostID = hostID
     self.hostName = hostName
     self.cwd = cwd
@@ -109,6 +113,14 @@ final class MacConversation: Identifiable {
   }
 
   func send() {
+    do {
+      if let output = try aliases.handle(draft) {
+        messages.append(.init(role: "assistant", text: output))
+        draft = ""
+        error = nil
+        return
+      }
+    } catch { self.error = error.localizedDescription; return }
     if voice.handleCommand(draft, in: self) { draft = ""; return }
     guard canSend, !closing, client != nil else { return }
     let submitted = attachments
@@ -130,38 +142,112 @@ final class MacConversation: Identifiable {
   private func submit(_ text: String, attachments submittedAttachments: [MacAttachment] = [],
     restoreDraft: Bool = false, completion: ((Result<String, Error>) -> Void)? = nil) {
     guard connected, !busy, !closing, let client else { return }
-    var request = RemotePromptRequest(text: text)
-    if let command = PromptSlashCommand.parse(text), let entry = prompts.entry(named: command.command),
-      entry.kind != .system {
-      request = .init(text: entry.invocation != nil || entry.skillID != nil ? command.remainder
-        : entry.message(arguments: command.remainder) ?? text, command: entry.invocation, skillID: entry.skillID)
+    let expansion: [String]?
+    do {
+      if let output = try aliases.handle(text) {
+        messages.append(.init(role: "assistant", text: output))
+        completion?(.success(output))
+        return
+      }
+      expansion = try aliases.expand(text)
+    } catch {
+      self.error = error.localizedDescription
+      if restoreDraft { draft = text; attachments = submittedAttachments + attachments }
+      completion?(.failure(error))
+      return
     }
-    request.attachments = submittedAttachments.map(\.content)
-    let displayText = ([text] + submittedAttachments.map { "Attached: \($0.name)" })
-      .filter { !$0.isEmpty }.joined(separator: "\n\n")
-    messages.append(.init(role: "user", text: displayText))
-    if title == "New Chat" { title = String(displayText.prefix(80)) }
-    voice.beginReply()
+    submissionCancelled = false
     perform {
       self.status = "Working…"
+      var remainingAttachments = submittedAttachments
+      var sentPrompt = false
       do {
-        _ = try await client.prompt(request) { _ in }
+        for line in expansion ?? [text] {
+          try Task.checkCancellation()
+          if self.submissionCancelled || self.closing { break }
+          if expansion != nil { try self.aliases.validateExecution(line) }
+          if let output = try self.aliases.handle(line) {
+            self.messages.append(.init(role: "assistant", text: output))
+            continue
+          }
+          if self.voice.handleCommand(line, in: self, submitting: true) {
+            await self.voice.finishCommand()
+            if let error = self.voice.error { throw JSONRPCError.invalidParams(error) }
+            continue
+          }
+          if try await self.runInputCommand(line, client: client) { continue }
+          var request = RemotePromptRequest(text: line)
+          if let command = PromptSlashCommand.parse(line), let entry = self.prompts.entry(named: command.command),
+            entry.kind != .system {
+            request = .init(text: entry.invocation != nil || entry.skillID != nil ? command.remainder
+              : entry.message(arguments: command.remainder) ?? line, command: entry.invocation, skillID: entry.skillID)
+          } else if line.hasPrefix("/"), let command = PromptSlashCommand.parse(line),
+            CommandAliasStore.builtinNames.contains(command.command) {
+            throw JSONRPCError.invalidParams("/\(command.command) is not available in this Mac conversation.")
+          }
+          let attached = remainingAttachments
+          request.attachments = attached.map(\.content)
+          let displayText = ([line] + attached.map { "Attached: \($0.name)" })
+            .filter { !$0.isEmpty }.joined(separator: "\n\n")
+          self.messages.append(.init(role: "user", text: displayText))
+          if self.title == "New Chat" { self.title = String(displayText.prefix(80)) }
+          self.voice.beginReply()
+          sentPrompt = true
+          let reason = try await client.prompt(request) { _ in }
+          remainingAttachments.removeAll()
+          if reason == .cancelled { self.submissionCancelled = true }
+        }
       } catch {
         if restoreDraft {
           if self.draft.isEmpty { self.draft = text }
-          self.attachments.insert(contentsOf: submittedAttachments, at: 0)
+          self.attachments.insert(contentsOf: remainingAttachments, at: 0)
         }
-        self.voice.finishReply("", error: error.localizedDescription)
+        if sentPrompt { self.voice.finishReply("", error: error.localizedDescription) }
         completion?(.failure(error))
         throw error
       }
+      self.attachments.insert(contentsOf: remainingAttachments, at: 0)
       let reply = self.messages.reversed().prefix(while: { $0.role != "user" }).reversed()
         .filter { $0.role == "assistant" }.map(\.text).joined(separator: "\n\n")
-      self.voice.finishReply(reply)
+      if sentPrompt { self.voice.finishReply(reply) }
       completion?(.success(reply))
       self.status = "Ready"
       self.didChange?()
     }
+  }
+
+  /// Native settings and host commands use the same path when typed directly
+  /// or expanded from an alias; prompt/skill commands continue through submit.
+  private func runInputCommand(_ text: String, client: any RemoteSessionClient) async throws -> Bool {
+    guard text.hasPrefix("/"), let command = PromptSlashCommand.parse(text) else { return false }
+    if command.command == "stop" { submissionCancelled = true; await client.cancel(); return true }
+    guard command.command == "model" || command.command == "set" else { return false }
+    let fields = command.remainder.split(maxSplits: 1, whereSeparator: \.isWhitespace).map(String.init)
+    options = try await client.configurationOptions()
+    let key = command.command == "model" ? options.first { $0.category == "model" }?.id : fields.first
+    let value = command.command == "model" ? command.remainder : (fields.count > 1 ? fields[1] : "")
+    guard let key, let option = options.first(where: { $0.id == key }) else {
+      if command.command == "set", fields.isEmpty {
+        messages.append(.init(role: "assistant", text: options.map { "\($0.id): \($0.currentValue)" }.joined(separator: "\n")))
+        return true
+      }
+      throw JSONRPCError.invalidParams("Unknown session setting. /set lists available settings.")
+    }
+    if value.isEmpty {
+      messages.append(.init(role: "assistant", text: "\(option.name): \(option.currentValue)\n"
+        + option.choices.map { "\($0.id) · \($0.name)" }.joined(separator: "\n")))
+      return true
+    }
+    let selected: JSONValue
+    if option.isBoolean, ["true", "on", "false", "off"].contains(value) {
+      selected = .bool(["true", "on"].contains(value))
+    } else {
+      selected = .string(option.choices.first { $0.id == value || $0.name == value }?.id ?? value)
+    }
+    guard option.accepts(selected) else { throw JSONRPCError.invalidParams("Invalid value for \(key).") }
+    options = try await client.setConfigurationOption(id: key, value: selected)
+    try await refreshAgentProfiles()
+    return true
   }
 
   func importAttachments(_ urls: [URL]) {
@@ -276,6 +362,7 @@ final class MacConversation: Identifiable {
   }
 
   func stop() {
+    submissionCancelled = true
     voice.stop()
     dismissPermissions()
     // The protocol cancellation lets the host save its interrupted transcript

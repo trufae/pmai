@@ -32,7 +32,7 @@ final class MacVoice {
   static func stopActive() { active?.stop() }
 
   /// These commands remain usable while a response is running, like the CLI.
-  func handleCommand(_ text: String, in conversation: MacConversation) -> Bool {
+  func handleCommand(_ text: String, in conversation: MacConversation, submitting: Bool = false) -> Bool {
     let words = text.trimmingCharacters(in: .whitespacesAndNewlines).split(whereSeparator: \.isWhitespace)
     guard words.first?.lowercased() == "/voice" else { return false }
     let command = words.dropFirst().joined(separator: " ").lowercased()
@@ -43,10 +43,10 @@ final class MacVoice {
     case "send": finishCapture()
     case "resume", "record":
       if isActive, state != .error { resume() }
-      else if !conversation.busy || conversation.canUseVoiceAgent { start(.conversation, in: conversation) }
+      else if !conversation.busy || submitting || conversation.canUseVoiceAgent { start(.conversation, in: conversation) }
     case "" where isActive: stop()
     case "", "on", "realtime", "walkie-talkie", "walkie", "ptt", "dictate", "dictation":
-      guard !conversation.busy || conversation.canUseVoiceAgent, conversation.connected else {
+      guard !conversation.busy || submitting || conversation.canUseVoiceAgent, conversation.connected else {
         conversation.error = "Start voice when this chat is connected and its current response has finished."
         return true
       }
@@ -65,6 +65,7 @@ final class MacVoice {
     else if state == .error { start(mode, in: conversation) }
     else if !conversation.busy || hasSeparateAgent { resume() }
   }
+  func finishCommand() async { await setup?.value }
   func discard() { resumeAfterCancel = false; cancelTurn(); session?.discard() }
   func acceptsPermission(_ turn: String) -> Bool {
     remoteTurnID?.uuidString == turn && turnTask?.isCancelled == false

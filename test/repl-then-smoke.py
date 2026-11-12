@@ -160,6 +160,42 @@ def main():
                 request('idle', model='next')
                 request('idle', model='next')
                 wait('DONE-idle')
+                # Aliases reuse normal command/prompt dispatch. Shift+Enter
+                # separates actions; a model change must settle before the
+                # following prompt, and arguments belong to the first line.
+                send('/alias hello your name is\x1b[13;2u/model test\x1b[13;2ufollow up\x1b[13;2u/version > alias-version.txt')
+                wait('Registered alias /hello.')
+                send('/alias bad /hello')
+                wait('Aliases cannot run /hello.')
+                send('/alias alias nope')
+                wait('/alias is a reserved command name.')
+                send('/hello john')
+                request('your name is john', model='next')
+                request('your name is john', model='next')
+                body = request('follow up', model='test')
+                assert any(m['role'] == 'assistant' and m.get('content') == 'DONE-your name is john'
+                           for m in body['messages']), body
+                request('follow up', model='test')
+                deadline = time.monotonic() + 15
+                while not (root / 'alias-version.txt').exists():
+                    assert time.monotonic() < deadline, output.decode(errors='replace')
+                    read_pty(master, output, .05)
+                assert (root / 'alias-version.txt').read_text().strip()
+                aliases = root / 'home/aliases.json'
+                assert 'hello' in json.loads(aliases.read_text())
+                send('/unalias hello')
+                wait('Unregistered alias /hello.')
+                assert 'hello' not in json.loads(aliases.read_text())
+                send('/alias branch /fork --empty\x1b[13;2ubranch prompt\x1b[13;2u/subagents main\x1b[13;2u/version > branch-version.txt')
+                wait('Registered alias /branch.')
+                send('/branch')
+                body = request('branch prompt', model='test')
+                assert [m['content'] for m in body['messages'] if m['role'] == 'user'] == ['branch prompt'], body
+                request('branch prompt', model='test')
+                deadline = time.monotonic() + 15
+                while not (root / 'branch-version.txt').exists():
+                    assert time.monotonic() < deadline, output.decode(errors='replace')
+                    read_pty(master, output, .05)
                 send('/exit')
                 # Terminal restoration can wait for queued PTY output to drain.
                 deadline = time.monotonic() + 10
@@ -169,7 +205,7 @@ def main():
                 process.wait(timeout=10)
                 assert process.returncode == 0
                 assert requests.empty()
-                print('PASS /then: tool-loop isolation, all-task idle, FIFO, clear, model, skills, redirection, idle start')
+                print('PASS /then and /alias: FIFO, model, prompts, redirection, saved aliases, restrictions, unregister')
             finally:
                 for gate in gates.values():
                     gate.set()

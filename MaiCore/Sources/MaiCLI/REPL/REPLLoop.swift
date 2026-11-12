@@ -78,6 +78,13 @@ extension MaiCLI {
     let id = UUID()
   }
 
+  private struct REPLAliasLine {
+    let text: String
+    let focus: REPLMessageTarget
+    let target: AgentPID?
+    var startsInvocation = false
+  }
+
   private struct REPLLoop {
     var activeTurn: REPLTurn?
     var btwTurns: [AgentPID: REPLTurn] = [:]
@@ -89,6 +96,8 @@ extension MaiCLI {
     var summary: REPLSummary?
     var foregroundCommand: String?
     var thenLines: [String] = []
+    var aliasLines: [REPLAliasLine] = []
+    var runningAlias = false
     var drainingThen = false
     var focus: REPLMessageTarget = .main
     var recoveredInputs = REPLRecoveredInput()
@@ -299,6 +308,7 @@ extension MaiCLI {
       await terminal.configureColors(configuration?.ui ?? .init())
     }
     let editor = TerminalLineEditor(historyURL: historyURL)
+    let aliases = CommandAliasStore(home: home)
     var agentsMarkdownChoice: (directory: URL, mode: AgentsMDMode, approved: Bool)?
     var announcedAttention: Set<AgentPID> = []
     // One process per chat, not per turn: a background agent started three
@@ -765,6 +775,8 @@ extension MaiCLI {
                 ?? completionSession.history.messages
               return messages.filter(\.isPinned).map { "/msg unpin \($0.id)" }
             }
+            let aliasNames = ((try? aliases.load()) ?? [:]).keys.sorted()
+            let aliasCompletions = aliasNames.flatMap { ["/" + $0, "/alias " + $0, "/unalias " + $0] }
             return completionCache.values {
               completionCandidates(
                 workspace: completionWorkspace, configuration: completionConfiguration,
@@ -774,6 +786,7 @@ extension MaiCLI {
               + services.modelCatalog.completions(for: line, runtime: runtime)
               + services.voiceCatalog.completions(for: line, configuration: completionConfiguration ?? .init(),
                 plugins: plugins, offline: completionOffline)
+              + aliasCompletions
           },
           separator: screen == nil ? status.text : nil))
     }
@@ -2371,6 +2384,31 @@ extension MaiCLI {
           await releaseIfIdle(workspace: workspace)
           return false
         }
+        if !heredoc, typed.hasPrefix("/") {
+          do {
+            if loop.runningAlias { try aliases.validateExecution(typed) }
+            if let output = try aliases.handle(typed) {
+              await terminal.line(output)
+              await releaseIfIdle(workspace: workspace)
+              return false
+            }
+            if let lines = try aliases.expand(typed) {
+              loop.aliasLines.append(contentsOf: lines.enumerated().map {
+                REPLAliasLine(text: $0.element, focus: loop.focus, target: loop.commandTarget,
+                  startsInvocation: $0.offset == 0)
+              })
+              if loop.modalPrompt(for: session.id) != nil {
+                await terminal.note("Alias queued until the current prompt is resolved.")
+              }
+              await releaseIfIdle(workspace: workspace)
+              return false
+            }
+          } catch {
+            await terminal.note("alias: \(error.localizedDescription)", tone: .error)
+            await releaseIfIdle(workspace: workspace)
+            return false
+          }
+        }
         if let rewind = loop.chatRewind {
           let choice = typed.lowercased()
           if !heredoc, typed.hasPrefix("/") {
@@ -2456,6 +2494,7 @@ extension MaiCLI {
           }
         }
         if !heredoc, text == "/stop" {
+          loop.aliasLines.removeAll()
           if let pid = loop.commandTarget {
             if var turn = loop.turn(for: pid) {
               turn.restartPrompt = nil
@@ -2477,8 +2516,12 @@ extension MaiCLI {
           let fields = text.split(maxSplits: 1, whereSeparator: \Character.isWhitespace)
           if fields.first == "/then" {
             if fields.count > 1 {
-              loop.thenLines.append(String(fields[1]))
-              await terminal.note("then: queued (\(loop.thenLines.count) waiting)")
+              if loop.runningAlias {
+                loop.aliasLines.append(REPLAliasLine(text: String(fields[1]), focus: loop.focus, target: loop.commandTarget))
+              } else {
+                loop.thenLines.append(String(fields[1]))
+                await terminal.note("then: queued (\(loop.thenLines.count) waiting)")
+              }
             } else {
               await terminal.line(loop.thenLines.isEmpty ? "No /then actions queued."
                 : loop.thenLines.enumerated().map { "\($0.offset + 1). \($0.element)" }.joined(separator: "\n"))
@@ -3478,6 +3521,7 @@ extension MaiCLI {
         await releaseIfIdle(workspace: workspace)
 
       case .interrupt(let cancelledOperation, let endedInput):
+        loop.aliasLines.removeAll()
         if endedInput { loop.readerParked = true }
         if let rewind = loop.chatRewind, cancelledOperation == rewind.interrupt {
           await closeChatRewind()
@@ -3893,7 +3937,9 @@ extension MaiCLI {
         // A queued line's redirection belongs to its eventual execution.
         let command = raw.split(whereSeparator: \Character.isWhitespace).first
         let shellInput = remoteShell != nil && loop.modalPrompt(for: session.id) == nil && command != "/remote"
-        if !heredoc, isCommand, command != "/then", command != "/hey", !shellInput {
+        let aliasInput = command == "/alias"
+          || (command.map { (try? aliases.load()[String($0.dropFirst())]) != nil } ?? false)
+        if !heredoc, isCommand, command != "/then", command != "/hey", !aliasInput, !shellInput {
           do {
             if let syntax = try REPLRedirectSyntax.parse(raw, pasted: pasted) {
               switch syntax.destination {
@@ -3952,17 +3998,48 @@ extension MaiCLI {
       // Turns must have settled their transcripts, and background children
       // must also have finished, before the next line reaches the dispatcher.
       loop.drainingThen = true
-      while !loop.exiting, !loop.hasTurns, loop.modalPrompt(for: session.id) == nil,
-        !loop.thenLines.isEmpty,
-        await runtime.supervisor.liveProcesses().allSatisfy({
-          // Chat roots may have been allocated by /queue before their first
-          // turn. With no REPL turn in flight, these are idle placeholders.
-          $0.depth == 0 && chatProcessIDs.values.contains($0.pid)
-        })
+      while !loop.exiting, deferredEvents.isEmpty, loop.modalPrompt(for: session.id) == nil,
+        (!loop.aliasLines.isEmpty || !loop.thenLines.isEmpty)
       {
-        let line = loop.thenLines.removeFirst()
-        await terminal.note("then: \(line)")
-        if await dispatchEvent(.line(line, heredoc: false, promptID: nil)) {
+        // The first alias action behaves like typed input (including /stop
+        // during a turn). Subsequent actions wait for the preceding work.
+        if loop.aliasLines.first?.startsInvocation != true {
+          guard !loop.hasTurns, await runtime.supervisor.liveProcesses().allSatisfy({
+            // Chat roots may have been allocated by /queue before their first
+            // turn. With no REPL turn in flight, these are idle placeholders.
+            $0.depth == 0 && chatProcessIDs.values.contains($0.pid)
+          }) else { break }
+        }
+        let line: String
+        let focus = loop.focus
+        let target = loop.commandTarget
+        var restoreTarget = false
+        if !loop.aliasLines.isEmpty {
+          let action = loop.aliasLines.removeFirst()
+          line = action.text
+          do { try aliases.validateExecution(line) }
+          catch {
+            loop.aliasLines.removeAll()
+            await terminal.note("alias: \(error.localizedDescription)", tone: .error)
+            break
+          }
+          if action.target != nil {
+            restoreTarget = true
+            loop.focus = action.focus
+            loop.commandTarget = action.target
+          }
+          loop.runningAlias = true
+        } else {
+          line = loop.thenLines.removeFirst()
+          await terminal.note("then: \(line)")
+        }
+        let shouldExit = await dispatchEvent(.line(line, heredoc: false, promptID: nil))
+        loop.runningAlias = false
+        if restoreTarget {
+          loop.focus = focus
+          loop.commandTarget = target
+        }
+        if shouldExit {
           exits = true
           break
         }
