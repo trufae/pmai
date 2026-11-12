@@ -2437,8 +2437,15 @@ struct MessageActivityGroup<Content: View>: View {
       DisclosureGroup(isExpanded: Binding(
         get: { expanded || forceExpanded || isFullChatScreenshotRendering }, set: { expanded = $0 }
       )) {
-        VStack(alignment: .leading, spacing: 0, content: content)
-          .environment(\.messageActivityIsGrouped, true)
+        if expanded || forceExpanded || isFullChatScreenshotRendering {
+          if isFullChatScreenshotRendering {
+            VStack(alignment: .leading, spacing: 0, content: content)
+              .environment(\.messageActivityIsGrouped, true)
+          } else {
+            ActivityScrollView(content: content)
+              .environment(\.messageActivityIsGrouped, true)
+          }
+        }
       } label: {
         TimelineView(.animation(
           minimumInterval: 1, paused: !isLive || timings.allSatisfy { $0?.finishedAt != nil }

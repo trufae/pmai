@@ -41,10 +41,15 @@ struct MacActivityRow: View, @MainActor Equatable {
     DisclosureGroup(isExpanded: Binding(get: { expanded || revealsSearch }, set: { expanded = $0 })) {
       // Do not instantiate or parse hidden tool output.
       if expanded || revealsSearch {
-        VStack(alignment: .leading, spacing: 8) {
-          ForEach(run.messages) { message in
-            MacMessageRow(message: message, conversation: conversation,
-              searchQuery: searchQuery, isSearchSelected: message.id == selectedSearchID).equatable()
+        ScrollViewReader { proxy in
+          ActivityScrollView {
+            ForEach(run.messages) { message in
+              MacMessageRow(message: message, conversation: conversation,
+                searchQuery: searchQuery, isSearchSelected: message.id == selectedSearchID).equatable()
+            }
+          }
+          .onChange(of: selectedSearchID, initial: true) { _, id in
+            if let id { proxy.scrollTo("message-\(id)", anchor: .top) }
           }
         }.padding(.top, 8)
       }
