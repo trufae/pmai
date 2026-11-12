@@ -166,24 +166,6 @@ private struct StreamingMessageBubble: View {
   }
 }
 
-/// Measure a user bubble's natural width before constraining it to the chat.
-/// Its Markdown and timestamp rows may still expand within that fitted width.
-private struct MessageBubbleLayout: Layout {
-  var fitsContent: Bool
-
-  func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-    guard let content = subviews.first else { return .zero }
-    let width = fitsContent
-      ? min(proposal.width ?? .infinity, content.sizeThatFits(.unspecified).width)
-      : proposal.width
-    return content.sizeThatFits(ProposedViewSize(width: width, height: proposal.height))
-  }
-
-  func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-    subviews.first?.place(at: bounds.origin, proposal: ProposedViewSize(bounds.size))
-  }
-}
-
 private struct MessageBubbleContent: View, @MainActor Equatable {
   @AppStorage("thinkingDisplay") private var thinkingDisplay: ThinkingDisplay = .five
   @Environment(\.isFullChatScreenshotRendering) private var isFullChatScreenshotRendering

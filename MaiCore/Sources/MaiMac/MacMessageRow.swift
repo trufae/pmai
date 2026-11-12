@@ -89,33 +89,35 @@ struct MacMessageRow: View, @MainActor Equatable {
   }
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 9) {
-      if message.role == "tool" || message.role == "thought" {
-        DisclosureGroup(isExpanded: $expanded) {
-          if expanded { MacMessageDetails(message: message, searchQuery: searchQuery) }
-        } label: {
-          HStack {
-            Text(MacSearchHighlight.text(
-              message.toolName ?? (message.role == "thought" ? "Reasoning" : "Tool details"), query: searchQuery))
-              .lineLimit(1)
-            Spacer()
-            if let status = message.status {
-              Text(status.capitalized).font(typography.font(.caption1))
-                .foregroundStyle(status == "failed" ? Color.red : .secondary)
+    MessageBubbleLayout(fitsContent: message.role == "user") {
+      VStack(alignment: .leading, spacing: 9) {
+        if message.role == "tool" || message.role == "thought" {
+          DisclosureGroup(isExpanded: $expanded) {
+            if expanded { MacMessageDetails(message: message, searchQuery: searchQuery) }
+          } label: {
+            HStack {
+              Text(MacSearchHighlight.text(
+                message.toolName ?? (message.role == "thought" ? "Reasoning" : "Tool details"), query: searchQuery))
+                .lineLimit(1)
+              Spacer()
+              if let status = message.status {
+                Text(status.capitalized).font(typography.font(.caption1))
+                  .foregroundStyle(status == "failed" ? Color.red : .secondary)
+              }
             }
           }
+          .disclosureGroupStyle(ActivityDisclosureStyle())
+          .onChange(of: isSearchSelected, initial: true) { _, selected in
+            if selected { expanded = true }
+          }
+        } else {
+          Label(message.role == "user" ? "You" : message.role == "assistant" ? "pmai" : message.role.capitalized,
+            systemImage: message.role == "user" ? "person.crop.circle" : "sparkle")
+            .font(typography.font(.callout).weight(.semibold)).foregroundStyle(.secondary)
+          MacMarkdown(text: message.text, searchQuery: searchQuery, role: message.role).equatable()
+            .environment(\.isStreamingResponse,
+              message.role == "assistant" && isStreaming && searchQuery.isEmpty)
         }
-        .disclosureGroupStyle(ActivityDisclosureStyle())
-        .onChange(of: isSearchSelected, initial: true) { _, selected in
-          if selected { expanded = true }
-        }
-      } else {
-        Label(message.role == "user" ? "You" : message.role == "assistant" ? "pmai" : message.role.capitalized,
-          systemImage: message.role == "user" ? "person.crop.circle" : "sparkle")
-          .font(typography.font(.callout).weight(.semibold)).foregroundStyle(.secondary)
-        MacMarkdown(text: message.text, searchQuery: searchQuery, role: message.role).equatable()
-          .environment(\.isStreamingResponse,
-            message.role == "assistant" && isStreaming && searchQuery.isEmpty)
       }
     }
     .font(typography.font())
@@ -125,6 +127,8 @@ struct MacMessageRow: View, @MainActor Equatable {
         RoundedRectangle(cornerRadius: 14).fill(appearance.accentColor.opacity(0.12))
       }
     }
+    .padding(.leading, message.role == "user" ? 36 : 0)
+    .frame(maxWidth: .infinity, alignment: message.role == "user" ? .trailing : .leading)
     .contextMenu {
       Button("Copy") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(message.text, forType: .string) }
       if message.role == "user", conversation.canRewind, message.remoteID != nil {
