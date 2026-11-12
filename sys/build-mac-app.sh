@@ -39,6 +39,10 @@ cp appIcons/icon-512.png "$iconset/icon_256x256@2x.png"
 cp appIcons/icon-512.png "$iconset/icon_512x512.png"
 cp appIcons/icon-1024.png "$iconset/icon_512x512@2x.png"
 iconutil -c icns "$iconset" -o "$app/Contents/Resources/AppIcon.icns"
+# Xcode keeps symbols alongside its archive before the distribution binary is stripped.
+if [ -n "${MAC_DSYM:-}" ]; then
+  dsymutil "$app/Contents/MacOS/pmai" -o "$MAC_DSYM"
+fi
 if [ "$config" = release ]; then strip -x "$app/Contents/MacOS/pmai"; fi
 version=$(sed -n 's/.*static let version = "\([^"]*\)".*/\1/p' MaiCore/Sources/MaiCLI/MaiCLI.swift)
 cat > "$app/Contents/Info.plist" <<EOF

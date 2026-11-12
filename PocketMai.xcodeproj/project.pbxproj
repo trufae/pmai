@@ -66,6 +66,9 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		F10000000000000000000002 /* pmai.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = pmai.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		F10000000000000000000003 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		F10000000000000000000004 /* MaiMac.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = MaiMac.entitlements; sourceTree = "<group>"; };
 		A00000000000000000000007 /* PocketMai.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PocketMai.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B00000000000000000000002 /* PocketMaiTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PocketMaiTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		C00000000000000000000002 /* PocketMaiWidgetsExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = PocketMaiWidgetsExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -98,6 +101,12 @@
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		F10000000000000000000005 /* Mac sources */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			name = "Mac sources";
+			path = MaiCore/Sources/MaiMac;
+			sourceTree = "<group>";
+		};
 		A0000000000000000000000B /* PocketMai */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
@@ -186,10 +195,21 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		F10000000000000000000006 /* MaiMac */ = {
+			isa = PBXGroup;
+			children = (
+				F10000000000000000000003 /* Info.plist */,
+				F10000000000000000000004 /* MaiMac.entitlements */,
+			);
+			path = MaiMac;
+			sourceTree = "<group>";
+		};
 		A00000000000000000000010 = {
 			isa = PBXGroup;
 			children = (
 				A0000000000000000000000B /* PocketMai */,
+				F10000000000000000000006 /* MaiMac */,
+				F10000000000000000000005 /* Mac sources */,
 				A0000000000000000000000D /* Shared */,
 				C0000000000000000000000A /* SharedWidgetKit */,
 				C00000000000000000000009 /* PocketMaiWidgets */,
@@ -203,6 +223,7 @@
 			isa = PBXGroup;
 			children = (
 				A00000000000000000000007 /* PocketMai.app */,
+				F10000000000000000000002 /* pmai.app */,
 				B00000000000000000000002 /* PocketMaiTests.xctest */,
 				C00000000000000000000002 /* PocketMaiWidgetsExtension.appex */,
 				D00000000000000000000002 /* PocketMaiShareExtension.appex */,
@@ -213,6 +234,21 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		F10000000000000000000001 /* MaiMac */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = F10000000000000000000007 /* Build configuration list for PBXNativeTarget "MaiMac" */;
+			buildPhases = (
+				F10000000000000000000008 /* Build Mac app with SwiftPM */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = MaiMac;
+			productName = pmai;
+			productReference = F10000000000000000000002 /* pmai.app */;
+			productType = "com.apple.product-type.application";
+		};
 		A00000000000000000000009 /* PocketMai */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = A00000000000000000000012 /* Build configuration list for PBXNativeTarget "PocketMai" */;
@@ -334,6 +370,14 @@
 				LastSwiftUpdateCheck = 2640;
 				LastUpgradeCheck = 2710;
 				TargetAttributes = {
+					F10000000000000000000001 = {
+						CreatedOnToolsVersion = 27.1;
+						SystemCapabilities = {
+							com.apple.HardenedRuntime = {
+								enabled = 1;
+							};
+						};
+					};
 					A00000000000000000000009 = {
 						CreatedOnToolsVersion = 26.4.1;
 						SystemCapabilities = {
@@ -378,6 +422,7 @@
 			projectRoot = "";
 			targets = (
 				A00000000000000000000009 /* PocketMai */,
+				F10000000000000000000001 /* MaiMac */,
 				B00000000000000000000005 /* PocketMaiTests */,
 				C00000000000000000000001 /* PocketMaiWidgetsExtension */,
 				D00000000000000000000001 /* PocketMaiShareExtension */,
@@ -415,6 +460,26 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		F10000000000000000000008 /* Build Mac app with SwiftPM */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+			);
+			name = "Build Mac app with SwiftPM";
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(EXECUTABLE_PATH)",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/AppIcon.icns",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "sh \"$SRCROOT/sys/build-mac-xcode.sh\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		A00000000000000000000013 /* Sources */ = {
@@ -807,9 +872,66 @@
 			};
 			name = Release;
 		};
+		F10000000000000000000009 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ARCHS = "$(NATIVE_ARCH_ACTUAL)";
+				CODE_SIGN_ENTITLEMENTS = MaiMac/MaiMac.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 122;
+				ENABLE_APP_SANDBOX = NO;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = MaiMac/Info.plist;
+				INSTALL_PATH = "$(LOCAL_APPS_DIR)";
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MARKETING_VERSION = 1.15.0;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.trufae.pmai.mac;
+				PRODUCT_NAME = pmai;
+				SDKROOT = macosx;
+				SKIP_INSTALL = NO;
+				SUPPORTED_PLATFORMS = macosx;
+			};
+			name = Debug;
+		};
+		F1000000000000000000000A /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ARCHS = "$(NATIVE_ARCH_ACTUAL)";
+				CODE_SIGN_ENTITLEMENTS = MaiMac/MaiMac.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 122;
+				ENABLE_APP_SANDBOX = NO;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = MaiMac/Info.plist;
+				INSTALL_PATH = "$(LOCAL_APPS_DIR)";
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MARKETING_VERSION = 1.15.0;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.trufae.pmai.mac;
+				PRODUCT_NAME = pmai;
+				SDKROOT = macosx;
+				SKIP_INSTALL = NO;
+				SUPPORTED_PLATFORMS = macosx;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		F10000000000000000000007 /* Build configuration list for PBXNativeTarget "MaiMac" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F10000000000000000000009 /* Debug */,
+				F1000000000000000000000A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
 		A00000000000000000000012 /* Build configuration list for PBXNativeTarget "PocketMai" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

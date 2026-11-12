@@ -4,6 +4,27 @@ Build with `make mac`, then open `build/pmai.app`. `make mac-run` builds and
 launches it. The minimum system is macOS 15; building with Xcode 27 adopts the
 current macOS 27 system appearance. No iOS Simulator build is needed.
 
+For Xcode, open `PocketMai.xcodeproj`, select the **MaiMac** scheme and **My Mac**,
+then press **Run** (⌘R). The target builds the same lean SwiftPM executable and
+lets Xcode manage the app bundle, signing, and archives. Like `make mac`, it
+builds for the current Mac's architecture; the existing release jobs produce
+separate Apple silicon and Intel downloads.
+
+To create a release, choose **Product → Archive**. In Organizer, select the
+archive and choose **Distribute App → Direct Distribution** to sign with
+Developer ID and notarize it, then export the app. The custom equivalent is
+**Developer ID → Upload**. Your Apple Developer account and signing team must
+be configured in Xcode; notarization is only submitted when you start that
+distribution workflow. The archive includes a dSYM for crash reports.
+
+The Mac target deliberately leaves **App Sandbox off** to use the installed CLI
+and its tools. **Hardened Runtime is on** for notarization, with microphone access
+enabled and library validation disabled for user-installed native plugins in the shared
+CLI entry point. Hardened Runtime does not impose App Sandbox's file/process
+restrictions. This is direct distribution, not a Mac App Store submission;
+Apple requires App Sandbox for the Mac App Store. No App Store Connect app
+record is needed for Developer ID distribution.
+
 Local chats, ACP hosting, and **Open in Terminal** use `pmai` from `PATH`.
 Finder launches also search `~/.local/bin`, `/opt/homebrew/bin`, and
 `/usr/local/bin`. If the CLI is missing, the app offers a copyable command to
