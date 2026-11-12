@@ -293,6 +293,7 @@ extension MaiCLI {
     /about                 Logo, version, and provider setup
     /agent                 Alias for /agents
     /agents                List or edit saved agents
+    /alias [NAME [TEXT]]    List, show, or save a global alias; /help alias
     /attach [MODE] PATH    Attach a file; /attach clear removes attachments
     /btw PROMPT            Ask a side question in a fresh context
     /cd PATH               Change working directory
@@ -339,10 +340,9 @@ extension MaiCLI {
     /subagents [PID|main]  List or switch agent conversations
     /theme                 List, apply, or customize terminal themes
     /then [LINE]           Queue a prompt or command until all tasks finish; no args lists it
-    /alias [NAME [TEXT]]    List, show, or save a global alias; Shift+Enter separates actions
-    /unalias NAME          Unregister a global alias (/help alias for details)
     /todo                  Show or edit the project's todo list
     /tools                 List tool groups for this agent; /tools full includes tools
+    /unalias NAME          Unregister a global alias (/help alias for details)
     /unthen                Clear all pending /then actions
     /vdb                   Index or search local documentation and code
     /version               Print the pmai version
