@@ -21,10 +21,6 @@ struct CompletionMenu: Equatable {
 /// a scrolling terminal, the way a shell prompt does; `TerminalScreen` owns
 /// rows that stay below the output while agents print.
 protocol LineEditorSurface: AnyObject {
-  /// Whether the editor is accepting input, including modal questions.
-  func setReadingInput(_ reading: Bool)
-  /// A keystroke or paste interrupts idle cursor effects.
-  func noteInputActivity()
   /// Rows the input may take before it scrolls inside its own area.
   func maximumInputRows() -> Int
   /// Draws the whole input area: one styled string per row, cleared first,
@@ -71,8 +67,6 @@ extension LineEditorSurface {
   func acceptUserInput(text: String, styled: String) {
     acceptInput(styled: styled)
   }
-  func setReadingInput(_ reading: Bool) {}
-  func noteInputActivity() {}
   func scrollOutput(wheel: Int, pages: Int) {}
   func scrollOutput(toEnd: Bool) {}
   var viewHasFocus: Bool { false }
@@ -445,8 +439,6 @@ final class TerminalLineEditor {
     completionQuery = nil
     drawSeparator(separator)
     redraw(prompt: prompt, bytes: bytes, cursor: cursor)
-    surface?.setReadingInput(true)
-    defer { surface?.setReadingInput(false) }
 
     func insert(_ text: [UInt8], fromPaste: Bool = false) {
       guard !text.isEmpty else { return }
@@ -855,12 +847,7 @@ final class TerminalLineEditor {
       if hasPromptUpdate { return .refreshPrompt }
       return hasSizeChange ? .resize : nil
     }
-    let key: Key = byte == 27 ? readEscapeSequence() : .byte(byte)
-    switch key {
-    case .ignored, .mouse, .wheel: break
-    default: surface?.noteInputActivity()
-    }
-    return key
+    return byte == 27 ? readEscapeSequence() : .byte(byte)
   }
 
   /// What follows an Escape byte: a CSI or SS3 sequence, Alt+Enter, or
