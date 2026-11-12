@@ -155,6 +155,34 @@ final class ThemeEditorTests: XCTestCase {
     }
   }
 
+  // Pasting and adjusting must change the selected component, survive saving,
+  // and leave sibling components intact.
+  func testYankPasteAndAdjustmentShortcuts() throws {
+    try fixture { document in
+      var ui = ThemeEditorUI(document: document)
+      for key in [Key.tab, .tab] + "jfybY".map(Key.character) {
+        XCTAssertTrue(ui.handle(key))
+      }
+      XCTAssertEqual(ui.document.values["rgb"]?["background"], "rgb:abc")
+      XCTAssertTrue(ui.handle(.character("u")))
+      XCTAssertEqual(ui.document.values["rgb"]?["background"], "#123456")
+      XCTAssertTrue(ui.handle(.character("U")))
+      XCTAssertEqual(ui.document.values["rgb"]?["background"], "rgb:abc")
+      for (key, expected) in zip("h-l+", ["#a9bbcc", "#a8bbcc", "#a9bbcc", "#aabbcc"]) {
+        XCTAssertTrue(ui.handle(.character(key)))
+        XCTAssertEqual(ui.document.values["rgb"]?["background"], expected)
+        XCTAssertEqual(ui.document.values["rgb"]?["foreground"], "rgb:abc")
+      }
+      XCTAssertTrue(ui.handle(.character("v")))
+      XCTAssertTrue(ui.handle(.character("Y")))
+      XCTAssertEqual(ui.value, "false", "Pasting a color must not corrupt a Boolean")
+      XCTAssertTrue(ui.save())
+      let reopened = try ThemeDocument(sourceURL: document.sourceURL, configurationURL: document.configurationURL)
+      XCTAssertEqual(reopened.values["rgb"]?["background"], "#aabbcc")
+      XCTAssertEqual(reopened.values["rgb"]?["foreground"], "rgb:abc")
+    }
+  }
+
   // A resize must keep the selected value editable and must not wrap drawing
   // outside the terminal, including while entering a color or confirming quit.
   func testEditingSurvivesSmallTerminalLayouts() throws {
@@ -180,7 +208,9 @@ final class ThemeEditorTests: XCTestCase {
         XCTAssertTrue(ui.handle(.end))
         let help = try visibleScreen(ui.frame(columns: columns, rows: rows, now: 0), columns: columns, rows: rows)
         if columns >= 40 { XCTAssertTrue(help.contains("Ctrl-C: exit without saving"), help) }
-        XCTAssertTrue(ui.handle(.escape))
+        XCTAssertTrue(ui.handle(.character("q")))
+        let afterHelp = try visibleScreen(ui.frame(columns: columns, rows: rows, now: 0), columns: columns, rows: rows)
+        if columns >= 20 { XCTAssertTrue(afterHelp.contains("fgcolor = blue"), afterHelp) }
         XCTAssertTrue(ui.handle(.character("q")))
         let confirmation = try visibleScreen(ui.frame(columns: columns, rows: rows, now: 0), columns: columns, rows: rows)
         if columns >= 20 {

@@ -33,18 +33,18 @@ selected component again.
 | j / k, Up / Down | Next / previous element |
 | g / G, Home / End | First / last element |
 | Ctrl-U / Ctrl-D | Move eight elements up / down |
-| h / l, [ / ], Space | Cycle an element's foreground, background, and bold components |
+| [ / ], Space | Cycle an element's foreground, background, and bold components |
 | f / b / v | Select foreground / background / bold directly |
 | Enter / e | Type a replacement color, or toggle a Boolean; Enter applies, Escape cancels |
-| Left / Right, - / + | Cycle ANSI colors (including none), toggle a Boolean, or adjust an RGB channel by 1 |
+| Left / Right, h / l, - / + | Cycle ANSI colors (including none), toggle a Boolean, or adjust an RGB channel by 1 |
 | Shift-Left / Shift-Right | Adjust an RGB channel by 16 |
 | 1 / 2 / 3 | Select the red / green / blue channel |
 | c / n | Cycle None / ANSI / RGB mode, or clear the color to none |
-| y / p | Copy / paste a compatible color or Boolean value |
+| y / Y (or p) | Copy / paste a compatible color or Boolean value |
 | u / U | Undo / redo an edit, including across themes |
 | Page Up / Page Down | Scroll the preview conversation |
 | . | Reveal and blink the selected component again |
-| ? | Show keyboard help; j/k or Page Up/Down scrolls it; ? or Escape closes it |
+| ? | Show keyboard help; j/k or Page Up/Down scrolls it; ?, q, or Escape closes it |
 | s / Ctrl-S | Save all changed themes |
 | r | Reset the current field to its last loaded/saved value |
 | R | Reload source, with confirmation if edits would be discarded |

@@ -6,7 +6,11 @@ enum TerminalTheme {
   static let lightNames: Set<String> = ["summer", "sand", "colit"]
 
   static let builtins: [String: ConfiguredTerminalUI] = [
-    "default": .init(),
+    "default": .init(
+      backgroundLine: "black",
+      bubbleForeground: "black",
+      bubbleBackground: "white",
+      infoForeground: "bright-black"),
     "ansi": .init(
       backgroundLine: "", foreground: "white", background: "",
       promptForeground: "yellow", promptBackground: "",
@@ -82,7 +86,7 @@ enum TerminalTheme {
       boldForeground: "#9a4d08", italicForeground: "#6f557b"),
     "ember": .init(
       backgroundLine: "rgb:310", foreground: "rgb:fdb", promptForeground: "rgb:f95",
-      bubbleForeground: "rgb:fdb", bubbleBackground: "rgb:321",
+      bubbleForeground: "rgb:321", bubbleBackground: "rgb:fdb",
       toolResultForeground: "rgb:c96", toolCallForeground: "rgb:fb7",
       errorForeground: "rgb:f77", warningForeground: "rgb:fc7", successForeground: "rgb:bd9",
       infoForeground: "rgb:eb9", thinkingForeground: "rgb:a87",
@@ -94,7 +98,7 @@ enum TerminalTheme {
     "pink": .init(
       backgroundLine: "#4a1837", foreground: "#ffe0f1", background: "#2a1021",
       promptForeground: "#ff7fc0", promptBackground: "#4a1837",
-      bubbleForeground: "#ffe0f1", bubbleBackground: "#38162d",
+      bubbleForeground: "black", bubbleBackground: "#ffb3db",
       toolResultForeground: "#f1afd4", toolCallForeground: "#ffb3db",
       toolResultBackground: "#311326", toolCallBackground: "#3d1831", toolCallBold: true,
       errorForeground: "#ff879a", warningForeground: "#ffd19a", successForeground: "#b6e6cf",
@@ -107,7 +111,7 @@ enum TerminalTheme {
     "blood": .init(
       backgroundLine: "#4b101b", foreground: "#fff1f1", background: "#21090d",
       promptForeground: "#ffb2b2", promptBackground: "#4b101b",
-      bubbleForeground: "#21090d", bubbleBackground: "#330e15",
+      bubbleForeground: "#ffffff", bubbleBackground: "#9f2339",
       toolResultForeground: "#ffd7d7", toolCallForeground: "#fff5f5",
       toolResultBackground: "#2c0c12", toolCallBackground: "#3b101a", toolCallBold: true,
       errorForeground: "#ff6b6b", warningForeground: "#ffb2b2", successForeground: "#fff1f1",
@@ -119,7 +123,7 @@ enum TerminalTheme {
       boldForeground: "#ffb2b2", italicForeground: "#ff9696"),
     "night": .init(
       backgroundLine: "rgb:013", foreground: "rgb:def", promptForeground: "rgb:7cf",
-      bubbleForeground: "rgb:def", bubbleBackground: "rgb:123",
+      bubbleForeground: "black", bubbleBackground: "rgb:7cf",
       toolResultForeground: "rgb:9bd", toolCallForeground: "rgb:9df",
       errorForeground: "rgb:f88", warningForeground: "rgb:ed9", successForeground: "rgb:fff",
       infoForeground: "rgb:aaf", thinkingForeground: "rgb:89a",
@@ -132,7 +136,7 @@ enum TerminalTheme {
     "codark": .init(
       backgroundLine: "#2e3436", foreground: "#d3d7cf", background: "#1e1e1e",
       promptForeground: "#729fcf", promptBackground: "#2e3436",
-      bubbleForeground: "#d3d7cf", bubbleBackground: "#272b2d",
+      bubbleForeground: "black", bubbleBackground: "#969696",
       toolResultForeground: "#e9b96e", toolCallForeground: "#8ae234",
       toolResultBackground: "#2b2620", toolCallBackground: "#233028", toolCallBold: true,
       errorForeground: "#ef5c5c", warningForeground: "#fce94f", successForeground: "#8ae234",

@@ -161,7 +161,7 @@ struct ThemeEditorUI {
     }
     if help {
       switch key {
-      case .escape, .character("?"), .enter: help = false
+      case .escape, .character("q"), .character("?"), .enter: help = false
       case .down, .character("j"): helpOffset += 1
       case .up, .character("k"): helpOffset = max(0, helpOffset - 1)
       case .pageDown: helpOffset += helpPageSize
@@ -183,8 +183,8 @@ struct ThemeEditorUI {
       if document.dirty { confirmation = "reload" } else { reload() }
     case .character("u"): replay(redoing: false)
     case .character("U"): replay(redoing: true)
-    case .character("y"): clipboard = value; status = "Copied \(value.isEmpty ? "none" : value). p pastes."
-    case .character("p"):
+    case .character("y"): clipboard = value; status = "Copied \(value.isEmpty ? "none" : value). Y or p pastes."
+    case .character("Y"), .character("p"):
       if let clipboard, (try? field.literal(clipboard)) != nil { setValue(clipboard) }
       else { status = "Copy a compatible \(field.isFlag ? "flag" : "color") with y first." }
     case .enter, .character("e"):
@@ -198,8 +198,8 @@ struct ThemeEditorUI {
     case .end, .character("G"): moveItem(to: items.count - 1)
     case .listPageUp: moveItem(to: itemIndex - 8)
     case .listPageDown: moveItem(to: itemIndex + 8)
-    case .character("h"), .character("["): moveMember(-1)
-    case .character("l"), .character("]"), .character(" "): moveMember(1)
+    case .character("["): moveMember(-1)
+    case .character("]"), .character(" "): moveMember(1)
     case .character("f"): selectComponent("fg")
     case .character("b"): selectComponent("bg")
     case .character("v"): selectComponent("bold")
@@ -208,8 +208,8 @@ struct ThemeEditorUI {
     case .character("n") where !field.isFlag: setValue("")
     case .character("1"), .character("2"), .character("3"):
       channel = key == .character("1") ? 0 : key == .character("2") ? 1 : 2
-    case .left, .character("-"): adjust(-1)
-    case .right, .character("+"), .character("="): adjust(1)
+    case .left, .character("h"), .character("-"): adjust(-1)
+    case .right, .character("l"), .character("+"), .character("="): adjust(1)
     case .fastLeft: adjust(-1, step: 16)
     case .fastRight: adjust(1, step: 16)
     case .pageUp, .pageDown:
@@ -269,10 +269,10 @@ struct ThemeEditorUI {
     if help {
       let shortcuts = ["j/k Up/Down: move through elements", "g/G Home/End: first/last element",
         "Ctrl-U/D: page through elements", "Tab / Shift-Tab: next/previous theme",
-        "h/l [/] Space: cycle fg/bg/bold", "f / b / v: select fg / bg / bold",
+        "[/] Space: cycle fg/bg/bold", "f / b / v: select fg / bg / bold",
         "Enter / e: type color; toggle flag", "c / n: cycle mode / use none",
-        "Left/Right -/+: adjust color/channel", "Shift-Left/Right: adjust channel by 16",
-        "1/2/3: select R/G/B channel", "y / p: copy / paste value", "u / U: undo / redo edit",
+        "Left/Right h/l -/+: adjust color/channel", "Shift-Left/Right: adjust channel by 16",
+        "1/2/3: select R/G/B channel", "y / Y (or p): copy / paste value", "u / U: undo / redo edit",
         "r / R: reset field / reload", "s Ctrl-S: save all themes",
         "PgUp/PgDn: scroll conversation", ".: blink/reveal selection",
         "q / Esc: quit; check unsaved edits", "Ctrl-C: exit without saving"]
@@ -280,7 +280,7 @@ struct ThemeEditorUI {
       let top = rows > 1 ? 2 : 1
       helpPageSize = rows - top + 1
       helpOffset = min(helpOffset, max(0, lines.count - helpPageSize))
-      if rows > 1 { put(left, 1, "? close · j/k scroll · KEYBOARD", width: width, style: "\u{1b}[1m") }
+      if rows > 1 { put(left, 1, "?/q/Esc close · j/k scroll · KEYBOARD", width: width, style: "\u{1b}[1m") }
       for (offset, line) in lines.dropFirst(helpOffset).prefix(helpPageSize).enumerated() {
         put(left, top + offset, line, width: width)
       }
@@ -356,14 +356,14 @@ struct ThemeEditorUI {
       let modeText: String
       if let rgb = ThemeColor.rgb(value), !field.isFlag {
         modeText = (0..<3).map { "\($0 == channel ? "[" : "")\(["R", "G", "B"][$0]):\(rgb[$0])\($0 == channel ? "]" : "")" }
-          .joined(separator: " ")
+          .joined(separator: " ") + " · c mode"
       } else {
         modeText = field.isFlag ? "Boolean · Enter toggles" : "\(["None", "ANSI", "RGB"][mode]) · c changes color mode"
       }
       put(left, detailY + 1, input == nil ? modeText : "Enter applies · Esc cancels", width: editorWidth)
     }
     if details == 4 {
-      put(left, detailY + 2, "h/l part  ←/→ value  1/2/3 RGB", width: editorWidth, style: "\u{1b}[2m")
+      put(left, detailY + 2, "[/] part  h/l value  1/2/3 RGB", width: editorWidth, style: "\u{1b}[2m")
     }
 
     let previewX = sideBySide ? 38 : left

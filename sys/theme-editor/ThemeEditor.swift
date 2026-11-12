@@ -398,10 +398,10 @@ struct ThemeEditor {
 
           Edit MaiCore/Sources/MaiCLI/Terminal/TerminalTheme.swift in a terminal.
           Tab/Shift-Tab switch themes; j/k or Up/Down select grouped elements.
-          h/l cycle fg/bg/bold; f/b/v select a component; Enter/e edits.
-          Left/Right adjusts values; 1/2/3 selects an RGB channel; Shift+arrows +/-16.
-          c cycles None/ANSI/RGB; n clears; y/p copies/pastes; u/U undoes/redoes.
-          PgUp/PgDn scrolls the preview; . blinks the affected sample; ? shows help.
+          [/] or Space cycle fg/bg/bold; f/b/v select a component; Enter/e edits.
+          Left/Right, h/l, -/+ adjust values; 1/2/3 selects RGB; Shift+arrows +/-16.
+          c cycles None/ANSI/RGB; n clears; y copies; Y/p pastes; u/U undoes/redoes.
+          PgUp/PgDn scrolls the preview; . blinks the sample; ? shows help; q/Esc closes it.
           e enters a color: none, an ANSI name, #rrggbb, or rgb:rgb.
           s/Ctrl-S saves all edited themes; r resets a field; R reloads; q quits.
           Ctrl-C exits without saving. The layout adapts to the terminal size.
