@@ -38,9 +38,9 @@ struct MacActivityRow: View, @MainActor Equatable {
   private var revealsSearch: Bool { run.messages.contains { $0.id == selectedSearchID } }
 
   var body: some View {
-    DisclosureGroup(isExpanded: Binding(get: { expanded || revealsSearch }, set: { expanded = $0 })) {
+    DisclosureGroup(isExpanded: $expanded) {
       // Do not instantiate or parse hidden tool output.
-      if expanded || revealsSearch {
+      if expanded {
         ScrollViewReader { proxy in
           ActivityScrollView {
             ForEach(run.messages) { message in
@@ -64,7 +64,11 @@ struct MacActivityRow: View, @MainActor Equatable {
         }
       }
       .font(typography.font(.callout)).foregroundStyle(.secondary).lineLimit(1)
-    }.tint(.secondary)
+    }
+    .disclosureGroupStyle(ActivityDisclosureStyle())
+    .onChange(of: selectedSearchID, initial: true) { _, _ in
+      if revealsSearch { expanded = true }
+    }
   }
 }
 
@@ -87,8 +91,8 @@ struct MacMessageRow: View, @MainActor Equatable {
   var body: some View {
     VStack(alignment: .leading, spacing: 9) {
       if message.role == "tool" || message.role == "thought" {
-        DisclosureGroup(isExpanded: Binding(get: { expanded || isSearchSelected }, set: { expanded = $0 })) {
-          if expanded || isSearchSelected { MacMessageDetails(message: message, searchQuery: searchQuery) }
+        DisclosureGroup(isExpanded: $expanded) {
+          if expanded { MacMessageDetails(message: message, searchQuery: searchQuery) }
         } label: {
           HStack {
             Text(MacSearchHighlight.text(
@@ -100,7 +104,11 @@ struct MacMessageRow: View, @MainActor Equatable {
                 .foregroundStyle(status == "failed" ? Color.red : .secondary)
             }
           }
-        }.tint(.secondary)
+        }
+        .disclosureGroupStyle(ActivityDisclosureStyle())
+        .onChange(of: isSearchSelected, initial: true) { _, selected in
+          if selected { expanded = true }
+        }
       } else {
         Label(message.role == "user" ? "You" : message.role == "assistant" ? "pmai" : message.role.capitalized,
           systemImage: message.role == "user" ? "person.crop.circle" : "sparkle")

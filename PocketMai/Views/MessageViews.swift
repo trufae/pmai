@@ -2469,7 +2469,7 @@ struct MessageActivityGroup<Content: View>: View {
           .frame(minHeight: 44, alignment: .leading)
         }
       }
-      .tint(.secondary)
+      .disclosureGroupStyle(ActivityDisclosureStyle())
     }
   }
 }
