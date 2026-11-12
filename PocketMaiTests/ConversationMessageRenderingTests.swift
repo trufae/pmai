@@ -31,6 +31,40 @@ func remoteHistoryCountsVisibleGroups() {
 
 final class ConversationMessageRenderingTests: XCTestCase {
   @MainActor
+  func testExpandedActivityFitsShortRunsAndScrollsLongRuns() async throws {
+    // Long tool runs must remain reachable without filling the outer transcript;
+    // short runs should not reserve an otherwise empty 320-point panel.
+    for count in [1, 12] {
+      let host = UIHostingController(rootView:
+        MessageActivityGroup(forceExpanded: true) {
+          ForEach(0..<count, id: \.self) { index in
+            Text("Tool update \(index)").frame(height: 44)
+          }
+        }
+        .frame(maxHeight: .infinity, alignment: .top))
+      let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+      window.rootViewController = host
+      window.isHidden = false
+      defer { window.isHidden = true }
+
+      func findScrollView(in view: UIView) -> UIScrollView? {
+        (view as? UIScrollView) ?? view.subviews.lazy.compactMap { findScrollView(in: $0) }.first
+      }
+      let expectedHeight = CGFloat(count * 44 + (count - 1) * 8)
+      try await waitForLayout(host: host) {
+        guard let scroll = findScrollView(in: host.view) else { return false }
+        return abs(scroll.contentSize.height - expectedHeight) < 1
+          && abs(scroll.bounds.height - min(expectedHeight, 320)) < 1
+      }
+      let scroll = try XCTUnwrap(findScrollView(in: host.view))
+      XCTAssertLessThanOrEqual(scroll.bounds.height, 320)
+      let bottom = max(0, scroll.contentSize.height - scroll.bounds.height)
+      scroll.setContentOffset(CGPoint(x: 0, y: bottom), animated: false)
+      XCTAssertEqual(scroll.contentOffset.y + scroll.bounds.height, expectedHeight, accuracy: 1)
+    }
+  }
+
+  @MainActor
   func testStreamingMarkdownMatchesFreshParsingAcrossStableBoundariesAndEdits() {
     func rendered(_ blocks: [MarkdownBlock]) -> [String] {
       blocks.flatMap { block -> [String] in
