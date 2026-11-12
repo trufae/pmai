@@ -63,6 +63,7 @@ final class MacConversation: Identifiable {
   var client: (any RemoteSessionClient)?
   var didChange: (() -> Void)?
   private var operation: Task<Void, Never>?
+  @ObservationIgnored private var loadingMessages: [ACPConversationMessage]?
   private var closing = false
   private struct PermissionRequest {
     let id: UUID
@@ -84,9 +85,15 @@ final class MacConversation: Identifiable {
   }
 
   func connect() {
-    guard let client else { return }
+    guard !connected, let client else { return }
     perform {
+      // Session loading replays history through the same callback as live
+      // replies. Publish it once so the view starts at the completed tail.
+      self.loadingMessages = client is OpenCodeClient ? self.messages : []
+      defer { self.loadingMessages = nil }
       self.sessionID = try await client.connect()
+      self.messages = self.loadingMessages ?? self.messages
+      self.loadingMessages = nil
       if let draftKey = self.draftKey { UserDefaults.standard.set(self.draft, forKey: draftKey) }
       self.options = try await client.configurationOptions()
       self.prompts = try await client.promptCatalog()
@@ -219,7 +226,11 @@ final class MacConversation: Identifiable {
       voice.receive(update)
       return
     }
-    ACPConversationTranscript.apply(update, to: &messages)
+    if loadingMessages != nil {
+      ACPConversationTranscript.apply(update, to: &loadingMessages!)
+    } else {
+      ACPConversationTranscript.apply(update, to: &messages)
+    }
     if update.objectValue?["sessionUpdate"]?.stringValue == "config_option_update" {
       options = RemoteSessionOption.parse(update.objectValue?["configOptions"])
     }
