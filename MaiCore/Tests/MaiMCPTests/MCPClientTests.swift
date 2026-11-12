@@ -51,7 +51,9 @@ func mcpHTTPPartialOutput(scenario: String) async throws {
         data: {"jsonrpc":"2.0","method":"notifications/progress","params":{"progressToken":-1,"progress":1,"message":"unrelated request"}}
 
         """
-      var stream = (timesOut ? "id: progress-event\nretry: 5000\n" : "") + progress + "\n"
+      // Exceed the entire request budget so the reconnect is rejected without
+      // sleeping. The handshake still gets a generous timeout under CI load.
+      var stream = (timesOut ? "id: progress-event\nretry: 120000\n" : "") + progress + "\n"
       if completes {
         stream += "data: " + rpc(
           id: id, result: #"{"content":[{"type":"text","text":"completed result"}]}"#) + "\n\n"
@@ -69,7 +71,7 @@ func mcpHTTPPartialOutput(scenario: String) async throws {
   defer { StubURLProtocol.reset(host: host) }
   let client = MCPClient(
     configuration: MCPServerConfiguration(
-      id: host, url: try #require(URL(string: "https://\(host)/mcp")), timeout: 1),
+      id: host, url: try #require(URL(string: "https://\(host)/mcp")), timeout: 60),
     session: stubSession())
   do {
     let output = try await client.callTool(name: "lookup", arguments: .object([:]))
@@ -85,6 +87,7 @@ func mcpHTTPPartialOutput(scenario: String) async throws {
     #expect(output.text.contains("Invoice INV-42: EUR 19.00"))
     #expect(output.text.contains("Incomplete MCP output"))
     #expect(!output.text.contains("unrelated request"))
+    if timesOut { #expect(output.text.contains(URLError(.timedOut).localizedDescription)) }
   } catch {
     await client.close()
     throw error
