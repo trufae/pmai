@@ -20,7 +20,7 @@ struct MacMarkdown: View, @MainActor Equatable {
     VStack(alignment: .leading, spacing: 12) {
       if let document {
         ForEach(Array(document.blocks.enumerated()), id: \.offset) { index, block in
-          render(block)
+          render(block, at: index)
             .streamingResponseTail(index == document.blocks.count - 1)
         }
       } else if !text.isEmpty {
@@ -64,7 +64,7 @@ struct MacMarkdown: View, @MainActor Equatable {
     return rendered.streamingTextReveal(String(attributed.characters))
   }
 
-  @ViewBuilder private func render(_ block: MarkdownBlock) -> some View {
+  @ViewBuilder private func render(_ block: MarkdownBlock, at index: Int) -> some View {
     switch block {
     case .paragraph(let text): inline(text)
     case .heading(let level, let text):
@@ -90,7 +90,7 @@ struct MacMarkdown: View, @MainActor Equatable {
           }.buttonStyle(.borderless).font(typography.font(.caption1))
         }
         ScrollView(.horizontal) {
-          Text(MacSearchHighlight.text(code, query: searchQuery))
+          Text(MacSearchHighlight.apply(to: document?.codeText[index] ?? AttributedString(code), query: searchQuery))
             .font(typography.font(design: .monospaced))
             .streamingTextReveal(code).fixedSize(horizontal: true, vertical: false)
         }
@@ -189,13 +189,15 @@ struct MacMarkdownDocument: Sendable {
   let source: String
   let blocks: [MarkdownBlock]
   let inlineText: [String: AttributedString]
+  let codeText: [Int: AttributedString]
 
   init(source: String) throws {
     try Task.checkCancellation()
     self.source = source
     blocks = MarkdownBlockParser.blocks(from: source)
     var inlineText: [String: AttributedString] = [:]
-    for block in blocks {
+    var codeText: [Int: AttributedString] = [:]
+    for (index, block) in blocks.enumerated() {
       try Task.checkCancellation()
       let strings: [String]
       switch block {
@@ -205,7 +207,10 @@ struct MacMarkdownDocument: Sendable {
       case .tasks(let items): strings = items.map(\.text)
       case .footnotes(let items): strings = items.map { "[\($0.key)] \($0.text)" }
       case .table(let table): strings = table.headers + table.rows.flatMap { $0 }
-      case .rule, .code: strings = []
+      case .code(let language, let code):
+        codeText[index] = SyntaxHighlighter.highlight(code, language: language)
+        strings = []
+      case .rule: strings = []
       }
       for text in strings where inlineText[text] == nil {
         try Task.checkCancellation()
@@ -214,5 +219,6 @@ struct MacMarkdownDocument: Sendable {
       }
     }
     self.inlineText = inlineText
+    self.codeText = codeText
   }
 }

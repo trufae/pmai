@@ -29,6 +29,7 @@ struct MacActivityRow: View, @MainActor Equatable {
   var selectedSearchID: UUID?
   @State private var expanded = false
   private var typography = MacChatTypography()
+  private var appearance = MacAppearance()
 
   static func == (lhs: Self, rhs: Self) -> Bool {
     lhs.run == rhs.run && lhs.conversation === rhs.conversation
@@ -51,7 +52,14 @@ struct MacActivityRow: View, @MainActor Equatable {
           .onChange(of: selectedSearchID, initial: true) { _, id in
             if let id { proxy.scrollTo(id, anchor: .top) }
           }
-        }.padding(.top, 8)
+        }
+        .padding(12)
+        .background(appearance.accentColor.opacity(0.035), in: RoundedRectangle(cornerRadius: 12))
+        .overlay {
+          RoundedRectangle(cornerRadius: 12).strokeBorder(appearance.accentColor.opacity(0.6), lineWidth: 1)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .padding(.top, 8)
       }
     } label: {
       HStack(spacing: 6) {

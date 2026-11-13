@@ -1,7 +1,6 @@
+import MaiUI
 import SwiftUI
 import XCTest
-
-@testable import PocketMai
 
 final class SyntaxHighlighterTests: XCTestCase {
   func testBatchedHighlightingPreservesTextAndTokenColors() {

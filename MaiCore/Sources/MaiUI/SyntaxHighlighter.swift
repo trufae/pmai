@@ -1,6 +1,6 @@
 import SwiftUI
 
-enum SyntaxHighlighter {
+public enum SyntaxHighlighter {
   private static let keywords: Set<String> = [
     "actor", "as", "async", "await", "case", "catch", "class", "const", "default", "defer", "do",
     "else", "enum", "export", "false", "final", "for", "func", "function", "guard", "if", "import", "in",
@@ -8,7 +8,7 @@ enum SyntaxHighlighter {
     "throws", "true", "try", "var", "while",
   ]
 
-  static func highlight(_ code: String, language: String) -> AttributedString {
+  public static func highlight(_ code: String, language: String) -> AttributedString {
     let language =
       language
       .trimmingCharacters(in: .whitespacesAndNewlines)
