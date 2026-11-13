@@ -72,4 +72,18 @@ if sys.argv[1] == "exec":
     run('box', 'destroy')
     assert checkout.is_dir()
     assert not json.loads(manifests[0].read_text())['enabled']
+    # A failed /box create must also close an already-running host REPL.
+    failed = root / 'failed-project'
+    subprocess.run(['git', 'clone', '--no-local', str(project), str(failed)], check=True, capture_output=True, env=env)
+    config = root / 'local.json'
+    config.write_text(json.dumps({'defaultAgent': 'main', 'providers': [{'id': 'hello', 'kind': 'hello'}],
+                                 'agents': [{'id': 'main', 'provider': 'hello', 'model': 'hello'}],
+                                 'use': {'plan': False}}))
+    result = subprocess.run([binary, '--config', str(config), '--no-markdown'], cwd=failed,
+                            env=env | {'BOX_TEST_FAIL': '1'},
+                            input=f'/box create --binary {engine}\n!touch escaped\n/exit\n',
+                            text=True, capture_output=True, timeout=60)
+    assert result.returncode == 0, result.stderr
+    assert "Restart pmai" in result.stdout, (result.stdout, result.stderr)
+    assert not (failed / 'escaped').exists()
 print('PASS: project box routing, fail-closed startup, persistence and preserved workspace')

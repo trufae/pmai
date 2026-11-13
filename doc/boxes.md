@@ -2,7 +2,9 @@
 
 Boxing is off by default. `pmai box create` enables it persistently for a Git
 project. Subsequent CLI launches, ACP workers, and Mac app conversations enter
-that project's container before loading plugins or running tools. If its engine
+that project's container before loading plugins or running tools. Boxed ACP and
+Mac connections invoke the engine directly, so an older installed host CLI cannot
+accidentally run the worker outside the container. If its engine
 or container cannot start, pmai reports an error instead of running locally.
 
 ```sh
@@ -19,7 +21,8 @@ pmai box off                 # stops the box and restores local execution
 The CLI also exposes `/box` with completion and `/help box`. After `/box create`
 or `/box on`, restart the CLI to enter the worker. Management commands run on the
 host; from inside a box, use a separate host terminal for `pmai box stop`, `off`,
-or `apply`. Guest agents cannot call back into host box management.
+or `apply`. Guest agents cannot call back into host box management. `/box status` inside a
+worker identifies its box; other management operations require the host terminal.
 
 In the Mac app, use a local folder's **Project Box** menu. Boxed folders show a
 box icon. The menu supports creation, enabling/disabling, start/stop, exporting
@@ -119,7 +122,8 @@ disables boxing but keeps its checkout, home and image. `on` recreates a removed
 container from its image. `rebuild [--binary PATH]` retries image creation and
 replaces the container, keeping its checkout/home but losing packages installed
 after image creation. It also applies edited `box.json` runtime settings.
-Failed provisioning keeps its policy enabled, so the next launch fails closed;
+Failed provisioning keeps its policy enabled and closes a host REPL that attempted
+to enable it, so subsequent prompts cannot fall back to host execution;
 use `rebuild` to retry an image build, or `off` to explicitly return to host execution.
 
 Managed backends currently cover local Docker and Podman on macOS/Linux. SSH

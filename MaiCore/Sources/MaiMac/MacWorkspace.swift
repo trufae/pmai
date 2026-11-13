@@ -408,15 +408,18 @@ final class MacWorkspace {
   func localConfiguration(cwd: String, sessionID: String? = nil) throws -> ACPClient.Configuration {
     let environment = MacCLI.environment
     let directory = URL(fileURLWithPath: cwd, isDirectory: true)
-    let executable = try MacCLI.executable(environment: environment, workingDirectory: directory)
+    let boxed = try ProjectBoxes(home: home, environment: environment).find(at: directory)?.enabled == true
+    let executable = boxed ? "pmai" : try MacCLI.executable(environment: environment, workingDirectory: directory)
     var arguments = ["--acp", "--home", home.rootURL.path]
     // CLI startup restores the chat's runtime configuration before registering
     // providers, agents, MCP and skills. ACP then opens that same conversation.
     if let sessionID { arguments += ["--resume", sessionID] }
-    return .init(command: executable,
+    var configuration = ACPClient.Configuration(command: executable,
       arguments: arguments, environment: environment,
       workingDirectory: directory, permission: .reject,
       readClientFiles: false, sessionID: sessionID)
+    try configuration.restrictProjectBoxAccess()
+    return configuration
   }
 
   func pair(_ invitation: String, name: String) async throws {
@@ -489,11 +492,19 @@ final class MacWorkspace {
   private func launchTerminal(cwd: String, sessionID: String?) async {
     func quote(_ value: String) -> String { "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'" }
     do {
-      let executable = try MacCLI.executable(environment: MacCLI.environment,
-        workingDirectory: URL(fileURLWithPath: cwd, isDirectory: true))
-      var arguments = [executable, "--home", home.rootURL.path]
-      if let sessionID { arguments += ["--resume", sessionID] }
-      let command = "#!/bin/sh\ncd " + quote(cwd) + " || exit 1\nexec " + arguments.map(quote).joined(separator: " ") + "\n"
+      let directory = URL(fileURLWithPath: cwd, isDirectory: true)
+      let boxes = ProjectBoxes(home: home, environment: MacCLI.environment)
+      var arguments: [String]
+      if let box = try boxes.find(at: directory), box.enabled {
+        let launch = try boxes.launchCommand(box,
+          arguments: sessionID.map { ["--resume", $0] } ?? [], cwd: directory, tty: true)
+        arguments = [launch.command] + launch.arguments
+      } else {
+        let executable = try MacCLI.executable(environment: MacCLI.environment, workingDirectory: directory)
+        arguments = [executable, "--home", home.rootURL.path]
+        if let sessionID { arguments += ["--resume", sessionID] }
+      }
+      let command = "#!/bin/sh\nexport PATH=" + quote(MacCLI.environment["PATH"] ?? "/usr/bin:/bin") + "\ncd " + quote(cwd) + " || exit 1\nexec " + arguments.map(quote).joined(separator: " ") + "\n"
       let file = FileManager.default.temporaryDirectory.appendingPathComponent("pmai-\(UUID()).command")
       try command.write(to: file, atomically: true, encoding: .utf8)
       try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: file.path)

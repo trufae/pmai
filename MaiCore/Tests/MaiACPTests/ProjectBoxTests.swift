@@ -24,6 +24,8 @@ func projectBoxLookup() throws {
   client.forwardTools = true
   try client.restrictProjectBoxAccess()
   #expect(!client.readClientFiles && !client.forwardTools)
+  #expect(client.command == "/bin/sh")
+  #expect(client.remoteWorkingDirectory == canonical.path)
   box.enabled = false
   try reopened.save(box)
   #expect(try boxes.find(at: project)?.enabled == false)

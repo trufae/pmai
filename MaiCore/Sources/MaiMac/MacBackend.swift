@@ -55,10 +55,10 @@ final class MacBackend {
         do {
           if try await manager.isRunning(box) {
             let cwd = URL(fileURLWithPath: box.project)
-            let executable = try MacCLI.executable(environment: MacCLI.environment, workingDirectory: cwd)
-            let client = ACPClient(configuration: .init(command: executable,
-              arguments: ["--acp", "--home", home.rootURL.path], environment: MacCLI.environment,
-              workingDirectory: cwd, readClientFiles: false))
+            let launch = try manager.launchCommand(box, arguments: ["--acp"], cwd: cwd)
+            let client = ACPClient(configuration: .init(command: launch.command,
+              arguments: launch.arguments, environment: MacCLI.environment,
+              workingDirectory: cwd, remoteWorkingDirectory: box.project, readClientFiles: false))
             do {
               let guest = try await client.workspace() ?? .init()
               boxSessions[box.id] = guest.sessions.filter { $0.cwd == box.project || $0.cwd.hasPrefix(box.project + "/") }

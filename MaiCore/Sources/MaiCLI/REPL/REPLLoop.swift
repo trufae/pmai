@@ -3212,6 +3212,14 @@ extension MaiCLI {
               await terminal.line(result)
               if ["create", "on"].contains(fields.first ?? "") { return true }
             } catch { await terminal.line("error: \(error.localizedDescription)", to: .standardError) }
+            // Failed provisioning may already have persisted enabled policy.
+            // Do not leave an unboxed REPL available for subsequent prompts.
+            do {
+              if try ProjectBoxes(home: home).find(at: URL(fileURLWithPath: FileManager.default.currentDirectoryPath))?.enabled == true {
+                await terminal.line("Restart pmai to enter this project's box.")
+                return true
+              }
+            } catch { return true }
             return false
           }
           #endif

@@ -183,16 +183,18 @@ public struct ProjectBoxes: Sendable {
     for path in [workspace(box).path, guestHome(box).rootURL.path] where path.contains(",") {
       throw Failure("Box storage paths cannot contain commas.")
     }
+    let relabel = box.engine == "podman" ? ",relabel=private" : ""
     var args = ["create", "--name", box.name, "--label", "org.pmai.box=\(box.id.uuidString)",
       "--init", "--security-opt", "no-new-privileges", "--cap-drop", "ALL",
       "--cap-add", "CHOWN", "--cap-add", "DAC_OVERRIDE", "--cap-add", "FOWNER",
       "--cap-add", "SETUID", "--cap-add", "SETGID", "--cap-add", "FSETID",
       "--pids-limit", "512", "--memory", box.memory, "--cpus", String(box.cpus),
-      "--log-opt", "max-size=10m", "--log-opt", "max-file=2", "--network", box.network == "none" ? "none" : box.name,
-      "--mount", "type=bind,src=\(workspace(box).path),dst=\(box.project)",
-      "--mount", "type=bind,src=\(guestHome(box).rootURL.path),dst=/pmai/home",
+      "--log-driver", "json-file", "--log-opt", "max-size=10m", "--network", box.network == "none" ? "none" : box.name,
+      "--mount", "type=bind,src=\(workspace(box).path),dst=\(box.project)" + relabel,
+      "--mount", "type=bind,src=\(guestHome(box).rootURL.path),dst=/pmai/home" + relabel,
       "--env", "HOME=/pmai/home", "--env", "PMAI_HOME=/pmai/home",
-      "--env", "PMAI_CONFIG=/pmai/home/config.json", "--workdir", box.project]
+      "--env", "PMAI_CONFIG=/pmai/home/config.json", "--env", "PMAI_BOX_ID=" + box.id.uuidString,
+      "--workdir", box.project]
     if box.debug { args += ["--cap-add", "SYS_PTRACE"] }
     for port in box.ports { args += ["--publish", "127.0.0.1:" + port] }
     return args + [box.name]
@@ -242,8 +244,11 @@ public struct ProjectBoxes: Sendable {
     disabled.enabled = false
     try save(disabled)
   }
-  public func launch(_ box: ProjectBox, arguments: [String], cwd: URL, tty: Bool) async throws {
-    try await start(box)
+  /// The shell only sequences engine commands; all values remain positional arguments.
+  /// Never execute a host pmai binary to reach an existing box: it may predate boxing.
+  public func launchCommand(_ box: ProjectBox, arguments: [String], cwd: URL, tty: Bool = false)
+    throws -> (command: String, arguments: [String], directory: String) {
+    try Self.validate(box)
     var forwarded: [String] = []
     var index = 0
     while index < arguments.count {
@@ -253,9 +258,17 @@ public struct ProjectBoxes: Sendable {
     let path = cwd.resolvingSymlinksInPath().path
     let source = workspace(box).resolvingSymlinksInPath().standardizedFileURL.path
     let guestPath = path == source || path.hasPrefix(source + "/") ? box.project + path.dropFirst(source.count) : path
-    _ = try await run(box.engine, ["exec", tty ? "-it" : "-i", "--workdir", guestPath,
-      box.name, "/opt/pmai/pmai"] + forwarded,
-      input: .standardInput, output: .standardOutput)
+    let script = #"""
+      pmai_engine=$1; pmai_box=$2; pmai_cwd=$3; pmai_tty=$4; shift 4
+      "$pmai_engine" start "$pmai_box" >/dev/null || exit $?
+      exec "$pmai_engine" exec "$pmai_tty" --workdir "$pmai_cwd" "$pmai_box" /opt/pmai/pmai "$@"
+      """#
+    return ("/bin/sh", ["-c", script, "pmai-box", box.engine, box.name, guestPath, tty ? "-it" : "-i"] + forwarded, guestPath)
+  }
+  public func launch(_ box: ProjectBox, arguments: [String], cwd: URL, tty: Bool) async throws {
+    try await start(box)
+    let launch = try launchCommand(box, arguments: arguments, cwd: cwd, tty: tty)
+    _ = try await run(launch.command, launch.arguments, input: .standardInput, output: .standardOutput)
   }
   public func diff(_ box: ProjectBox) async throws -> String {
     try await start(box)
@@ -276,14 +289,19 @@ public struct ProjectBoxes: Sendable {
 extension ACPClient.Configuration {
   /// A local-looking pmai command can transparently enter a project box.
   /// Apply the same host boundary even when the caller explicitly enabled forwarding.
-  mutating func restrictProjectBoxAccess() throws {
+  public mutating func restrictProjectBoxAccess() throws {
     guard URL(fileURLWithPath: command).lastPathComponent == "pmai" else { return }
     var env = environment ?? ProcessInfo.processInfo.environment
     if let index = arguments.firstIndex(of: "--home"), index + 1 < arguments.count {
       env[AgentHome.environmentVariable] = arguments[index + 1]
     }
     let boxes = ProjectBoxes(home: AgentHome.resolve(environment: env), environment: env)
-    if let box = try boxes.find(at: workingDirectory ?? AgentExecutionScope.directory), box.enabled {
+    let cwd = workingDirectory ?? AgentExecutionScope.directory
+    if let box = try boxes.find(at: cwd), box.enabled {
+      let launch = try boxes.launchCommand(box, arguments: arguments, cwd: cwd)
+      command = launch.command
+      arguments = launch.arguments
+      remoteWorkingDirectory = launch.directory
       forwardTools = false
       readClientFiles = false
     }

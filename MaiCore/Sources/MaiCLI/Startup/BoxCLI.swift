@@ -33,6 +33,10 @@ public enum BoxCLI {
     let boxes = ProjectBoxes(home: home, environment: environment)
     let action = arguments.first ?? "status"
     if ["help", "--help", "-h"].contains(action) { return help }
+    if let id = environment["PMAI_BOX_ID"] {
+      if action == "status" { return "Running inside project box \(id). Manage its lifecycle from a host terminal." }
+      throw ProjectBoxes.Failure("Manage boxes from a host terminal. This worker cannot change host box policy.")
+    }
     if action == "create" {
       let project = try await boxes.gitRoot(at: directory)
       let base = try await boxes.run("git", ["-C", project, "rev-parse", "HEAD"])
