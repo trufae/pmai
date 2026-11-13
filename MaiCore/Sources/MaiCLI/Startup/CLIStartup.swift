@@ -29,6 +29,35 @@ extension MaiCLI {
     let startup = CLIStartupTiming(started: started, environment: environment)
     startup.mark("main entered")
     let commandLineArguments = platformCommandLineArguments(environment: environment)
+    #if os(macOS) || os(Linux)
+    // Route before loading project configuration, plugins, tools or credentials.
+    // All execution (including descendants) belongs to the worker process.
+    do {
+      let arguments = Array(commandLineArguments.dropFirst())
+      var boxEnvironment = environment
+      if let index = arguments.firstIndex(of: "--home"), index + 1 < arguments.count {
+        boxEnvironment[AgentHome.environmentVariable] = arguments[index + 1]
+      }
+      let home = AgentHome.resolve(environment: boxEnvironment)
+      let directory = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
+      if arguments.first == "box" {
+        print(try await BoxCLI.run(Array(arguments.dropFirst()), home: home,
+          directory: directory, environment: environment))
+        return
+      }
+      let boxes = ProjectBoxes(home: home, environment: environment)
+      if let box = try boxes.find(at: directory), box.enabled,
+        !arguments.contains("--help"), !arguments.contains("-h"),
+        !arguments.contains("--version"), !arguments.contains("-v") {
+        try await boxes.launch(box, arguments: arguments, cwd: directory,
+          tty: isatty(STDIN_FILENO) != 0 && !arguments.contains("--acp") && !arguments.contains("--mcp"))
+        return
+      }
+    } catch {
+      FileHandle.standardError.write(Data("error: \(error.localizedDescription)\n".utf8))
+      exit(2)
+    }
+    #endif
     if commandLineArguments.dropFirst().starts(with: ["app", "run"]) {
       let arguments = commandLineArguments.dropFirst(3)
       if Array(arguments) == ["--help"] {
@@ -361,7 +390,7 @@ extension MaiCLI {
         todo: todoState,
         skills: skillState,
         themesDirectory: themesDirectory,
-        usageStats: usageStats)
+        usageStats: usageStats, home: home)
       if let theme = environmentValue(["PMAI_THEME"], in: environment) {
         do {
           let ui = try TerminalTheme.load(

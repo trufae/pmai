@@ -56,8 +56,9 @@ public struct ProjectBoxes: Sendable {
   public func find(at directory: URL) throws -> ProjectBox? {
     let path = directory.resolvingSymlinksInPath().standardizedFileURL.path
     return try list().filter {
-      path == $0.project || path.hasPrefix($0.project + "/")
-        || path == workspace($0).path || path.hasPrefix(workspace($0).path + "/")
+      let checkout = workspace($0).resolvingSymlinksInPath().standardizedFileURL.path
+      return path == $0.project || path.hasPrefix($0.project + "/")
+        || path == checkout || path.hasPrefix(checkout + "/")
     }
       .max { $0.project.count < $1.project.count }
   }
@@ -250,7 +251,7 @@ public struct ProjectBoxes: Sendable {
       forwarded.append(arguments[index]); index += 1
     }
     let path = cwd.resolvingSymlinksInPath().path
-    let source = workspace(box).path
+    let source = workspace(box).resolvingSymlinksInPath().standardizedFileURL.path
     let guestPath = path == source || path.hasPrefix(source + "/") ? box.project + path.dropFirst(source.count) : path
     _ = try await run(box.engine, ["exec", tty ? "-it" : "-i", "--workdir", guestPath,
       box.name, "/opt/pmai/pmai"] + forwarded,

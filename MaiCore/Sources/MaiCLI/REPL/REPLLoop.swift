@@ -2477,7 +2477,7 @@ extension MaiCLI {
         let commandFields = text.split(whereSeparator: \Character.isWhitespace).map(String.init)
         let metadataCommands = [
           "/help", "/history", "/version", "/about", "/then", "/unthen", "/stop", "/view", "/highlight",
-          "/projects", "/project", "/remote", "/shell", "/exit", "/quit",
+          "/projects", "/project", "/box", "/remote", "/shell", "/exit", "/quit",
         ]
         let chatNavigation =
           commandFields.first == "/chat"
@@ -3199,6 +3199,22 @@ extension MaiCLI {
           // Every other command runs now. What it changes and the running
           // turn meet as noteTurnEffects describes, with a note, not a wait.
           let before = REPLCommandSnapshot(session: session)
+          #if os(macOS) || os(Linux)
+          if name == "/box" {
+            do {
+              guard loop.activeTurn == nil, await runtime.supervisor.liveProcesses().isEmpty else {
+                throw ProjectBoxes.Failure("Stop running agents before managing boxes.")
+              }
+              let fields = try shellWords(argument)
+              let directory = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+              let result = try await BoxCLI.run(fields, home: home, directory: directory,
+                environment: ProcessInfo.processInfo.environment)
+              await terminal.line(result)
+              if ["create", "on"].contains(fields.first ?? "") { return true }
+            } catch { await terminal.line("error: \(error.localizedDescription)", to: .standardError) }
+            return false
+          }
+          #endif
           if name == "/projects" {
             do {
               let fields = try shellWords(argument)
@@ -3220,6 +3236,11 @@ extension MaiCLI {
                 guard FileManager.default.fileExists(atPath: directory, isDirectory: &isDirectory), isDirectory.boolValue else {
                   throw JSONRPCError.invalidParams("No project or directory matches '\(selector)'. /projects lists them.")
                 }
+                #if os(macOS) || os(Linux)
+                if let box = try ProjectBoxes(home: home).find(at: URL(fileURLWithPath: directory)), box.enabled {
+                  throw ProjectBoxes.Failure("This project is boxed. Start pmai in that directory to enter its environment.")
+                }
+                #endif
                 let target = try home.openProject(atWorkingDirectory: URL(fileURLWithPath: directory))
                 if target.id == project.id { await terminal.line("Already in '\(project.displayName)'."); break }
                 let nextStore = home.chatStore(for: target)

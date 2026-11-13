@@ -95,6 +95,25 @@ public enum CLIUpdater {
     return url
   }
 
+  /// Download a verified worker for a different OS/architecture without replacing the host CLI.
+  public static func releaseBinary(platform: String, version: String,
+    environment: [String: String]) async throws -> Data {
+    let releases = try releasesURL(environment: environment)
+    let base = releases.appendingPathComponent("download").appendingPathComponent(version)
+    let asset = "pmai-\(platform).zip"
+    let archive = try await download(base.appendingPathComponent(asset), session: session)
+    let sums = try await download(base.appendingPathComponent("SHA256SUMS"), session: session)
+    let digest = SHA256.hash(data: archive).map { String(format: "%02x", $0) }.joined()
+    guard String(decoding: sums, as: UTF8.self).split(whereSeparator: \.isNewline).contains(where: {
+      let fields = $0.split(whereSeparator: \.isWhitespace)
+      return fields.count == 2 && fields[0].lowercased() == digest
+        && (fields[1] == asset || fields[1] == "*" + asset)
+    }) else { throw Failure.message("checksum verification failed for \(asset)") }
+    let files = try ZipArchiveReader.entries(in: archive).filter { $0.path == "pmai" }
+    guard files.count == 1 else { throw Failure.message("release must contain exactly one pmai executable") }
+    return files[0].data
+  }
+
   static func run(currentVersion: String, executable: String, environment: [String: String]) async throws {
     let fm = FileManager.default
     let platform = try releasePlatform(environment: environment)

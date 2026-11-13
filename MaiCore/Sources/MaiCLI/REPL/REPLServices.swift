@@ -49,6 +49,7 @@ struct REPLServices: Sendable {
   var themesDirectory: URL
   /// Tokens/s and time in use per provider:model, shared with the runtime.
   var usageStats: ModelUsageStore
+  var home: AgentHome = .resolve()
   let modelCatalog = REPLModelCatalog()
   let voiceCatalog = REPLVoiceCatalog()
 }

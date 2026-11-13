@@ -1077,6 +1077,7 @@ extension MaiCLI {
       pmai — the Pocket Mai command-line agent
 
       Usage:
+        pmai box help
         pmai [options] [message]
         pmai app run --allow-exec DIRECTORY [ARGS...]
 

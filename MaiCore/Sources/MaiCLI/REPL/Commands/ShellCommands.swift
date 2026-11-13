@@ -1,5 +1,6 @@
 import Foundation
 import MaiCore
+import MaiACP
 
 #if canImport(Android)
   import Android
@@ -45,7 +46,7 @@ extension MaiCLI {
     #endif
   }
 
-  static func changeWorkingDirectory(_ argument: String, terminal: TerminalWriter) async {
+  static func changeWorkingDirectory(_ argument: String, home: AgentHome = .resolve(), terminal: TerminalWriter) async {
     let path = argument.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !path.isEmpty else {
       await terminal.line("Usage: /cd PATH")
@@ -61,6 +62,16 @@ extension MaiCLI {
       await terminal.line("error: Not a directory: \(target.path)", to: .standardError)
       return
     }
+    #if os(macOS) || os(Linux)
+    do {
+      if let box = try ProjectBoxes(home: home).find(at: target), box.enabled {
+        throw ProjectBoxes.Failure("This project is boxed. Start pmai there to enter its environment.")
+      }
+    } catch {
+      await terminal.line("error: \(error.localizedDescription)", to: .standardError)
+      return
+    }
+    #endif
     guard FileManager.default.changeCurrentDirectoryPath(target.path) else {
       await terminal.line("error: Could not change directory to \(target.path)", to: .standardError)
       return

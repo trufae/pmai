@@ -67,6 +67,9 @@ extension MaiCLI {
     services: REPLServices
   ) async throws -> String {
     let command = line.split(maxSplits: 1, whereSeparator: \Character.isWhitespace).map(String.init)
+    if command.first == "/box" {
+      return "Only the person at the REPL can manage project boxes."
+    }
     if command.first == "/remote" {
       return "Only the person at the REPL can pair, connect, or serve remote hosts. /help remote describes the commands."
     }
@@ -235,6 +238,10 @@ extension MaiCLI {
         await terminal.line(viewHelp)
       case "mcp", "/mcp":
         await terminal.line(mcpCommandHelp)
+      #if os(macOS) || os(Linux)
+      case "box", "/box":
+        await terminal.line(BoxCLI.help)
+      #endif
       case "remote", "/remote":
         await terminal.line(remoteHelp)
       case "projects", "/projects":
@@ -278,6 +285,10 @@ extension MaiCLI {
       await terminal.line(FileManager.default.currentDirectoryPath)
     case "/history":
       await terminal.line("Input history is available at the REPL prompt. /help history lists commands.")
+    #if os(macOS) || os(Linux)
+    case "/box":
+      await terminal.line(BoxCLI.help)
+    #endif
     case "/remote":
       await terminal.line(remoteHelp)
     case "/projects":
@@ -288,7 +299,7 @@ extension MaiCLI {
         configurationPath: services.configurationPath,
         access: services.promptFileAccess, terminal: terminal)
     case "/cd":
-      await changeWorkingDirectory(argument, terminal: terminal)
+      await changeWorkingDirectory(argument, home: services.home, terminal: terminal)
     case "/nothink":
       await handleEffortCommand(
         "off", session: &session, runtime: runtime, configuration: &configuration,

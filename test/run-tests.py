@@ -9,7 +9,7 @@ import sys
 import time
 
 ROOT = Path(__file__).resolve().parent.parent
-SMOKE = '''cli-xdc installer openai-http project-approval project-debug projects-repl provider-routing remote-repl forwiroh-remote repl-defaults
+SMOKE = '''box cli-xdc installer openai-http project-approval project-debug projects-repl provider-routing remote-repl forwiroh-remote repl-defaults
 repl-cd repl-chat repl-del repl-export repl-fork repl-history repl-indexes repl-local-providers repl-progress repl-redact repl-resume repl-resume-routing
 repl-resume-state repl-reset repl-skills repl-small-context repl-smart-context repl-tool-context repl-tool-policy run-shell task-agents
 update vim web-fetch provider-http'''.split()
