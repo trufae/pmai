@@ -128,6 +128,7 @@ struct MacChatView: View {
                       && conversation.messages.last?.id == message.id).equatable()
                 }
               }
+              .modifier(MacMessageScrollBounce())
               .background(alignment: .top) {
                 MacHistoryScrollMarker(session: historyScrollSession, id: run.id)
                   .frame(height: 1)
@@ -140,6 +141,7 @@ struct MacChatView: View {
           .padding(28)
           .frame(maxWidth: .infinity)
         }
+        .modifier(MacChatScrollBounce())
         .simultaneousGesture(
           MagnifyGesture()
             .updating($isPinching) { _, active, _ in active = true }
