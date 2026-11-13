@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 import MaiACP
 import MaiCore
+import MaiCLI
 import Observation
 
 enum MacSidebarSection: String, CaseIterable {
@@ -314,6 +315,51 @@ final class MacWorkspace {
       }
       busy = false
       await refresh()
+    }
+  }
+
+  func box(for folder: ACPWorkspaceFolder) -> ProjectBox? {
+    backend.boxes.filter { folder.cwd == $0.project || folder.cwd.hasPrefix($0.project + "/") }
+      .max { $0.project.count < $1.project.count }
+  }
+
+  func chooseBoxConfiguration(for folder: ACPWorkspaceFolder) {
+    let panel = NSOpenPanel()
+    panel.title = "Choose a configuration to copy into the box, including its credentials"
+    panel.prompt = "Create Box"
+    panel.canChooseDirectories = false
+    panel.allowsMultipleSelection = false
+    if panel.runModal() == .OK, let url = panel.url {
+      manageBox("create", folder: folder, configuration: url)
+    }
+  }
+
+  func manageBox(_ action: String, folder: ACPWorkspaceFolder, configuration: URL? = nil) {
+    guard hostID == nil, !busy else { return }
+    let project = box(for: folder)?.project ?? folder.cwd
+    let affected = conversations.filter { $0.hostID == nil && ($0.cwd == project || $0.cwd.hasPrefix(project + "/")) }
+    guard !affected.contains(where: { $0.busy }) else {
+      error = "Stop active conversations before changing this project's box."
+      return
+    }
+    busy = true
+    Task {
+      do {
+        for chat in affected { await chat.close() }
+        conversations.removeAll { chat in affected.contains(where: { $0.id == chat.id }) }
+        let arguments = [action] + (configuration.map { ["--config", $0.path] } ?? [])
+        let result = try await BoxCLI.run(arguments, home: home,
+          directory: URL(fileURLWithPath: folder.cwd), environment: MacCLI.environment)
+        if action == "diff" {
+          let panel = NSSavePanel()
+          panel.nameFieldStringValue = "box.patch"
+          if panel.runModal() == .OK, let url = panel.url { try Data((result + "\n").utf8).write(to: url) }
+        }
+      } catch { self.error = error.localizedDescription }
+      busy = false
+      await refresh()
+      selectedID = nil
+      if ["create", "on", "off"].contains(action) { newChat() }
     }
   }
 

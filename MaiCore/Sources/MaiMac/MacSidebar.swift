@@ -168,7 +168,7 @@ struct MacSidebar: View {
     Group {
       ForEach(workspace.snapshot.folders) { folder in
         Button { workspace.selectFolder(folder.cwd) } label: {
-          row(folder.name, icon: folder.icon ?? "folder", selected: workspace.cwd == folder.cwd)
+          row(folder.name, icon: workspace.hostID == nil && workspace.box(for: folder)?.enabled == true ? "shippingbox" : (folder.icon ?? "folder"), selected: workspace.cwd == folder.cwd)
         }
         .help(folder.cwd)
         .contextMenu {
@@ -178,6 +178,42 @@ struct MacSidebar: View {
             workspace.newChat()
           }
           if workspace.hostID == nil {
+            Menu("Project Box", systemImage: "shippingbox") {
+              if let box = workspace.box(for: folder) {
+                Text(box.enabled ? "Enabled · \(box.engine)" : "Disabled")
+                Button(box.enabled ? "Disable Box" : "Enable Box") {
+                  workspace.manageBox(box.enabled ? "off" : "on", folder: folder)
+                }
+                Button("Start") { workspace.manageBox("start", folder: folder) }
+                if box.enabled { Button("Configure in Terminal") { workspace.openTerminal(in: folder) } }
+                Button("Stop All Box Processes") { workspace.manageBox("stop", folder: folder) }
+                Button("Export Diff…") { workspace.manageBox("diff", folder: folder) }
+                Button("Apply Changes…") {
+                  confirmation = .init(title: "Apply boxed changes?", button: "Apply",
+                    message: "Apply the box's changes to the original checkout. Conflicting local edits will stop the import.") {
+                      workspace.manageBox("apply", folder: folder)
+                    }
+                }
+                Button("Show Box Workspace") {
+                  NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath:
+                    ProjectBoxes(home: workspace.home).workspace(box).path)
+                }
+                Button("Remove Container…", role: .destructive) {
+                  confirmation = .init(title: "Remove this container?", button: "Remove",
+                    message: "Stop all processes, remove installed packages and disable boxing. The separate checkout and chats are kept.") {
+                      workspace.manageBox("destroy", folder: folder)
+                    }
+                }
+              } else {
+                Button("Create Box with Configuration…") { workspace.chooseBoxConfiguration(for: folder) }
+                Button("Create Box…") {
+                  confirmation = .init(title: "Box this project?", button: "Create Box",
+                    message: "Download the matching Linux pmai release and build a Docker environment from committed HEAD. Future chats run there automatically. Configure providers inside the box; host credentials and uncommitted edits are not copied.") {
+                      workspace.manageBox("create", folder: folder)
+                    }
+                }
+              }
+            }
             Button("Rename…", systemImage: "pencil") {
               rename = .init(title: "Rename Folder", name: folder.name) { workspace.renameFolder(folder, to: $0) }
             }

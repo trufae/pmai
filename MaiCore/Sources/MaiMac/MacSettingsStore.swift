@@ -1,5 +1,6 @@
 import AppKit
 import MaiCore
+import MaiACP
 import Observation
 
 struct MacSettingsScope: Identifiable, Hashable {
@@ -37,7 +38,8 @@ final class MacSettingsStore {
       }
       if !scopes.contains(where: { $0.id == scopeID }) {
         let local = cwd.map { URL(fileURLWithPath: $0).appendingPathComponent("pmai.json") }
-        scopeID = local.flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0.path : nil } ?? globalURL.path
+        let boxed = try cwd.map { try ProjectBoxes(home: home).find(at: URL(fileURLWithPath: $0))?.enabled == true } ?? false
+        scopeID = local.flatMap { boxed || FileManager.default.fileExists(atPath: $0.path) ? $0.path : nil } ?? globalURL.path
       }
       reload()
     } catch { self.error = error.localizedDescription }
@@ -50,6 +52,9 @@ final class MacSettingsStore {
     skills = []
     guard let scope else { return }
     do {
+      if let cwd = scope.cwd, try ProjectBoxes(home: home).find(at: URL(fileURLWithPath: cwd))?.enabled == true {
+        throw MaiConfigurationError.invalidFile("This project's settings are inside its box. Use Project Box → Configure in Terminal to edit providers, MCP servers and skills there. Global settings do not configure boxed workers.")
+      }
       let initial: Data
       if scope.cwd != nil, !FileManager.default.fileExists(atPath: scope.url.path),
         FileManager.default.fileExists(atPath: globalURL.path) {

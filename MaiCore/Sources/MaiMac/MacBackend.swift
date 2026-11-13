@@ -9,6 +9,8 @@ final class MacBackend {
   let home: AgentHome
   let servers: MacServerStore
   var hosts: [ACPRemoteHost] = []
+  var boxes: [ProjectBox] = []
+  private var boxSessions: [UUID: [ACPSessionInfo]] = [:]
   var conversations: [MacConversation] = []
   var snapshots: [UUID?: ACPWorkspaceSnapshot] = [:]
   weak var activeWorkspace: MacWorkspace?
@@ -44,7 +46,32 @@ final class MacBackend {
       catch { await client.disconnect(); throw error }
       await client.disconnect()
     } else {
-      snapshots[nil] = try await AgentHomeACPWorkspace(home: home).snapshot()
+      let manager = ProjectBoxes(home: home, environment: MacCLI.environment)
+      boxes = try manager.list()
+      var local = try await AgentHomeACPWorkspace(home: home).snapshot()
+      var failure: Error?
+      for box in boxes where box.enabled {
+        local.sessions.removeAll { $0.cwd == box.project || $0.cwd.hasPrefix(box.project + "/") }
+        do {
+          if try await manager.isRunning(box) {
+            let cwd = URL(fileURLWithPath: box.project)
+            let executable = try MacCLI.executable(environment: MacCLI.environment, workingDirectory: cwd)
+            let client = ACPClient(configuration: .init(command: executable,
+              arguments: ["--acp", "--home", home.rootURL.path], environment: MacCLI.environment,
+              workingDirectory: cwd, readClientFiles: false))
+            do {
+              let guest = try await client.workspace() ?? .init()
+              boxSessions[box.id] = guest.sessions.filter { $0.cwd == box.project || $0.cwd.hasPrefix(box.project + "/") }
+            } catch { await client.disconnect(); throw error }
+            await client.disconnect()
+          }
+        } catch { failure = error }
+        local.sessions += boxSessions[box.id] ?? []
+      }
+      // Cross-boundary moves cannot be handled by a single ACP worker.
+      if boxes.contains(where: \.enabled) { local.canMoveSessions = false }
+      snapshots[nil] = local
+      if let failure { throw failure }
     }
   }
 
