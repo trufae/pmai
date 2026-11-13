@@ -141,7 +141,7 @@ struct MacChatView: View {
           .padding(28)
           .frame(maxWidth: .infinity)
         }
-        .modifier(MacChatScrollBounce())
+        .modifier(MacChatScrollBounce(phase: scrollPhase))
         .simultaneousGesture(
           MagnifyGesture()
             .updating($isPinching) { _, active, _ in active = true }
