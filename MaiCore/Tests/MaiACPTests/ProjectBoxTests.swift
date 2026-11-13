@@ -81,6 +81,16 @@ func projectBoxRepository() async throws {
   #expect(mounts.count == 2)
   #expect(mounts.allSatisfy { !$0.contains("src=" + project.path + ",") && !$0.contains("docker.sock") })
   #expect(!args.contains("--privileged"))
+  // Shared project history is live state, not a source change to export/apply.
+  var shared = box
+  shared.sharedConfigurationDirectory = root.appendingPathComponent("config").path
+  let metadata = checkout.appendingPathComponent(".pmai")
+  try FileManager.default.createDirectory(at: metadata, withIntermediateDirectories: true)
+  try Data("private conversation\n".utf8).write(to: metadata.appendingPathComponent("chat.json"))
+  let sharedPatch = try await worker.diff(shared)
+  #expect(!sharedPatch.contains("private conversation"))
+  #expect(!sharedPatch.contains(".pmai"))
+  #expect(sharedPatch.contains("guest edit"))
   // Container mutations cannot replace host-owned policy.
   #expect(try boxes.find(at: project)?.baseCommit == base)
   try await boxes.destroy(box)

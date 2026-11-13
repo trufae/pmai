@@ -13,8 +13,8 @@ import MaiStandardTools
 #endif
 
 extension MaiCLI {
-  static func defaultConfigurationPath(environment: [String: String]) -> String {
-    AgentHome.expandUserPath("~/.config/pmai/config.json", environment: environment)
+  static func defaultConfigurationPath(environment: [String: String], home: AgentHome? = nil) -> String {
+    (home ?? AgentHome.resolve(environment: environment)).configurationFileURL(environment: environment).path
   }
 
   static func initialConfiguration() -> MaiConfiguration {
@@ -23,12 +23,12 @@ extension MaiCLI {
     ], fileAccess: .init())
   }
 
-  static func editConfiguration(environment: [String: String]) async throws {
+  static func editConfiguration(environment: [String: String], home: AgentHome) async throws {
     let editor = environment["EDITOR"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     guard let command = editor.isEmpty ? fallbackEditor(environment: environment) : editor else {
       throw CLIError.noEditor
     }
-    let url = URL(fileURLWithPath: defaultConfigurationPath(environment: environment))
+    let url = home.configurationFileURL(environment: environment)
     if !FileManager.default.fileExists(atPath: url.path) {
       try initialConfiguration().save(to: url)
     }
@@ -50,7 +50,7 @@ extension MaiCLI {
     }
     let candidates = [
       FileManager.default.currentDirectoryPath + "/pmai.json",
-      defaultConfigurationPath(environment: environment),
+      defaultConfigurationPath(environment: environment, home: resolvedHome(options: options, environment: environment)),
     ]
     for path in candidates where FileManager.default.fileExists(atPath: path) {
       return (try MaiConfiguration.load(from: URL(fileURLWithPath: path)), path)

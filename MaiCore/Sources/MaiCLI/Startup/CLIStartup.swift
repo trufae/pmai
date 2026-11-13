@@ -49,7 +49,7 @@ extension MaiCLI {
       if let box = try boxes.find(at: directory), box.enabled,
         !arguments.contains("--help"), !arguments.contains("-h"),
         !arguments.contains("--version"), !arguments.contains("-v") {
-        try await boxes.launch(box, arguments: arguments, cwd: directory,
+        try await BoxCLI.launch(box, boxes: boxes, arguments: arguments, cwd: directory,
           tty: isatty(STDIN_FILENO) != 0 && !arguments.contains("--acp") && !arguments.contains("--mcp"))
         return
       }
@@ -112,7 +112,7 @@ extension MaiCLI {
         return
       }
       if options.editConfig {
-        try await editConfiguration(environment: environment)
+        try await editConfiguration(environment: environment, home: resolvedHome(options: options, environment: environment))
         return
       }
       if options.update {
@@ -145,8 +145,9 @@ extension MaiCLI {
         return
       }
 
+      let home = resolvedHome(options: options, environment: environment)
       let loaded = try loadConfiguration(options: options, environment: environment)
-      let configurationPath = loaded?.path ?? defaultConfigurationPath(environment: environment)
+      let configurationPath = loaded?.path ?? defaultConfigurationPath(environment: environment, home: home)
       var configuration = loaded?.configuration
       if var existing = configuration {
         var changed = existing.associateSystemPrompts()
@@ -167,7 +168,6 @@ extension MaiCLI {
         if changed { try existing.save(to: URL(fileURLWithPath: configurationPath)) }
         configuration = existing
       }
-      let home = resolvedHome(options: options, environment: environment)
       startup.mark("configuration loaded")
       try await ForwirohRemote.shared.configure(
         directory: home.rootURL.appendingPathComponent("forwiroh-client"),

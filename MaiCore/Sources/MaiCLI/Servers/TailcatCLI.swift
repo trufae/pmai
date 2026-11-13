@@ -249,10 +249,13 @@ enum TailcatCLI {
   }
 
   private static func configURL(_ options: Options, environment: [String: String]) -> URL {
+    var homeEnvironment = environment
+    if let home = options.values["--home"] { homeEnvironment[AgentHome.environmentVariable] = home }
     let local = FileManager.default.currentDirectoryPath + "/pmai.json"
     let path = options.values["--config"] ?? environment["PMAI_CONFIG"]
-      ?? (FileManager.default.fileExists(atPath: local) ? local : "~/.config/pmai/config.json")
-    return URL(fileURLWithPath: NSString(string: path).expandingTildeInPath)
+      ?? (FileManager.default.fileExists(atPath: local) ? local
+        : AgentHome.resolve(environment: homeEnvironment).configurationFileURL(environment: environment).path)
+    return URL(fileURLWithPath: AgentHome.expandUserPath(path, environment: environment))
   }
 
   private static func clientKey(_ store: TailcatStore, tailcat: String) throws -> URL {

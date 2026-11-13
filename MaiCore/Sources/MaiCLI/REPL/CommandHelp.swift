@@ -1091,10 +1091,10 @@ extension MaiCLI {
         --api-key KEY       prefer an environment variable or config reference
         --base-url URL      ad-hoc OpenAI-compatible endpoint
         --config PATH       load plugins, providers, tools, MCPs, agents, and approvals
-        -E                  edit ~/.config/pmai/config.json in $EDITOR (or vim, nano, notepad) and exit
+        -E                  edit the user config in $EDITOR (or vim, nano, notepad) and exit
         -h, --help          show this help
         --history PATH      persist editable input history (or PMAI_HISTORY)
-        --home DIR          keep the project index and shared state in DIR (or PMAI_HOME)
+        --home DIR          keep configuration, project index and shared state in DIR (or PMAI_HOME)
         --image PATH        attach an image (repeatable)
         -l, --list          list saved chats in this project and exit
         --markdown          render replies as markdown even when piped
@@ -1126,7 +1126,8 @@ extension MaiCLI {
         --tool-approval MODE yolo, ask, or smart for this run; /set tool.approval saves the project default
 
       Config discovery:
-        --config, PMAI_CONFIG, ./pmai.json, ~/.config/pmai/config.json
+        --config, PMAI_CONFIG, ./pmai.json, ~/.pmai/config/config.json
+        --home / PMAI_HOME relocates ~/.pmai; ~/.config/pmai/config.json is a legacy fallback.
 
       Terminal theme:
         PMAI_THEME=default|slime|summer|ember|pink|night or a name in ~/.pmai/themes

@@ -9,8 +9,9 @@ public enum BoxCLI {
       pmai box create [--binary LINUX_PMAI] [--engine docker|podman]
                       [--image ubuntu:24.04] [--network bridge|none]
                       [--port HOST:GUEST] [--debug] [--memory 4g] [--cpus 2]
-                      [--config GUEST_CONFIG]
+                      [--config GUEST_CONFIG | --share-home]
       pmai box status | on | off | start | stop | shell | diff | apply | destroy
+      pmai box share-home
       pmai box rebuild [--binary LINUX_PMAI]
 
     Policy: ~/.pmai/box/<id>/box.json. Checkout: ~/.pmai/worktree/<id>.
@@ -19,6 +20,9 @@ public enum BoxCLI {
     Without it, configure providers inside the box. --binary must be a Linux executable
     for the engine architecture; otherwise the matching verified pmai release is downloaded.
     Normal pmai launches automatically enter enabled project boxes, including subdirectories.
+    --share-home shares pmai settings, credentials and history with the host, including a
+    project's existing .pmai directory. share-home enables this for an existing box and
+    restarts it, preserving installed packages and its previous private home.
     off stops the box and restores host execution. stop keeps boxing enabled.
     apply imports the reviewed diff; conflicts leave the original checkout unchanged.
     destroy stops/removes the container and disables boxing, preserving checkout and history.
@@ -43,10 +47,13 @@ public enum BoxCLI {
       var box = ProjectBox(project: project, baseCommit: base)
       var binary: URL?
       var configuration = try MaiCLI.initialConfiguration().encoded()
+      var shareHome = false
+      var customConfiguration = false
       var index = 1
       while index < arguments.count {
         let option = arguments[index]
         if option == "--debug" { box.debug = true; index += 1; continue }
+        if option == "--share-home" { shareHome = true; index += 1; continue }
         guard index + 1 < arguments.count else { throw ProjectBoxes.Failure("Missing value for \(option).") }
         let value = arguments[index + 1]
         switch option {
@@ -58,10 +65,15 @@ public enum BoxCLI {
         case "--memory": box.memory = value
         case "--cpus": box.cpus = Int(value) ?? 0
         case "--config":
+          customConfiguration = true
           configuration = try MaiConfiguration.load(from: URL(fileURLWithPath: AgentHome.expandUserPath(value))).encoded()
         default: throw ProjectBoxes.Failure("Unknown box option: \(option)")
         }
         index += 2
+      }
+      if shareHome {
+        guard !customConfiguration else { throw ProjectBoxes.Failure("Choose --share-home or --config.") }
+        box.sharedConfigurationDirectory = try sharedConfigurationDirectory(home: home, environment: environment).path
       }
       try ProjectBoxes.validate(box)
       let temporary = FileManager.default.temporaryDirectory.appendingPathComponent("pmai-box-binary-" + UUID().uuidString)
@@ -89,7 +101,10 @@ public enum BoxCLI {
     }
     switch action {
     case "status":
-      return "Box \(box.id.uuidString): \(box.enabled ? "enabled" : "disabled")\nProject: \(box.project)\nWorkspace: \(boxes.workspace(box).path)\nEngine: \(box.engine)\nNetwork: \(box.network)\nDebug: \(box.debug)\nPorts: \(box.ports.joined(separator: ", "))"
+      return "Box \(box.id.uuidString): \(box.enabled ? "enabled" : "disabled")\nProject: \(box.project)\nWorkspace: \(boxes.workspace(box).path)\nEngine: \(box.engine)\nHome: \(box.sharedConfigurationDirectory == nil ? "private" : "shared with host")\nNetwork: \(box.network)\nDebug: \(box.debug)\nPorts: \(box.ports.joined(separator: ", "))"
+    case "share-home":
+      try await boxes.shareHome(box, configurationDirectory: sharedConfigurationDirectory(home: home, environment: environment))
+      return "Host pmai settings, credentials and history are now shared. Restart pmai to enter the updated box."
     case "on": try await boxes.start(box); box.enabled = true; try boxes.save(box)
     case "off": try await boxes.stop(box); box.enabled = false; try boxes.save(box)
     case "start": try await boxes.start(box)
@@ -101,11 +116,45 @@ public enum BoxCLI {
     case "apply": try await boxes.apply(box)
     case "shell":
       try await boxes.start(box)
-      _ = try await boxes.run(box.engine, ["exec", "-it", box.name, "/bin/bash"],
-        input: .standardInput, output: .standardOutput)
+      try runTerminal(try LocalExecutable.resolve(box.engine, environment: environment),
+        arguments: ["exec", "-it", box.name, "/bin/bash"])
     default: throw ProjectBoxes.Failure(help)
     }
     return "Box: \(action) completed."
+  }
+
+  private static func sharedConfigurationDirectory(home: AgentHome, environment: [String: String]) throws -> URL {
+    let file = home.configurationFileURL(environment: environment)
+    if FileManager.default.fileExists(atPath: file.path) {
+      _ = try MaiConfiguration.load(from: file)
+    } else {
+      try MaiCLI.initialConfiguration().save(to: file)
+    }
+    return file.deletingLastPathComponent().resolvingSymlinksInPath()
+  }
+
+  static func launch(_ box: ProjectBox, boxes: ProjectBoxes, arguments: [String],
+    cwd: URL, tty: Bool) async throws {
+    try await boxes.start(box)
+    let launch = try boxes.launchCommand(box, arguments: arguments, cwd: cwd, tty: tty)
+    if tty {
+      try runTerminal(launch.command, arguments: launch.arguments)
+    } else {
+      _ = try await boxes.run(launch.command, launch.arguments,
+        input: .standardInput, output: .standardOutput)
+    }
+  }
+
+  private static func runTerminal(_ command: String, arguments: [String]) throws {
+    // Foundation.Process creates a background process group, which the terminal
+    // stops when docker/podman reads input. Keep the engine in pmai's foreground
+    // job and restore terminal modes through the same handoff as shell commands.
+    let invocation = ([command] + arguments).map(MaiCLI.shellQuote).joined(separator: " ")
+    let status = try TerminalCommand.run("exec " + invocation)
+    guard status == 0 else {
+      let reason = status & 0x7f == 0 ? "exit \(status >> 8)" : "signal \(status & 0x7f)"
+      throw ProjectBoxes.Failure("Box terminal command failed (\(reason)).")
+    }
   }
 }
 #endif

@@ -76,7 +76,7 @@ final class MacVoice {
   }
 
   static func configuration(for conversation: MacConversation) throws -> MaiConfiguration {
-    let global = AgentHome.expandUserPath("~/.config/pmai/config.json")
+    let global = conversation.home.configurationFileURL().path
     let paths = conversation.hostID == nil ? [conversation.cwd + "/pmai.json", global] : [global]
     for path in paths where FileManager.default.fileExists(atPath: path) {
       return try MaiConfiguration.load(from: URL(fileURLWithPath: path))

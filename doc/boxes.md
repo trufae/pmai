@@ -18,6 +18,41 @@ pmai box stop                # stops every process, but keeps boxing enabled
 pmai box off                 # stops the box and restores local execution
 ```
 
+To use the same providers, settings, skills and conversations inside and outside
+the box, enable live sharing:
+
+```sh
+pmai box create --share-home # a new box
+pmai box share-home          # an existing box; restarts its container
+```
+
+This mounts `~/.pmai` (or `PMAI_HOME`) and the project's existing `.pmai` directory
+read/write. Configuration lives in `~/.pmai/config/config.json`; an existing
+legacy `~/.config/pmai` is mounted separately when the new config is absent.
+Both environments use the same saved files, including
+configuration saved by `/provider` and `/model`. Reopen pmai to load changes made
+by the other instance. Sharing grants
+the guest access to the credentials in these locations, including ChatGPT login
+state. The default remains a private home; `--config` copies a configuration into
+that private home and cannot be combined with `--share-home`.
+
+Box policies and box workspaces are masked by empty read-only mounts. Server
+identities and session leases use private writable directories for each box.
+The source checkout remains separate; only its `.pmai`
+metadata is shared, and that metadata is excluded from `box diff`/`apply`.
+Shared mode uses the global `~/.pmai/config/config.json` (or the legacy fallback),
+rather than a project `pmai.json` or `PMAI_CONFIG` override. After moving a legacy
+configuration, run `pmai box share-home` again to update its mount.
+Environment-based keys and credential files
+outside the shared directories still need guest configuration. Host-only programs
+and Apple/MLX providers do not become available in Linux; a provider using
+`localhost` still refers to the container.
+
+`share-home` stops existing sessions, snapshots installed packages, and recreates
+the container with the shared mounts. The old private home and its conversations
+are preserved under `~/.pmai/box/<id>/home`; they are not merged into host history.
+Use `box status` to see whether the home is private or shared.
+
 The CLI also exposes `/box` with completion and `/help box`. After `/box create`
 or `/box on`, restart the CLI to enter the worker. Management commands run on the
 host; from inside a box, use a separate host terminal for `pmai box stop`, `off`,
@@ -30,7 +65,7 @@ a diff, applying changes, and removing the container. **Create Box with
 Configuration…** explicitly copies a chosen pmai JSON configuration, including
 embedded credentials. **Configure in Terminal** opens pmai in the project's
 box; configure providers and tools there. The Mac app's host Settings editor
-does not modify guest settings. Existing conversations close when changing the
+does not modify private guest settings. Existing conversations close when changing the
 box; active conversations must be stopped first.
 
 ## Storage and Git
@@ -61,7 +96,7 @@ Submodules and LFS objects are not provisioned automatically.
 Git's intent-to-add in the guest checkout. `apply` checks the complete binary
 patch first and fails on conflicting local edits. It does not merge commits,
 execute guest hooks on the host, or run tests on imported code. Review changes
-before importing and running them. History remains separate from host chats.
+before importing and running them. History remains separate unless home sharing is enabled.
 
 ## Image and policy
 
@@ -88,7 +123,7 @@ same environment. Installing packages as container root is supported with a
 limited capability set; the container is never privileged and receives neither
 the engine socket nor host SSH agent, home, devices, or Git directory. Rootless
 Docker/Podman is preferable on Linux; a rootful engine can leave root-owned files
-in the isolated checkout. Containers share their underlying kernel, so this is
+in the checkout or shared pmai state. Containers share their underlying kernel, so this is
 not a VM-level boundary against hostile code.
 
 - `--network bridge` allows outbound access; it is the default so model APIs and
@@ -104,7 +139,7 @@ not a VM-level boundary against hostile code.
 - Memory, CPU, PID count, and container log limits are enforced. Disk quotas for
   workspace data and installed packages are not implemented.
 
-Without `--config`, the guest starts with standard tools and no copied provider
+Without `--config` or `--share-home`, the guest starts with standard tools and no copied provider
 credentials. Configure it once from its CLI. With `--config`, file paths and
 environment-variable references are evaluated inside the guest; host environment
 variables and credential files are not automatically copied. Configure remote

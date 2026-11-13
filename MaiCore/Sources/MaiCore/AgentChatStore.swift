@@ -240,6 +240,23 @@ public struct AgentHome: Sendable {
     rootURL.appendingPathComponent(Self.projectIndexFilename)
   }
 
+  public var configurationDirectoryURL: URL {
+    rootURL.appendingPathComponent("config", isDirectory: true)
+  }
+
+  /// Prefer the self-contained home layout. Keep reading and saving an existing
+  /// legacy configuration in place until the user moves it; never create two
+  /// divergent copies as a side effect of opening pmai.
+  public func configurationFileURL(
+    environment: [String: String] = ProcessInfo.processInfo.environment
+  ) -> URL {
+    let preferred = configurationDirectoryURL.appendingPathComponent("config.json")
+    if FileManager.default.fileExists(atPath: preferred.path) { return preferred }
+    let legacy = URL(fileURLWithPath: Self.expandUserPath(
+      "~/.config/pmai/config.json", environment: environment))
+    return FileManager.default.fileExists(atPath: legacy.path) ? legacy : preferred
+  }
+
   public var historyURL: URL {
     rootURL.appendingPathComponent(Self.historyFilename)
   }

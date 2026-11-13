@@ -22,10 +22,10 @@ def main():
             'memory': {'enabled': False},
         }))
 
-        def run(commands, args=(), env=None, allow_errors=False, config_path=config):
+        def run(commands, args=(), env=None, allow_errors=False, config_path=config, home_path=root / 'home'):
             config_args = ['--config', str(config_path)] if config_path is not None else []
             result = subprocess.run(
-                [binary, *config_args, '--home', str(root / 'home'),
+                [binary, *config_args, '--home', str(home_path),
                  '--no-markdown', '--no-stream', *args],
                 cwd=root, env=environment | {'HF_HOME': str(root / 'hf')} | (env or {}),
                 input='\n'.join([*commands, '/exit', '']), text=True,
@@ -58,12 +58,12 @@ def main():
                                     ('mlx', 'LiquidAI/LFM2.5-1.2B-Instruct-MLX-4bit')):
                 output = run(
                     ['/provider', '/model -chat'], args=['--provider', provider],
-                    config_path=None,
+                    config_path=None, home_path=root / f'fresh-{provider}/.pmai',
                     env={'HOME': str(root / f'fresh-{provider}'),
                          'OPENAI_BASE_URL': 'not-a-url',
                          'PMAI_API_KEY_FILE': str(root / 'missing-remote-key')})
                 assert f'Chat: {provider}::{model}' in output, output
-                fresh_config = root / f'fresh-{provider}/.config/pmai/config.json'
+                fresh_config = root / f'fresh-{provider}/.pmai/config/config.json'
                 assert [p['id'] for p in json.loads(fresh_config.read_text())['providers']] == [provider]
 
         run(['/provider add personal-apple --kind apple',

@@ -31,7 +31,7 @@ manual editing in Settings is still available.
 
 Every agent takes its instructions from one **named system prompt**. The
 catalog lives under `prompts.system` in the configuration
-(`~/.config/pmai/config.json` unless `--config` says otherwise), and each
+(`~/.pmai/config/config.json`, with `~/.config/pmai/config.json` as a legacy fallback), and each
 agent names the prompt it uses:
 
 ```json

@@ -84,7 +84,8 @@ even if the shell still exports older model/provider values. For a remote
 connection, use `--api-key KEY` or `--api-key-file /path/to/key` with
 `/provider add`, or set its credentials with `/edit provider ID`.
 Settings save to the active `--config`
-file, `./pmai.json`, or `~/.config/pmai/config.json` by default.
+file, `./pmai.json`, or `~/.pmai/config/config.json` by default. An existing
+`~/.config/pmai/config.json` remains the fallback when the new file is absent.
 
 Use `/reset` to recover from voice, context, or tool-calling settings problems.
 Use `/reset NAME`, such as `/reset effort`, `/reset ui.scrollbar`, or
@@ -188,7 +189,8 @@ Load a configuration explicitly:
 make repl ARGS='--config MaiCore/pmai.example.json'
 ```
 
-Run `pmai -E` to edit `$HOME/.config/pmai/config.json` and exit. It uses `$EDITOR`
+Run `pmai -E` to edit `~/.pmai/config/config.json` (or the existing legacy fallback)
+and exit. `--home` / `PMAI_HOME` relocates the `.pmai` directory. It uses `$EDITOR`
 (which may include arguments), or the first available `vim`, `nano`, or `notepad`
 in `PATH`; Windows also checks its system directory for Notepad. If the config
 does not exist, pmai creates it from the example configuration. This always
@@ -327,7 +329,7 @@ covering expected behavior, failure cases, and overlooked checks. Each bullet
 ends in 🟢 (yes) or 🔴 (no); red flags an unresolved issue or verification gap.
 
 `/edit compact` opens the chat-compaction template. Prompts are saved under
-`prompts` in the active configuration (normally `~/.config/pmai/config.json`).
+`prompts` in the active configuration (normally `~/.pmai/config/config.json`).
 The compact template must contain `{{transcript}}`. `{{focus}}` is replaced with
 guidance passed to `/chat compact FOCUS`; if omitted, the focus is appended.
 Clearing the compact template restores its built-in default.
@@ -513,7 +515,25 @@ settings remain host-owned and are translated into `ProviderRequest`,
 `GenerationOptions`, and provider-specific configuration at the boundary.
 
 Configuration is discovered in this order: `--config`, `PMAI_CONFIG`,
-`./pmai.json`, and `~/.config/pmai/config.json`. Secrets should normally use
+`./pmai.json`, `~/.pmai/config/config.json`, then the legacy
+`~/.config/pmai/config.json`. `--home` / `PMAI_HOME` relocates `.pmai`, including
+its `config` directory. Existing legacy configurations continue to be read and
+saved in place until you move them; pmai does not create a second copy. If both
+files exist, the new location wins. Invalid configuration reports an error instead
+of silently falling back.
+
+To migrate an existing legacy directory when `~/.pmai/config` does not yet exist:
+
+```sh
+mkdir -p ~/.pmai
+mv ~/.config/pmai ~/.pmai/config
+ln -s ~/.pmai/config ~/.config/pmai
+```
+
+The directory symlink lets older binaries and scripts keep reading and saving
+the same files, including atomic configuration saves.
+
+Secrets should normally use
 `apiKeyEnvironment`, `bearerTokenEnvironment`, or `headerEnvironment` instead
 of being stored directly in JSON; a provider's `apiKeyFile` names a file
 holding the key, read whenever the provider is built.

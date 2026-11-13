@@ -322,7 +322,8 @@ remains available for copying and pasting.
 Pairing records the worker's address and workspace, creates a persistent
 controller key, and adds an ACP provider/agent to the pmai config. Selection is
 `--config`, then `PMAI_CONFIG`, then `./pmai.json` when present, otherwise
-`~/.config/pmai/config.json`. It does not replace an unrelated agent with the same
+`~/.pmai/config/config.json` (falling back to `~/.config/pmai/config.json`).
+It does not replace an unrelated agent with the same
 name. The remote is usable immediately with `pmai --agent workstation`; restart
 an already-open REPL before selecting it with `/agent use workstation`.
 

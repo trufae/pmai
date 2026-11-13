@@ -66,6 +66,7 @@ extension MaiCLI {
       "/remote pending", "/remote accept", "/remote reject", "/remote clients", "/remote del ",
       "/box", "/box create", "/box status", "/box on", "/box off", "/box start",
       "/box stop", "/box diff", "/box apply", "/box shell", "/box destroy", "/box rebuild",
+      "/box share-home", "/box create --share-home",
       "/help projects", "/projects", "/projects list", "/projects open ",
       "/projects rename ", "/projects tint ", "/projects del ", "/projects info ",
       "/memory", "/memory edit", "/memory learn", "/memory learn --all", "/memory add ",

@@ -41,6 +41,7 @@ final class MacConversation: Identifiable {
   }
   var prompts = PromptCatalog(builtins: [])
   let aliases: CommandAliasStore
+  let home: AgentHome
   var agents: [AgentProcessRecord] = []
   var draft = "" {
     didSet { if let draftKey { UserDefaults.standard.set(draft, forKey: draftKey) } }
@@ -79,6 +80,7 @@ final class MacConversation: Identifiable {
 
   init(hostID: UUID?, hostName: String, cwd: String, sessionID: String?, title: String,
     home: AgentHome = .resolve()) {
+    self.home = home
     aliases = CommandAliasStore(home: home)
     self.hostID = hostID
     self.hostName = hostName

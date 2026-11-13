@@ -18,7 +18,7 @@ def main():
         user_home.mkdir()
         project = root / 'project'
         project.mkdir()
-        config = user_home / '.config/pmai/config.json'
+        config = user_home / '.pmai/config/config.json'
         key_file = root / 'key'
         key_file.write_text('saved-key\n')
 
@@ -291,8 +291,51 @@ def main():
         output = run(['/model', '/baseurl'], home=bootstrap_home)
         assert 'Chat: bootstrap::initial' in output, output
         assert "Base URL for 'bootstrap': http://127.0.0.1:9000/v1" in output, output
-        bootstrap_config = bootstrap_home / '.config/pmai/config.json'
+        bootstrap_config = bootstrap_home / '.pmai/config/config.json'
         assert [p['id'] for p in json.loads(bootstrap_config.read_text())['providers']] == ['bootstrap']
+
+        # Legacy installs keep saving the same file until explicitly migrated.
+        legacy_home = root / 'legacy-user'
+        legacy = legacy_home / '.config/pmai/config.json'
+        legacy.parent.mkdir(parents=True)
+        legacy.write_text(json.dumps({'providers': [{'id': 'legacy', 'kind': 'hello'}]}))
+        preferred = legacy_home / '.pmai/config/config.json'
+        output = run(['/providers', '/set ui.fgbold #111111'], home=legacy_home)
+        assert 'legacy' in output, output
+        assert json.loads(legacy.read_text())['ui']['fgbold'] == '#111111'
+        assert not preferred.exists(), 'opening a legacy config must not create a competing copy'
+        preferred.parent.mkdir(parents=True)
+        preferred.write_text(json.dumps({'providers': [{'id': 'preferred', 'kind': 'hello'}]}))
+        output = run(['/providers', '/set ui.fgbold #222222'], home=legacy_home)
+        assert 'preferred' in output, output
+        assert json.loads(preferred.read_text())['ui']['fgbold'] == '#222222'
+        assert json.loads(legacy.read_text())['ui']['fgbold'] == '#111111'
+        # Explicit paths and project config retain priority over the new default.
+        for args, env in [(['--config', str(legacy)], {}), ([], {'PMAI_CONFIG': str(legacy)})]:
+            assert 'legacy' in run(['/providers'], args=args, env=env, home=legacy_home)
+        local_project = root / 'config-project'
+        local_project.mkdir()
+        (local_project / 'pmai.json').write_text(legacy.read_text())
+        assert 'legacy' in run(['/providers'], cwd=local_project, home=legacy_home)
+        # A broken preferred config must report an error, never silently use the fallback.
+        preferred.write_text('{invalid')
+        result = subprocess.run([binary], cwd=project, env=environment | {'HOME': str(legacy_home)},
+                                input='/exit\n', text=True, capture_output=True, timeout=30)
+        assert result.returncode != 0, result.stdout + result.stderr
+        preferred.write_text(legacy.read_text())
+        # --home and PMAI_HOME relocate configuration along with the other state.
+        for args, env in [(['--home', str(legacy_home / '.pmai')], {}),
+                          ([], {'PMAI_HOME': str(legacy_home / '.pmai')})]:
+            assert 'legacy' in run(['/providers'], args=args, env=env)
+        if sys.platform != 'win32':
+            legacy.unlink()
+            legacy.parent.rmdir()
+            legacy.parent.symlink_to(preferred.parent, target_is_directory=True)
+            run(['/set ui.fgbold #333333'], args=['--config', str(legacy)], home=legacy_home)
+            assert legacy.parent.is_symlink() and legacy.samefile(preferred)
+            assert json.loads(preferred.read_text())['ui']['fgbold'] == '#333333'
+            run(['/set ui.fgbold #444444'], home=legacy_home)
+            assert json.loads(legacy.read_text())['ui']['fgbold'] == '#444444'
 
         # Opening the config editor on a fresh install also starts empty.
         editor_home = root / 'editor-user'
@@ -303,7 +346,7 @@ def main():
                                'EDITOR': 'cmd /c exit 0' if sys.platform == 'win32' else 'true'},
             capture_output=True, text=True, timeout=30)
         assert result.returncode == 0, result.stdout + result.stderr
-        edited = json.loads((editor_home / '.config/pmai/config.json').read_text())
+        edited = json.loads((editor_home / '.pmai/config/config.json').read_text())
         assert edited['providers'] == [] and edited['agents'] == [], edited
         assert edited['fileAccess']['hidden'] == 'ask', edited
         # ACP quick setup needs no prompt, API key, or running external agent.
@@ -315,7 +358,7 @@ def main():
                          home=acp_home, env={'PATH': str(root / 'no-executables')})
             assert f"ACP agent '{name}' registered and selected" in output, output
             assert f'Chat: {name}::{name}' in output, output
-            acp_config = json.loads((acp_home / '.config/pmai/config.json').read_text())
+            acp_config = json.loads((acp_home / '.pmai/config/config.json').read_text())
             assert acp_config['defaultAgent'] == name, acp_config
             provider = acp_config['providers'][0]
             assert provider['kind'] == 'acp' and provider['options']['command'] == command
@@ -324,7 +367,7 @@ def main():
                                                   env={'PATH': str(root / 'no-executables')})
             if name == 'claude':
                 # ACP's separate per-turn limit survives restarts on the provider.
-                acp_path = acp_home / '.config/pmai/config.json'
+                acp_path = acp_home / '.pmai/config/config.json'
                 output = run(['/set acp.timeout 30m', '/set acp.'], home=acp_home)
                 assert 'acp.timeout = 30m' in output, output
                 assert json.loads(acp_path.read_text())['providers'][0]['timeout'] == 1800
@@ -357,7 +400,7 @@ def main():
             if name == 'opencode':
                 run(['/provider add acp oc opencode acp', '/model oc::opencode/big-pickle'],
                     home=acp_home, env={'PATH': str(root / 'no-executables')})
-                acp_config = json.loads((acp_home / '.config/pmai/config.json').read_text())
+                acp_config = json.loads((acp_home / '.pmai/config/config.json').read_text())
                 provider = next(p for p in acp_config['providers'] if p['id'] == 'oc')
                 assert provider['options']['command'] == 'opencode', provider
                 assert provider['options']['args'] == ['acp'], provider

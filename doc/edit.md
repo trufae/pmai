@@ -197,7 +197,8 @@ the previous one stays. Clearing a template restores the built-in default.
 ### Configuration and MCP servers
 
 `/edit config` opens the active configuration file (`--config`, `PMAI_CONFIG`,
-`./pmai.json`, or `~/.config/pmai/config.json`, whichever is in use). It is
+`./pmai.json`, `~/.pmai/config/config.json`, or the legacy `~/.config/pmai/config.json`,
+whichever is in use). It is
 reloaded when the editor closes; a file that no longer parses is reported and
 left for you to fix, and nothing is applied from it. `/edit mcps` opens only
 the `mcpServers` array. Provider, plugin, tool, and MCP changes made this way

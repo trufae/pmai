@@ -24,7 +24,7 @@ final class MacSettingsStore {
 
   var scope: MacSettingsScope? { scopes.first { $0.id == scopeID } }
   var configuration: MaiConfiguration { document?.configuration ?? .init() }
-  var globalURL: URL { URL(fileURLWithPath: AgentHome.expandUserPath("~/.config/pmai/config.json")) }
+  var globalURL: URL { home.configurationFileURL() }
   var isNewWorkspace: Bool {
     scope?.cwd != nil && scope.map { !FileManager.default.fileExists(atPath: $0.url.path) } == true
   }

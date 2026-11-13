@@ -43,7 +43,7 @@ final class MacServerStore: ApprovalHandler {
   var attentionCount: Int { snapshot.requests.count + permissions.count }
   var configurationURL: URL? {
     let local = URL(fileURLWithPath: AgentHome.expandUserPath(workingDirectory)).appendingPathComponent("pmai.json")
-    let global = URL(fileURLWithPath: AgentHome.expandUserPath("~/.config/pmai/config.json"))
+    let global = home.configurationFileURL()
     return [local, global].first { FileManager.default.fileExists(atPath: $0.path) }
   }
 

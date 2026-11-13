@@ -218,7 +218,8 @@ saved runtime configuration before providers and tools are registered.
 index. It does not import or maintain a second copy of local conversations.
 Subagent transcripts are stored in each chat's existing `subagents` field.
 The native app stores only window/navigation preferences and unsent drafts in
-its defaults. Global configuration is `~/.config/pmai/config.json`; a working
+its defaults. Global configuration is `~/.pmai/config/config.json`, falling back
+to an existing `~/.config/pmai/config.json`; `PMAI_HOME` relocates `.pmai`. A working
 folder's `pmai.json` takes precedence, exactly as in the CLI.
 
 The iOS UIKit view/store hierarchy is not compiled into the Mac product. Its
