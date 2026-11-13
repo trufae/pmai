@@ -48,7 +48,7 @@ final class WebXDCPocketMaiHost {
   private var cancelledRequests: Set<String> = []
   private var speechRequest: String?
   private var engine: LiveSpeechRecognitionEngine?
-  private let player = TTSPlayer(integratesWithSystemPlayback: false)
+  private let player = TTSPlayer(integratesWithSystemPlayback: false, managesAudioSession: true)
   private var finishListening: (() async -> Void)?
   var isActive = true {
     didSet { if !isActive { cancelAll() } }
@@ -117,7 +117,7 @@ final class WebXDCPocketMaiHost {
       return
     }
     guard isActive else {
-      fail(id, WebXDCAPIError(code: "AbortError", message: "App is not visible."))
+      fail(id, WebXDCAPIError(code: "AbortError", message: "App is paused or closed."))
       return
     }
     guard tasks[id] == nil else { return }

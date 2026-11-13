@@ -987,6 +987,7 @@ private final class NativeIOSSpeechTranscriberRecognitionEngine: LiveSpeechRecog
       mode: carPlay ? .default : .voiceChat,
       options: carPlay ? [] : [.defaultToSpeaker, .allowBluetoothHFP])
     try audioSession.setActive(true, options: [])
+    BackgroundAudioRetention.activated()
     audioSessionActivated = true
     if audioSession.isInputGainSettable {
       try? audioSession.setInputGain(1.0)
@@ -996,7 +997,7 @@ private final class NativeIOSSpeechTranscriberRecognitionEngine: LiveSpeechRecog
   private func deactivateAudioSession() {
     guard audioSessionActivated else { return }
     audioSessionActivated = false
-    try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+    BackgroundAudioRetention.deactivate()
   }
 
   private func makeRecordingFile(format: AVAudioFormat) throws -> AVAudioFile {
@@ -1311,6 +1312,7 @@ private final class NativeIOSSpeechRecognitionEngine: NSObject, LiveSpeechRecogn
       mode: carPlay ? .default : .voiceChat,
       options: carPlay ? [] : [.defaultToSpeaker, .allowBluetoothHFP])
     try audioSession.setActive(true, options: [])
+    BackgroundAudioRetention.activated()
     audioSessionActivated = true
     if audioSession.isInputGainSettable {
       try? audioSession.setInputGain(1.0)
@@ -1320,7 +1322,7 @@ private final class NativeIOSSpeechRecognitionEngine: NSObject, LiveSpeechRecogn
   private func deactivateAudioSession() {
     guard audioSessionActivated else { return }
     audioSessionActivated = false
-    try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+    BackgroundAudioRetention.deactivate()
   }
 
   private func startRecording() throws {

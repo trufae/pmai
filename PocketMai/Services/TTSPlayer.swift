@@ -22,6 +22,7 @@ final class TTSPlayer: NSObject, ObservableObject {
   private let synthesizeSpeech: SpeechSynthesis
   private let makeSynthesizer: () -> AVSpeechSynthesizer
   private let integratesWithSystemPlayback: Bool
+  private let managesAudioSession: Bool
   private let carPlayAudio: Bool
   private var ownsCarPlayAudioSession = false
 
@@ -46,6 +47,7 @@ final class TTSPlayer: NSObject, ObservableObject {
 
   init(
     integratesWithSystemPlayback: Bool = true,
+    managesAudioSession: Bool = false,
     carPlayAudio: Bool = false,
     synthesizer: AVSpeechSynthesizer? = nil,
     synthesizeSpeech: @escaping SpeechSynthesis = { endpoint, text, voice in
@@ -54,6 +56,7 @@ final class TTSPlayer: NSObject, ObservableObject {
     }
   ) {
     self.integratesWithSystemPlayback = integratesWithSystemPlayback
+    self.managesAudioSession = managesAudioSession || integratesWithSystemPlayback || carPlayAudio
     self.carPlayAudio = carPlayAudio
     self.synthesizeSpeech = synthesizeSpeech
     self.makeSynthesizer = { synthesizer ?? AVSpeechSynthesizer() }
@@ -761,13 +764,14 @@ final class TTSPlayer: NSObject, ObservableObject {
   }
 
   private func activateAudioSession() {
-    guard integratesWithSystemPlayback || carPlayAudio else { return }
+    guard managesAudioSession else { return }
     let session = AVAudioSession.sharedInstance()
     do {
       // Live voice recording leaves the session in playAndRecord. Switch TTS back
       // to playback so assistant speech uses the normal media volume path.
       try session.setCategory(carPlayAudio ? .playAndRecord : .playback, mode: .default, options: [])
       try session.setActive(true, options: [])
+      BackgroundAudioRetention.activated()
       ownsCarPlayAudioSession = carPlayAudio
     } catch {
       // Best-effort: TTS still plays in foreground without an active session.
@@ -775,15 +779,11 @@ final class TTSPlayer: NSObject, ObservableObject {
   }
 
   private func deactivateAudioSession() {
-    guard integratesWithSystemPlayback || ownsCarPlayAudioSession else { return }
+    guard managesAudioSession || ownsCarPlayAudioSession else { return }
     defer { ownsCarPlayAudioSession = false }
-    do {
-      let session = AVAudioSession.sharedInstance()
-      guard ownsCarPlayAudioSession || session.category != .playAndRecord else { return }
-      try session.setActive(false, options: .notifyOthersOnDeactivation)
-    } catch {
-      // Ignore: the session may already be inactive.
-    }
+    let session = AVAudioSession.sharedInstance()
+    guard ownsCarPlayAudioSession || session.category != .playAndRecord else { return }
+    BackgroundAudioRetention.deactivate()
   }
 
   private func updateNowPlaying() {

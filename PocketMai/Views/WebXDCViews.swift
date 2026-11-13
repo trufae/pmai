@@ -24,8 +24,17 @@ struct WebXDCDebugLog: Identifiable, Sendable, Equatable {
 final class WebXDCRunningSession: NSObject, ObservableObject, Identifiable {
   static let appScheme = "xdc"
 
+  enum Presentation {
+    case fullScreen, floating, pictureInPicture, closed
+  }
+
   let app: WebXDCAppInfo
   let conversationID: UUID?
+  @Published private(set) var presentation: Presentation = .fullScreen
+  @Published var presentationError: String?
+  private(set) var isStopped = false
+  private var presenter: WebXDCPresentationController?
+  lazy var pictureInPicture = WebXDCPictureInPicture(session: self)
   @Published private(set) var debugLogs: [WebXDCDebugLog] = []
   private(set) var webView: WKWebView!
   private weak var store: AppStore?
@@ -96,6 +105,7 @@ final class WebXDCRunningSession: NSObject, ObservableObject, Identifiable {
     super.init()
 
     let configuration = WKWebViewConfiguration()
+    configuration.allowsInlineMediaPlayback = true
     let webxdcSettings = store.settings.toolSettings
     configuration.setURLSchemeHandler(
       WebXDCSchemeHandler(
@@ -126,6 +136,7 @@ final class WebXDCRunningSession: NSObject, ObservableObject, Identifiable {
     let webView = WKWebView(frame: .zero, configuration: configuration)
     webView.navigationDelegate = self
     webView.isOpaque = false
+    webView.backgroundColor = .systemBackground
     self.webView = webView
     pocketmai.requestPermission = { [weak self] capability in
       await self?.askPermission(capability) ?? false
@@ -148,7 +159,8 @@ final class WebXDCRunningSession: NSObject, ObservableObject, Identifiable {
       self?.deliver([update])
     }
 
-    let load = {
+    let load = { [weak self] in
+      guard self?.isStopped == false else { return }
       if let url = URL(string: "\(Self.appScheme)://app/index.html") {
         webView.load(URLRequest(url: url))
       }
@@ -168,6 +180,12 @@ final class WebXDCRunningSession: NSObject, ObservableObject, Identifiable {
   }
 
   func stop() {
+    guard !isStopped else { return }
+    isStopped = true
+    pictureInPicture.stop()
+    presenter?.stop()
+    presenter = nil
+    presentation = .closed
     resolvePermission(false)
     settingsSubscription = nil
     pocketmai.isActive = false
@@ -176,9 +194,56 @@ final class WebXDCRunningSession: NSObject, ObservableObject, Identifiable {
     outbox.removeAll()
     store?.webxdcHub.removeListener(appID: app.id, token: ObjectIdentifier(self))
     webView.stopLoading()
+    webView.setMicrophoneCaptureState(.none, completionHandler: nil)
+    webView.setCameraCaptureState(.none, completionHandler: nil)
+    webView.setAllMediaPlaybackSuspended(true, completionHandler: nil)
+    webView.closeAllMediaPresentations(completionHandler: nil)
     webView.configuration.userContentController.removeScriptMessageHandler(forName: "pocketmai")
     webView.configuration.userContentController.removeScriptMessageHandler(forName: "webxdc")
     webView.configuration.userContentController.removeScriptMessageHandler(forName: "webxdcDebug")
+    webView.navigationDelegate = nil
+    // stopLoading alone leaves the document's timers and media running.
+    webView.loadHTMLString("", baseURL: nil)
+  }
+
+  func attach(to window: UIWindow) {
+    guard !isStopped, presenter == nil, let scene = window.windowScene, let store else { return }
+    presenter = WebXDCPresentationController(session: self, store: store, scene: scene, previousWindow: window)
+    presenter?.update()
+  }
+
+  func present(_ mode: Presentation) {
+    guard !isStopped else { return }
+    if mode != .pictureInPicture { pictureInPicture.stop() }
+    presentation = mode
+    setPlaybackActive(mode != .closed)
+    presenter?.update()
+  }
+
+  func setPlaybackActive(_ active: Bool) {
+    pocketmai.isActive = active
+    if !active { resolvePermission(false) }
+    webView.setAllMediaPlaybackSuspended(!active, completionHandler: nil)
+    webView.setMicrophoneCaptureState(active ? .active : .muted, completionHandler: nil)
+    webView.setCameraCaptureState(active ? .active : .muted, completionHandler: nil)
+  }
+
+  func runInPictureInPicture() {
+    if presentation == .closed { present(.floating) }
+    pictureInPicture.start()
+  }
+
+  var pendingApprovalMessage: String? {
+    guard !isStopped, pocketmai.isActive else { return nil }
+    if let permissionRequest { return "Open PocketMai to allow \(permissionRequest)." }
+    if store?.activeToolCallApprovalRequest != nil { return "Open PocketMai to review the tool request." }
+    if store?.activeLongRunningOperationTimeoutRequest != nil { return "Open PocketMai to continue or stop the operation." }
+    return nil
+  }
+
+  func stopApp() {
+    if store?.activeWebXDCSession === self { store?.stopWebXDCSession() }
+    else { stop() }
   }
 
   /// Content rules blocking http/https/websocket loads. The filter must stay
@@ -483,53 +548,59 @@ extension WebXDCRunningSession: WKNavigationDelegate {
 
 struct WebXDCRunnerSheet: View {
   @EnvironmentObject private var store: AppStore
-  @Environment(\.dismiss) private var dismiss
 
   @ObservedObject var session: WebXDCRunningSession
+  var onMove: (CGSize, Bool) -> Void = { _, _ in }
   @State private var showingDebugLogs = false
   @State private var showingPermissions = false
+  @State private var showingCloseOptions = false
 
   var body: some View {
-    NavigationStack {
-      WebXDCWebViewContainer(webView: session.webView)
-        .ignoresSafeArea(edges: .bottom)
-        .navigationTitle(session.app.name)
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-          ToolbarItem(placement: .topBarLeading) {
-            HStack(spacing: 8) {
-              Button {
-                showingDebugLogs = true
-              } label: {
-                Label("Debug Logs", systemImage: "list.bullet.rectangle")
-              }
-              .labelStyle(.iconOnly)
-              .accessibilityLabel("Debug logs")
-              if isThinking {
-                ProgressView()
-                Text("Thinking...")
-                  .font(.caption)
-                  .foregroundStyle(.secondary)
-                  .accessibilityLabel("The assistant is responding")
-              }
-            }
-          }
-          ToolbarItem(placement: .confirmationAction) {
-            Button("Close") { dismiss() }
-          }
-          ToolbarItem(placement: .topBarTrailing) {
-            Button {
-              showingPermissions = true
-            } label: {
-              Label("Permissions", systemImage: "checkmark.shield")
-            }
+    VStack(spacing: 0) {
+      HStack(spacing: 12) {
+        Button { showingDebugLogs = true } label: {
+          Label("Debug Logs", systemImage: "list.bullet.rectangle")
+        }
+        Text(session.app.name)
+          .font(.subheadline.weight(.semibold)).lineLimit(1)
+          .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+          .contentShape(Rectangle())
+          .gesture(DragGesture().onChanged { onMove($0.translation, false) }
+            .onEnded { onMove($0.translation, true) })
+          .accessibilityHint(session.presentation == .floating ? "Drag to move the floating app" : "")
+        if isThinking { ProgressView().controlSize(.small) }
+        Button { showingPermissions = true } label: {
+          Label("Permissions", systemImage: "checkmark.shield")
+        }
+        if session.presentation != .fullScreen {
+          Button { session.present(.fullScreen) } label: {
+            Label("Expand", systemImage: "arrow.up.left.and.arrow.down.right")
           }
         }
+        Button { showingCloseOptions = true } label: {
+          Label("Close", systemImage: "xmark")
+        }
+      }
+      .labelStyle(.iconOnly).buttonStyle(.borderless)
+      .padding(.horizontal, 14)
+      Divider()
+      WebXDCWebViewContainer(session: session)
+        .ignoresSafeArea(edges: .bottom)
     }
-    .ignoresSafeArea(edges: .bottom)
-    .interactiveDismissDisabled()
-    .onAppear { session.pocketmai.isActive = true }
-    .onDisappear { session.pocketmai.isActive = false }
+    .background(Color(uiColor: .systemBackground))
+    .confirmationDialog(session.app.name, isPresented: $showingCloseOptions, titleVisibility: .visible) {
+      Button("Close") { session.present(.closed) }
+      Button("Minimize") { session.present(.floating) }
+      Button("Run in PiP") { session.runInPictureInPicture() }
+      Button("Stop App", role: .destructive) { session.stopApp() }
+      Button("Cancel", role: .cancel) {}
+    } message: {
+      Text("Close pauses voice and keeps the page. Minimize keeps the app interactive over the chat. PiP shows a read-only preview across apps while active audio continues. Stop ends the app.")
+    }
+    .errorAlert("Picture in Picture", message: $session.presentationError)
+    .onChange(of: session.permissionRequest) { _, _ in revealApproval() }
+    .onChange(of: store.activeToolCallApprovalRequest?.id) { _, _ in revealApproval() }
+    .onChange(of: store.activeLongRunningOperationTimeoutRequest?.id) { _, _ in revealApproval() }
     .sheet(isPresented: $showingDebugLogs) {
       WebXDCDebugLogView(session: session)
     }
@@ -574,6 +645,13 @@ struct WebXDCRunnerSheet: View {
   private var isThinking: Bool {
     guard let conversationID = session.conversationID else { return false }
     return store.isResponding(in: conversationID)
+  }
+
+  private func revealApproval() {
+    if session.presentation != .closed, session.pendingApprovalMessage != nil,
+      UIApplication.shared.applicationState == .active {
+      session.present(.fullScreen)
+    }
   }
 }
 
@@ -745,11 +823,26 @@ private struct WebXDCConsoleView: View {
 }
 
 private struct WebXDCWebViewContainer: UIViewRepresentable {
-  let webView: WKWebView
+  let session: WebXDCRunningSession
 
-  func makeUIView(context: Context) -> WKWebView { webView }
+  func makeUIView(context: Context) -> UIView {
+    let container = UIView()
+    let preview = session.pictureInPicture.sourceView
+    for view in [preview, session.webView!] {
+      view.removeFromSuperview()
+      view.translatesAutoresizingMaskIntoConstraints = false
+      container.addSubview(view)
+      NSLayoutConstraint.activate([
+        view.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+        view.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+        view.topAnchor.constraint(equalTo: container.topAnchor),
+        view.bottomAnchor.constraint(equalTo: container.bottomAnchor)
+      ])
+    }
+    return container
+  }
 
-  func updateUIView(_ uiView: WKWebView, context: Context) {}
+  func updateUIView(_ uiView: UIView, context: Context) {}
 }
 
 /// Serves app files for the xdc:// scheme and injects the standard webxdc.js
@@ -1265,7 +1358,6 @@ struct WebXDCAppDetailView: View {
   @State private var editingFile: WebXDCEditingFile?
   @State private var newFilePath = ""
   @State private var shareURL: URL?
-  @State private var runningSession: WebXDCRunningSession?
   @State private var showingImportPrompt: Bool
   @State private var showingPermissions = false
   @State private var showingIconImporter = false
@@ -1309,7 +1401,7 @@ struct WebXDCAppDetailView: View {
     .alert(importResult?.title ?? "App Imported", isPresented: $showingImportPrompt) {
       Button("Review App", role: .cancel) {}
       Button("Run App") {
-        if let app { runningSession = store.startWebXDCSession(app: app) }
+        if let app { store.startWebXDCSession(app: app) }
       }
     } message: {
       Text("\(importResult?.message ?? "") Review the app's icon, code and permissions before running it, or start it now.")
@@ -1328,10 +1420,6 @@ struct WebXDCAppDetailView: View {
         onSave: { newText in
           saveFile(path: file.path, text: newText)
         })
-    }
-    .fullScreenCover(item: $runningSession) { session in
-      WebXDCRunnerSheet(session: session)
-        .environmentObject(store)
     }
     .sheet(isPresented: shareBinding) {
       if let shareURL {
@@ -1490,7 +1578,7 @@ struct WebXDCAppDetailView: View {
 
   private func runAppButton(_ app: WebXDCAppInfo) -> some View {
     Button {
-      runningSession = store.startWebXDCSession(app: app)
+      store.startWebXDCSession(app: app)
     } label: {
       Text("RUN")
         .font(.caption.weight(.bold))

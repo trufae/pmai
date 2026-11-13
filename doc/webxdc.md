@@ -159,8 +159,26 @@ results. A backend may already have processed or billed a request. Abort does no
 undo remote work. Navigation, page teardown, stopping a session, closing its
 runner, revoking an app grant, or changing PocketMai settings cancels outstanding
 requests. Tool-written todo data and memory updates do not cancel requests.
-A hidden runner cannot start new native requests. Closing the runner
-retains the web app's page state; reopening allows new requests.
+A closed or paused runner cannot start new native requests. Closing the runner
+retains the web app's page state; reopening allows new requests. Minimizing or
+entering Picture in Picture keeps native requests and active voice sessions alive.
+
+On iOS, the runner's Close button offers four actions:
+
+- **Close** hides the app and pauses voice/media, retaining the page.
+- **Minimize** keeps an interactive window over PocketMai. Drag its title to move
+  it, drag the corner to resize it, and use Expand to return to full screen.
+- **Run in PiP** shows a resizable, read-only preview across apps. Start voice in
+  the WebXDC app first; existing microphone permissions still apply. The system
+  playback button pauses/resumes native access and web media, and the restore
+  button returns to the interactive app. New permission/tool decisions require
+  returning to PocketMai; the preview displays a reminder.
+- **Stop App** cancels work and tears down the page, discarding unsaved page state.
+
+PiP uses AVKit with a low-rate preview of the existing web view. iOS controls
+background WebKit rendering and microphone interruptions; a suspended page keeps
+its last available preview frame. It is not a guarantee of unrestricted background
+JavaScript execution. Use PocketMai's native speech bridge for voice sessions.
 
 There are at most eight native requests per app at once and one active speech
 operation (listening or speaking). Wait for one speech operation to finish before

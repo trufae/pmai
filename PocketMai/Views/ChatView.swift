@@ -92,8 +92,7 @@ struct ChatView: View {
   @State private var lastStreamingScrollAt: Date?
   @State private var streamingScrollTask: Task<Void, Never>?
   @State private var pendingScrollToMessageID: UUID?
-  @State private var showingWebXDCRunnerFromBar = false
-  @State private var showingWebXDCStopConfirmation = false
+  @State private var showingWebXDCOptions = false
   @State private var showingSubagents = false
   @State private var chatSearch = ChatSearchState()
   @State private var messageFontPinchSession = MessageFontPinchSession()
@@ -563,33 +562,30 @@ struct ChatView: View {
       }
       Spacer()
       Button {
-        showingWebXDCStopConfirmation = true
+        showingWebXDCOptions = true
       } label: {
         Image(systemName: "xmark.circle.fill")
           .foregroundStyle(.secondary)
       }
       .buttonStyle(.borderless)
-      .accessibilityLabel("Stop app")
+      .accessibilityLabel("App options")
     }
     .padding(.horizontal, 12)
     .padding(.vertical, 8)
     .contentShape(Rectangle())
     .onTapGesture {
-      showingWebXDCRunnerFromBar = true
+      session.present(.fullScreen)
     }
-    .fullScreenCover(isPresented: $showingWebXDCRunnerFromBar) {
-      if let session = store.activeWebXDCSession {
-        WebXDCRunnerSheet(session: session)
-          .environmentObject(store)
-      }
-    }
-    .alert("Stop '\(session.app.name)'?", isPresented: $showingWebXDCStopConfirmation) {
+    .confirmationDialog(session.app.name, isPresented: $showingWebXDCOptions, titleVisibility: .visible) {
+      Button("Close") { session.present(.closed) }
+      Button("Minimize") { session.present(.floating) }
+      Button("Run in PiP") { session.runInPictureInPicture() }
       Button("Cancel", role: .cancel) {}
       Button("Stop App", role: .destructive) {
         store.stopWebXDCSession()
       }
     } message: {
-      Text("The app will be closed and its unsaved in-page state will be lost.")
+      Text("Close pauses voice. Minimize keeps the app over the chat. PiP shows a read-only preview across apps. Stop discards unsaved page state.")
     }
   }
 

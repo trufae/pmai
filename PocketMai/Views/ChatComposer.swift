@@ -41,7 +41,6 @@ struct ChatComposer: View {
   @State private var showingImagePicker = false
   @State private var showingCameraPicker = false
   @State private var showingWebXDCLauncher = false
-  @State private var showingWebXDCRunner = false
   @State private var showingWebXDCStopConfirmation = false
   @State private var selectedPhotoItems: [PhotosPickerItem] = []
   @State private var draftText = ""
@@ -374,15 +373,8 @@ struct ChatComposer: View {
     .sheet(isPresented: $showingWebXDCLauncher) {
       WebXDCAppLauncherSheet { app in
         store.startWebXDCSession(app: app)
-        showingWebXDCRunner = true
       }
       .environmentObject(store)
-    }
-    .fullScreenCover(isPresented: $showingWebXDCRunner) {
-      if let session = store.activeWebXDCSession {
-        WebXDCRunnerSheet(session: session)
-          .environmentObject(store)
-      }
     }
   }
 

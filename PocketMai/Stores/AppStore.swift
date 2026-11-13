@@ -2371,6 +2371,7 @@ final class AppStore: ObservableObject {
   @discardableResult
   func startWebXDCSession(app: WebXDCAppInfo) -> WebXDCRunningSession {
     if let session = activeWebXDCSession, session.app.id == app.id {
+      session.present(.fullScreen)
       return session
     }
     activeWebXDCSession?.stop()

@@ -49,6 +49,7 @@ private struct PocketMaiRootView: View {
 
   var body: some View {
     ContentView(store: store)
+        .background { WebXDCPresentationHost().environmentObject(store) }
         .environmentObject(store)
         .environmentObject(store.streamingTextStore)
         .environmentObject(ttsPlayer)
