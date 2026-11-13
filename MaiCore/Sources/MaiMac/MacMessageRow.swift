@@ -53,12 +53,7 @@ struct MacActivityRow: View, @MainActor Equatable {
             if let id { proxy.scrollTo(id, anchor: .top) }
           }
         }
-        .padding(12)
-        .background(appearance.accentColor.opacity(0.035), in: RoundedRectangle(cornerRadius: 12))
-        .overlay {
-          RoundedRectangle(cornerRadius: 12).strokeBorder(appearance.accentColor.opacity(0.6), lineWidth: 1)
-        }
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .activityScrollFrame(accentColor: appearance.accentColor)
         .padding(.top, 8)
       }
     } label: {

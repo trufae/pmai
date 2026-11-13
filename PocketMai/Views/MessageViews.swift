@@ -2426,6 +2426,7 @@ struct MessageActivityGroup<Content: View>: View {
           } else {
             ActivityScrollView(content: content)
               .environment(\.messageActivityIsGrouped, true)
+              .activityScrollFrame()
           }
         }
       } label: {

@@ -1,4 +1,5 @@
 import MaiCore
+import MaiUI
 import SwiftUI
 import UIKit
 
@@ -99,6 +100,7 @@ struct ChatView: View {
   @State private var messageRenderWindow = ConversationMessageRenderWindow()
   @State private var historyScrollSession = ConversationHistoryScrollSession()
   @State private var messageListIsScrolling = false
+  @State private var messageListScrollPhase = ScrollPhase.idle
   @State private var messageListIsDragging = false
   @State private var chatHeaderHidden = false
   @State private var chatHeaderHeight: CGFloat = 0
@@ -1050,6 +1052,7 @@ struct ChatView: View {
                     }
                   }
                 }
+                .messageScrollBounce()
               }
               if conversation?.historyWindow?.hasLater == true {
                 Button("Newer messages") { Task { await loadHistoryAtEdge(forceLater: true) } }
@@ -1152,6 +1155,8 @@ struct ChatView: View {
             )
           }
         }
+        .chatScrollBounce(phase: messageListScrollPhase,
+          enabled: !messageFontPinchSession.isActive && !isMessageSelectionMode)
         .coordinateSpace(name: MessageFontPinchSession.coordinateSpaceName)
         .contentMargins(.top, chatHeaderHeight, for: .scrollContent)
         .scrollDismissesKeyboard(.interactively)
@@ -1197,6 +1202,7 @@ struct ChatView: View {
           }
         }
         .onScrollPhaseChange { _, phase, context in
+          messageListScrollPhase = phase
           messageListIsDragging = phase == .interacting
           if phase != .interacting { headerScrollDistance = 0 }
           messageListIsScrolling = phase != .idle
@@ -1229,6 +1235,7 @@ struct ChatView: View {
         .onChange(of: currentConversationID) { _, _ in
           historyScrollSession.cancel()
           messageListIsScrolling = false
+          messageListScrollPhase = .idle
           messageListIsDragging = false
           messageFontPinchSession.resetMetrics()
           userMessageNavigation = UserMessageNavigationState()

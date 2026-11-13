@@ -1,6 +1,7 @@
 import AppKit
 import MaiACP
 import MaiCore
+import MaiUI
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -128,7 +129,7 @@ struct MacChatView: View {
                       && conversation.messages.last?.id == message.id).equatable()
                 }
               }
-              .modifier(MacMessageScrollBounce())
+              .messageScrollBounce()
               .background(alignment: .top) {
                 MacHistoryScrollMarker(session: historyScrollSession, id: run.id)
                   .frame(height: 1)
@@ -140,8 +141,16 @@ struct MacChatView: View {
           .frame(maxWidth: 860, alignment: .leading)
           .padding(28)
           .frame(maxWidth: .infinity)
+          .background {
+            MacChatPaging { atBottom in
+              historyScrollSession.cancel()
+              searchScrollTarget = nil
+              followsBottom = atBottom
+              if !atBottom { revealEarlierMessages() }
+            }
+          }
         }
-        .modifier(MacChatScrollBounce(phase: scrollPhase))
+        .chatScrollBounce(phase: scrollPhase, enabled: !isPinching)
         .simultaneousGesture(
           MagnifyGesture()
             .updating($isPinching) { _, active, _ in active = true }

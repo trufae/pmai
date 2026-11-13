@@ -21,3 +21,14 @@ public struct ActivityScrollView<Content: View>: View {
     .scrollBounceBehavior(.basedOnSize)
   }
 }
+
+public extension View {
+  func activityScrollFrame(accentColor: Color = .accentColor) -> some View {
+    padding(12)
+      .background(accentColor.opacity(0.035), in: RoundedRectangle(cornerRadius: 12))
+      .overlay {
+        RoundedRectangle(cornerRadius: 12).strokeBorder(accentColor.opacity(0.6), lineWidth: 1)
+      }
+      .clipShape(RoundedRectangle(cornerRadius: 12))
+  }
+}
