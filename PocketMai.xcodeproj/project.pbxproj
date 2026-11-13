@@ -7,7 +7,6 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		A30000000000000000000001 /* MaiUI in Frameworks */ = {isa = PBXBuildFile; productRef = A30000000000000000000002 /* MaiUI */; };
 		A10000000000000000000001 /* MLX in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000011 /* MLX */; };
 		A10000000000000000000002 /* MLXLLM in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000012 /* MLXLLM */; };
 		A10000000000000000000003 /* MLXLMCommon in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000013 /* MLXLMCommon */; };
@@ -21,6 +20,7 @@
 		A20000000000000000000005 /* MaiDocuments in Frameworks */ = {isa = PBXBuildFile; productRef = A20000000000000000000015 /* MaiDocuments */; };
 		A20000000000000000000006 /* MaiACP in Frameworks */ = {isa = PBXBuildFile; productRef = A20000000000000000000016 /* MaiACP */; };
 		A20000000000000000000007 /* MaiLocalProviders in Frameworks */ = {isa = PBXBuildFile; productRef = A20000000000000000000017 /* MaiLocalProviders */; };
+		A30000000000000000000001 /* MaiUI in Frameworks */ = {isa = PBXBuildFile; productRef = A30000000000000000000002 /* MaiUI */; };
 		C0000000000000000000000E /* PocketMaiWidgetsExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = C00000000000000000000002 /* PocketMaiWidgetsExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		D0000000000000000000000E /* PocketMaiShareExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = D00000000000000000000002 /* PocketMaiShareExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		E10000000000000000000001 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = E10000000000000000000002 /* SwiftTerm */; };
@@ -80,7 +80,6 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
-				PocketMaiCarPlay.entitlements,
 			);
 			target = A00000000000000000000009 /* PocketMai */;
 		};
@@ -1038,10 +1037,6 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		A30000000000000000000002 /* MaiUI */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = MaiUI;
-		};
 		A10000000000000000000011 /* MLX */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = A10000000000000000000021 /* XCRemoteSwiftPackageReference "mlx-swift" */;
@@ -1106,6 +1101,10 @@
 			isa = XCSwiftPackageProductDependency;
 			package = A20000000000000000000021 /* XCLocalSwiftPackageReference "MaiCore" */;
 			productName = MaiLocalProviders;
+		};
+		A30000000000000000000002 /* MaiUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = MaiUI;
 		};
 		E10000000000000000000002 /* SwiftTerm */ = {
 			isa = XCSwiftPackageProductDependency;
