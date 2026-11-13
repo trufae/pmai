@@ -73,7 +73,7 @@ public actor ACPClient {
     }
   }
 
-  private let configuration: Configuration
+  private var configuration: Configuration
   private var transport: (any JSONRPCTransport)?
   private var forwirohTunnel: ForwirohRemote.Tunnel?
   private let onUpdate: (@Sendable (JSONValue) async -> Void)?
@@ -734,6 +734,9 @@ public actor ACPClient {
     guard configuration.webSocketURL == nil || !internetAccess.isOffline else {
       throw InternetAccessError.offline
     }
+    #if os(macOS) || os(Linux)
+    try configuration.restrictProjectBoxAccess()
+    #endif
     let transport: any JSONRPCTransport
     var environment = configuration.environment ?? ProcessInfo.processInfo.environment
     let codexPrompt = configuration.systemPrompt != nil && configuration.usesCodexAdapter

@@ -168,6 +168,11 @@ public actor ACPProvider: ChatProvider {
   ) async throws
     -> ACPClient
   {
+    var configuration = self.configuration
+    if configuration.workingDirectory == nil { configuration.workingDirectory = workingDirectory }
+    #if os(macOS) || os(Linux)
+    try configuration.restrictProjectBoxAccess()
+    #endif
     let needsBridge =
       configuration.webSocketURL == nil && configuration.forwardTools
       && forwardTools && ProviderToolScope.execute != nil
@@ -177,7 +182,6 @@ public actor ACPProvider: ChatProvider {
       clients[key] = nil
       userHistory[key] = nil
     }
-    var configuration = self.configuration
     configuration.systemPrompt = systemPrompt
     if configuration.replaceContext || configuration.replacePrompt { configuration.sessionID = nil }
     if configuration.workingDirectory == nil { configuration.workingDirectory = workingDirectory }
