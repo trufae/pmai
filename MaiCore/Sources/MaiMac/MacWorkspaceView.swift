@@ -129,7 +129,7 @@ struct MacChatView: View {
                       && conversation.messages.last?.id == message.id).equatable()
                 }
               }
-              .messageScrollBounce()
+              .messageScrollBounce(enabled: run.isActivity || run.messages.first?.role != "assistant")
               .background(alignment: .top) {
                 MacHistoryScrollMarker(session: historyScrollSession, id: run.id)
                   .frame(height: 1)

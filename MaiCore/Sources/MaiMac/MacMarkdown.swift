@@ -20,11 +20,15 @@ struct MacMarkdown: View, @MainActor Equatable {
     VStack(alignment: .leading, spacing: 12) {
       if let document {
         ForEach(Array(document.blocks.enumerated()), id: \.offset) { index, block in
-          render(block, at: index)
-            .streamingResponseTail(index == document.blocks.count - 1)
+          // Lists remain a single moving block, including their markers.
+          VStack(alignment: .leading, spacing: 12) {
+            render(block, at: index)
+              .streamingResponseTail(index == document.blocks.count - 1)
+          }
+          .messageScrollBounce()
         }
       } else if !text.isEmpty {
-        ProgressView().controlSize(.small)
+        ProgressView().controlSize(.small).messageScrollBounce()
       }
     }.font(typography.messageFont(for: role)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
       .overlayPreferenceValue(Text.LayoutKey.self) { layouts in
@@ -92,7 +96,7 @@ struct MacMarkdown: View, @MainActor Equatable {
         ScrollView(.horizontal) {
           Text(MacSearchHighlight.apply(to: document?.codeText[index] ?? AttributedString(code), query: searchQuery))
             .font(typography.font(design: .monospaced))
-            .streamingTextReveal(code).fixedSize(horizontal: true, vertical: false)
+            .streamingTextReveal(code).fixedSize()
         }
       }.padding(14).background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 10))
     case .bullets(let items):

@@ -1048,11 +1048,12 @@ struct ChatView: View {
                           store.saveSettings()
                         }
                       )
+                      .messageScrollBounce()
                       .id("follow-ups-\(message.id.uuidString)")
                     }
                   }
                 }
-                .messageScrollBounce()
+                .messageScrollBounce(enabled: run.isActivity || run.messages.first?.role != .assistant)
               }
               if conversation?.historyWindow?.hasLater == true {
                 Button("Newer messages") { Task { await loadHistoryAtEdge(forceLater: true) } }

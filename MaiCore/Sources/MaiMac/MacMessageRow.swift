@@ -117,6 +117,7 @@ struct MacMessageRow: View, @MainActor Equatable {
           Label(message.role == "user" ? "You" : message.role == "assistant" ? "pmai" : message.role.capitalized,
             systemImage: message.role == "user" ? "person.crop.circle" : "sparkle")
             .font(typography.font(.callout).weight(.semibold)).foregroundStyle(.secondary)
+            .messageScrollBounce()
           MacMarkdown(text: message.text, searchQuery: searchQuery, role: message.role).equatable()
             .environment(\.isStreamingResponse,
               message.role == "assistant" && isStreaming && searchQuery.isEmpty)

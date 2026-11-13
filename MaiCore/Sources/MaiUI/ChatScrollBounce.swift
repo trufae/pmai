@@ -117,7 +117,15 @@ private struct MessageScrollBounce: ViewModifier {
   @State private var isVisible = false
   @State private var placement: Placement?
 
-  func body(content: Content) -> some View {
+  @ViewBuilder func body(content: Content) -> some View {
+    if bounce != nil {
+      bouncing(content)
+    } else {
+      content
+    }
+  }
+
+  private func bouncing(_ content: Content) -> some View {
     // Offscreen rows only follow edge stretching, not per-frame velocity changes.
     let motion = reduceMotion ? ScrollPresentation()
       : (isVisible ? bounce?.presentation : bounce?.edgePresentation) ?? ScrollPresentation()
@@ -128,7 +136,10 @@ private struct MessageScrollBounce: ViewModifier {
     let offset = reduceMotion ? 0 : motion.lag * resistance - stretch * distance
     let capture = !reduceMotion && (isVisible || motion.overscroll != 0)
       && placement?.gesture != motion.gesture ? motion.gesture : nil
-    content.animation(reduceMotion ? nil : .spring(response: 0.20, dampingFraction: 0.80)) { content in
+    // A bubble or activity panel moves as one unit. Its descendants must not
+    // apply the same motion again, even when they contain Markdown blocks.
+    return content.environment(\.chatScrollMotion, nil)
+    .animation(reduceMotion ? nil : .spring(response: 0.20, dampingFraction: 0.80)) { content in
       content.offset(y: offset)
     }
     .background {
@@ -152,7 +163,12 @@ public extension View {
     modifier(ChatScrollBounce(phase: phase, enabled: enabled))
   }
 
-  func messageScrollBounce() -> some View {
-    modifier(MessageScrollBounce())
+  /// Disable on response containers to let their individual blocks move instead.
+  @ViewBuilder func messageScrollBounce(enabled: Bool = true) -> some View {
+    if enabled {
+      modifier(MessageScrollBounce())
+    } else {
+      self
+    }
   }
 }

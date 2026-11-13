@@ -251,6 +251,7 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
         Text("📌 Pinned")
           .font(.caption)
           .foregroundStyle(.secondary)
+          .messageScrollBounce()
       }
       ForEach(prepared.groupedRanges(from: partStart), id: \.lowerBound) { range in
         let index = range.lowerBound
@@ -280,6 +281,7 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
               activityPart(part, in: prepared, canRenderMarkdown: canRenderMarkdown)
             }
           }
+          .messageScrollBounce()
         }
       }
       if prepared.parts.isEmpty && !prepared.hideBubble {
@@ -300,6 +302,7 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
         VoiceoverMessageRow(
           message: message, summary: summary,
           voice: toolSettings.voices.assistant, openAIEndpoints: openAIEndpoints)
+          .messageScrollBounce()
       }
     }
     .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
@@ -405,6 +408,7 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
             .font(.caption.weight(.semibold))
             .foregroundStyle(.secondary)
         }
+        .messageScrollBounce()
       }
       if includeMessageExtras {
         ForEach(textAttachments) { attachment in
@@ -413,15 +417,18 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
               selectedTextAttachment = attachment
             }
           }
+          .messageScrollBounce()
         }
       }
       if visibleText.isEmpty {
         if showsResponsePlaceholder && isLiveAssistantResponse {
           AssistantTypingIndicator(fontSize: appearance.fontSize)
+            .messageScrollBounce()
         } else if showsResponsePlaceholder && !hasIncludedExtras {
           Text("...")
             .font(messageFont)
             .foregroundStyle(.secondary)
+            .messageScrollBounce()
         }
       } else if let searchHighlight,
         searchHighlight.visiblePartIndex == visiblePartIndex
@@ -435,6 +442,7 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
         .foregroundStyleIfPresent(plainBodyForegroundStyle)
         .fixedSize(horizontal: false, vertical: true)
         .id(searchHighlight)
+        .messageScrollBounce()
       } else if usesMarkdown {
         MarkdownContentView(
           blocks: markdownBlocks,
@@ -455,6 +463,7 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
           .environment(\.isStreamingResponse, isStreamingTail && isStreaming && message.role == .assistant
             && !isFullChatScreenshotRendering)
           .fixedSize(horizontal: false, vertical: true)
+          .messageScrollBounce()
       }
       if allowsProgressiveReveal && (userPreview != nil || previewSteps > 1) {
         HStack(spacing: 16) {
@@ -483,6 +492,7 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
       }
       if includeMessageExtras && hasVoiceRecording {
         VoiceRecordingPlaybackButton(message: message)
+          .messageScrollBounce()
       }
       if includeMessageExtras {
         ForEach(imageAttachments) { attachment in
@@ -491,6 +501,7 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
             onOpen: { selectedImageAttachment = attachment },
             onSave: { saveImageAttachment(attachment) }
           )
+          .messageScrollBounce()
         }
       }
       if includeMessageExtras && showUserTimestamp {
@@ -506,10 +517,16 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
       bubbleContent
     }
     .background(backgroundStyle)
-    .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-    .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
 
-    bubbleView
+    Group {
+      if message.role == .assistant {
+        // Paragraphs can move beyond the transparent response's layout bounds.
+        bubbleView
+      } else {
+        bubbleView.clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+      }
+    }
+      .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
       .sheet(isPresented: $showingTextSelection) {
         // Only the prose of the message: tool calls and reasoning are edited
         // from their own rows, and are spliced back untouched on save.
@@ -572,7 +589,7 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
 
   private func usesMarkdown(for visibleText: String, canRenderMarkdown: Bool) -> Bool {
     canRenderMarkdown
-      && (appearance.justifyText || MarkdownParser.mayContainMarkdown(visibleText))
+      && (message.role == .assistant || appearance.justifyText || MarkdownParser.mayContainMarkdown(visibleText))
   }
 
   @MainActor
@@ -2874,6 +2891,7 @@ struct MarkdownContentView: View {
       ForEach(blocks) { block in
         blockView(block)
           .streamingResponseTail(block.id == blocks.last?.id)
+          .messageScrollBounce()
       }
     }
     .environment(\.markdownRenderImages, renderImages)
