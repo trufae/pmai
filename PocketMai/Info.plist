@@ -4,12 +4,6 @@
 <dict>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
-	<key>CFBundleExecutable</key>
-	<string>$(EXECUTABLE_NAME)</string>
-	<key>CFBundleIdentifier</key>
-	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
-	<key>CFBundleInfoDictionaryVersion</key>
-	<string>6.0</string>
 	<key>CFBundleDocumentTypes</key>
 	<array>
 		<dict>
@@ -37,43 +31,69 @@
 			</array>
 		</dict>
 	</array>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
 	<key>CFBundleName</key>
 	<string>PocketMai</string>
 	<key>CFBundlePackageType</key>
 	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
 	<key>CFBundleShortVersionString</key>
 	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>com.pocketmai.oauth</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>pocketmai</string>
+			</array>
+		</dict>
+	</array>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
-	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>PocketMai can include your current location in prompts when the Location tool is enabled.</string>
-	<key>NSLocationTemporaryUsageDescriptionDictionary</key>
-	<dict>
-		<key>PreciseLocation</key>
-		<string>PocketMai uses precise coordinates for nearby places and location-aware answers when Precise location is enabled. Coordinates are shared with your selected AI provider.</string>
-	</dict>
-	<key>NSLocalNetworkUsageDescription</key>
-	<string>PocketMai connects to remote agents and Ollama servers, and can serve chats to local clients.</string>
-	<key>NSCameraUsageDescription</key>
-	<string>PocketMai uses the camera to attach pictures and scan remote agent connection QR codes.</string>
 	<key>NSAlarmKitUsageDescription</key>
 	<string>PocketMai can schedule alarms only when the Alarms tool is enabled and called in chat.</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
 	<key>NSCalendarsFullAccessUsageDescription</key>
 	<string>PocketMai can read your calendar events only when the Calendar tool is enabled and called in chat.</string>
 	<key>NSCalendarsUsageDescription</key>
 	<string>PocketMai can read your calendar events only when the Calendar tool is enabled and called in chat.</string>
 	<key>NSCalendarsWriteOnlyAccessUsageDescription</key>
 	<string>PocketMai can create calendar events only when Calendar event creation is enabled in Settings and the create-event tool is called.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>PocketMai uses the camera to attach pictures and scan remote agent connection QR codes.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>PocketMai connects to remote agents and Ollama servers, and can serve chats to local clients.</string>
+	<key>NSLocationTemporaryUsageDescriptionDictionary</key>
+	<dict>
+		<key>PreciseLocation</key>
+		<string>PocketMai uses precise coordinates for nearby places and location-aware answers when Precise location is enabled. Coordinates are shared with your selected AI provider.</string>
+	</dict>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>PocketMai can include your current location in prompts when the Location tool is enabled.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>PocketMai uses the microphone for active voice conversations. When Native iOS Live is selected, raw microphone audio stays on this device.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>PocketMai saves chat images to your photo library when you choose Save Image.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>PocketMai transcribes voice on device by default. Audio may be sent to Apple only if you enable Allow Apple Server Transcription in voice settings. Offline mode always requires on-device transcription.</string>
+	<key>NSSupportsLiveActivities</key>
+	<true/>
 	<key>NSUbiquitousContainers</key>
 	<dict>
 		<key>iCloud.io.github.trufae.mai</key>
@@ -86,39 +106,45 @@
 			<string>Any</string>
 		</dict>
 	</dict>
-	<key>NSAppTransportSecurity</key>
+	<key>UIApplicationSceneManifest</key>
 	<dict>
-		<key>NSAllowsLocalNetworking</key>
+		<key>UIApplicationSupportsMultipleScenes</key>
 		<true/>
+		<key>UISceneConfigurations</key>
+		<dict>
+			<key>CPTemplateApplicationSceneSessionRoleApplication</key>
+			<array>
+				<dict>
+					<key>UISceneClassName</key>
+					<string>CPTemplateApplicationScene</string>
+					<key>UISceneConfigurationName</key>
+					<string>CarPlay</string>
+					<key>UISceneDelegateClassName</key>
+					<string>$(PRODUCT_MODULE_NAME).CarPlaySceneDelegate</string>
+				</dict>
+			</array>
+		</dict>
 	</dict>
-	<key>NSSupportsLiveActivities</key>
-	<true/>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>
 	</array>
 	<key>UIFileSharingEnabled</key>
 	<true/>
-	<key>UTImportedTypeDeclarations</key>
+	<key>UILaunchScreen</key>
+	<dict/>
+	<key>UISupportedInterfaceOrientations</key>
 	<array>
-		<dict>
-			<key>UTTypeIdentifier</key>
-			<string>io.github.trufae.mai.webxdc</string>
-			<key>UTTypeDescription</key>
-			<string>Webxdc App</string>
-			<key>UTTypeConformsTo</key>
-			<array>
-				<string>public.zip-archive</string>
-				<string>public.content</string>
-			</array>
-			<key>UTTypeTagSpecification</key>
-			<dict>
-				<key>public.filename-extension</key>
-				<string>xdc</string>
-				<key>public.mime-type</key>
-				<string>application/webxdc+zip</string>
-			</dict>
-		</dict>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<key>UISupportedInterfaceOrientations~ipad</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
 	<key>UTExportedTypeDeclarations</key>
 	<array>
@@ -144,51 +170,25 @@
 			</dict>
 		</dict>
 	</array>
-	<key>UIApplicationSceneManifest</key>
-	<dict>
-		<key>UIApplicationSupportsMultipleScenes</key>
-		<true/>
-		<key>UISceneConfigurations</key>
-		<dict>
-			<key>CPTemplateApplicationSceneSessionRoleApplication</key>
-			<array>
-				<dict>
-					<key>UISceneClassName</key>
-					<string>CPTemplateApplicationScene</string>
-					<key>UISceneConfigurationName</key>
-					<string>CarPlay</string>
-					<key>UISceneDelegateClassName</key>
-					<string>$(PRODUCT_MODULE_NAME).CarPlaySceneDelegate</string>
-				</dict>
-			</array>
-		</dict>
-	</dict>
-	<key>UILaunchScreen</key>
-	<dict/>
-	<key>UISupportedInterfaceOrientations</key>
-	<array>
-		<string>UIInterfaceOrientationPortrait</string>
-		<string>UIInterfaceOrientationLandscapeLeft</string>
-		<string>UIInterfaceOrientationLandscapeRight</string>
-	</array>
-	<key>UISupportedInterfaceOrientations~ipad</key>
-	<array>
-		<string>UIInterfaceOrientationPortrait</string>
-		<string>UIInterfaceOrientationPortraitUpsideDown</string>
-		<string>UIInterfaceOrientationLandscapeLeft</string>
-		<string>UIInterfaceOrientationLandscapeRight</string>
-	</array>
-	<key>CFBundleURLTypes</key>
+	<key>UTImportedTypeDeclarations</key>
 	<array>
 		<dict>
-			<key>CFBundleURLName</key>
-			<string>com.pocketmai.oauth</string>
-			<key>CFBundleTypeRole</key>
-			<string>Editor</string>
-			<key>CFBundleURLSchemes</key>
+			<key>UTTypeConformsTo</key>
 			<array>
-				<string>pocketmai</string>
+				<string>public.zip-archive</string>
+				<string>public.content</string>
 			</array>
+			<key>UTTypeDescription</key>
+			<string>Webxdc App</string>
+			<key>UTTypeIdentifier</key>
+			<string>io.github.trufae.mai.webxdc</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<string>xdc</string>
+				<key>public.mime-type</key>
+				<string>application/webxdc+zip</string>
+			</dict>
 		</dict>
 	</array>
 </dict>
