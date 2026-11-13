@@ -39,6 +39,12 @@ The mirror image is just as thin: **the ACP server is an adapter over
   └───────────────┴────────────────────┘
 ```
 
+For persistent per-project Docker/Podman workers, see [Project boxes](boxes.md).
+Remote launchers (`ssh`, `docker`, `podman`, `vagrant`, `chroot`), WebSocket peers,
+and providers with `remoteCwd` no longer receive host files or tools by default.
+`options.isolated: true` enforces both restrictions for custom wrappers even if
+`readClientFiles` or `forwardTools` was enabled.
+
 ## pmai as a server
 
 For phone and CLI clients, run `/remote serve` inside the REPL. It uses Forwiroh
@@ -293,9 +299,8 @@ agent must be authenticated with its own CLI once before it can be driven.
 
 `options.permission` decides how pmai answers an agent's
 `session/request_permission`: `allow`, `reject`, or `auto` (approve read-only
-kinds — read, search, fetch, think — and reject the rest; the default). pmai
-answers `fs/read_text_file` from the working directory so an agent can read the
-files it reasons about; writes are declined.
+kinds — read, search, fetch, think — and reject the rest; the default). Locally launched agents can request `fs/read_text_file` from the host;
+remote launchers do not receive this capability by default. Writes are declined.
 
 ### File browsing from PocketMai
 
