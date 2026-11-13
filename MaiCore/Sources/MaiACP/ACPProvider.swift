@@ -355,7 +355,7 @@ public struct ACPConfiguredProviderFactory: ConfiguredProviderFactory {
       workingDirectory: workingDirectory, permission: permission,
       promptTimeout: configuration.timeout,
       remoteWorkingDirectory: options["remoteCwd"]?.stringValue,
-      readClientFiles: options["readClientFiles"]?.boolValue ?? (url == nil),
+      readClientFiles: options["readClientFiles"]?.boolValue,
       webSocketURL: url,
       bearerToken: options["tokenEnv"]?.stringValue.flatMap { environment[$0] }
         ?? options["token"]?.stringValue ?? storedToken)
@@ -367,9 +367,11 @@ public struct ACPConfiguredProviderFactory: ConfiguredProviderFactory {
     }
     clientConfiguration.replaceContext = options["context"] == .string("replace")
     clientConfiguration.replacePrompt = options["prompt"] == .string("replace")
-    clientConfiguration.forwardTools =
-      options["forwardTools"]?.boolValue
-      ?? (URL(fileURLWithPath: command).lastPathComponent != "ssh")
+    clientConfiguration.forwardTools = options["forwardTools"]?.boolValue ?? clientConfiguration.forwardTools
+    if options["isolated"] == .bool(true) {
+      clientConfiguration.forwardTools = false
+      clientConfiguration.readClientFiles = false
+    }
     return ACPProvider(
       id: ProviderID(configuration.id),
       displayName: configuration.displayName ?? configuration.id,

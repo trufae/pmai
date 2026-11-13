@@ -34,6 +34,19 @@ func acpProviderCommands() throws {
   }
 }
 
+@Test("Remote ACP launchers do not expose host files or tools by default")
+func remoteACPHostAccess() {
+  for command in ["ssh", "/usr/bin/docker", "podman", "vagrant", "chroot"] {
+    let configuration = ACPClient.Configuration(command: command)
+    #expect(!configuration.readClientFiles)
+    #expect(!configuration.forwardTools)
+  }
+  let wrapper = ACPClient.Configuration(command: "worker", remoteWorkingDirectory: "/work")
+  #expect(!wrapper.readClientFiles && !wrapper.forwardTools)
+  let local = ACPClient.Configuration(command: "local-agent")
+  #expect(local.readClientFiles && local.forwardTools)
+}
+
 #if os(macOS) || os(Linux)
   private let providerAgentScript = #"""
     import json, os, pathlib, sys, urllib.request

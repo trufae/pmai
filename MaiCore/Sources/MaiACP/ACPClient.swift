@@ -47,7 +47,7 @@ public actor ACPClient {
       permission: ACPPermissionPolicy = .auto,
       promptTimeout: TimeInterval? = nil,
       remoteWorkingDirectory: String? = nil,
-      readClientFiles: Bool = true,
+      readClientFiles: Bool? = nil,
       webSocketURL: URL? = nil,
       bearerToken: String? = nil,
       sessionID: String? = nil,
@@ -61,7 +61,10 @@ public actor ACPClient {
       self.permission = permission
       self.promptTimeout = promptTimeout
       self.remoteWorkingDirectory = remoteWorkingDirectory
-      self.readClientFiles = readClientFiles
+      let remoteExecution = webSocketURL != nil || remoteWorkingDirectory != nil
+        || ["ssh", "docker", "podman", "vagrant", "chroot"].contains(URL(fileURLWithPath: command).lastPathComponent)
+      self.readClientFiles = readClientFiles ?? !remoteExecution
+      self.forwardTools = !remoteExecution
       self.webSocketURL = webSocketURL
       self.bearerToken = bearerToken
       self.sessionID = sessionID
