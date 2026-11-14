@@ -1,5 +1,6 @@
 import AppKit
 import MaiACP
+import MaiUI
 import SwiftUI
 
 struct MacSidebar: View {
@@ -17,6 +18,7 @@ struct MacSidebar: View {
         section(.conversations, subtitle: workspace.showArchived ? "Archived" : nil) { conversations }
       }
       .listStyle(.sidebar)
+      .listScrollBounce()
       .buttonStyle(.plain)
       .disabled(workspace.busy)
       .contextMenu(forSelectionType: String.self) { ids in
@@ -128,6 +130,7 @@ struct MacSidebar: View {
       .accessibilityLabel(section.rawValue)
       .accessibilityValue(workspace.sidebarSection == section ? "Expanded" : "Collapsed")
       .selectionDisabled()
+      .messageScrollBounce()
     }
   }
 
@@ -141,6 +144,7 @@ struct MacSidebar: View {
         Button("Open Folder…", systemImage: "folder.badge.plus", action: workspace.chooseFolder)
         Button("Refresh", systemImage: "arrow.clockwise") { Task { await workspace.refresh() } }
       }
+      .messageScrollBounce()
       ForEach(workspace.hosts) { host in
         Button { workspace.selectHost(host.id) } label: {
           row(host.name, icon: "network", selected: workspace.hostID == host.id)
@@ -159,8 +163,10 @@ struct MacSidebar: View {
               }
           }
         }
+        .messageScrollBounce()
       }
       Button { workspace.showConnection = true } label: { Label("Connect Host…", systemImage: "plus") }
+        .messageScrollBounce()
     }
   }
 
@@ -233,11 +239,14 @@ struct MacSidebar: View {
             }
           }
         }
+        .messageScrollBounce()
       }
       if workspace.hostID == nil {
         Button(action: workspace.chooseFolder) { Label("Open Folder…", systemImage: "folder.badge.plus") }
+          .messageScrollBounce()
       } else if workspace.snapshot.folders.isEmpty {
         Text("No folders available on this host.").foregroundStyle(.secondary)
+          .messageScrollBounce()
       }
     }
   }
@@ -246,6 +255,7 @@ struct MacSidebar: View {
     Group {
       if workspace.cwd.isEmpty {
         Button("Choose a Folder…") { workspace.sidebarSection = .folders }.selectionDisabled()
+          .messageScrollBounce()
       } else {
         HStack(spacing: 8) {
           TextField("Find a conversation", text: $workspace.search)
@@ -257,23 +267,26 @@ struct MacSidebar: View {
               .accessibilityValue(workspace.showArchived ? "Archived" : "Active")
               .help(workspace.showArchived ? "Showing archived conversations. Switch to active." : "Showing active conversations. Switch to archived.")
           }
-        }.selectionDisabled()
+        }.selectionDisabled().messageScrollBounce()
         ForEach(workspace.unlistedConversations) { chat in
           Button { selectedSessionIDs = []; workspace.select(chat) } label: {
             chatRow(title: chat.title, chat: chat)
           }
           .contextMenu { openChatActions(chat) }
           .selectionDisabled()
+          .messageScrollBounce()
         }
         ForEach(workspace.sessions) { session in
           let chat = workspace.conversation(for: session)
           chatRow(title: session.title, chat: chat, pinned: session.isPinned == true, date: session.updatedAt)
+            .messageScrollBounce()
             .tag(session.sessionID)
         }
         if workspace.sessions.isEmpty && workspace.unlistedConversations.isEmpty {
           Text(workspace.search.isEmpty ? "No \(workspace.showArchived ? "archived" : "active") conversations." : "No matching conversations.")
             .foregroundStyle(.secondary)
             .selectionDisabled()
+            .messageScrollBounce()
         }
       }
     }

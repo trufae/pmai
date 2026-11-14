@@ -1,5 +1,8 @@
 import Observation
 import SwiftUI
+#if os(macOS)
+import AppKit
+#endif
 
 private struct ScrollPresentation: Equatable {
   var gesture = 0
@@ -12,6 +15,12 @@ private struct ScrollSample: Equatable {
   let offset: CGFloat
   let overscroll: CGFloat
   let viewportHeight: CGFloat
+
+  init(offset: CGFloat, overscroll: CGFloat, viewportHeight: CGFloat) {
+    self.offset = offset
+    self.overscroll = overscroll
+    self.viewportHeight = max(1, viewportHeight)
+  }
 
   init(_ geometry: ScrollGeometry) {
     let top = -geometry.contentInsets.top
@@ -34,6 +43,15 @@ private final class ScrollMotion {
   @ObservationIgnored private var previous: (offset: CGFloat, overscroll: CGFloat, time: TimeInterval)?
   @ObservationIgnored private var lag: CGFloat = 0
   @ObservationIgnored private var gesture = 0
+  @ObservationIgnored let isList: Bool
+  @ObservationIgnored let coordinateSpace = UUID()
+#if os(macOS)
+  @ObservationIgnored var listObserver: NativeListScrollObserver?
+#endif
+
+  init(isList: Bool = false) {
+    self.isList = isList
+  }
 
   func update(_ sample: ScrollSample) {
     let now = ProcessInfo.processInfo.systemUptime
@@ -136,6 +154,7 @@ private struct MessageScrollBounce: ViewModifier {
     let offset = reduceMotion ? 0 : motion.lag * resistance - stretch * distance
     let capture = !reduceMotion && (isVisible || motion.overscroll != 0)
       && placement?.gesture != motion.gesture ? motion.gesture : nil
+    let listSpace = bounce.flatMap { $0.isList ? $0.coordinateSpace : nil }
     // A bubble or activity panel moves as one unit. Its descendants must not
     // apply the same motion again, even when they contain Markdown blocks.
     return content.environment(\.chatScrollMotion, nil)
@@ -147,17 +166,142 @@ private struct MessageScrollBounce: ViewModifier {
       // animation frame. This background stays in the row's unshifted layout.
       Color.clear.onGeometryChange(for: Placement?.self) { geometry in
         guard let capture else { return nil }
-        let y = geometry.frame(in: .scrollView(axis: .vertical)).midY
+        let y: CGFloat
+        if let listSpace {
+          y = geometry.frame(in: .named(listSpace)).midY
+        } else {
+          y = geometry.frame(in: .scrollView(axis: .vertical)).midY
+        }
         return Placement(gesture: capture, position: min(1, max(0, y / motion.viewportHeight)))
       } action: { _, value in
         if let value { placement = value }
       }
       .onScrollVisibilityChange(threshold: 0.01) { isVisible = $0 }
+      // Native lists recycle their row views but don't publish scroll visibility.
+      .onAppear { if bounce?.isList == true { isVisible = true } }
+      .onDisappear { isVisible = false }
+#if os(macOS)
+      if let bounce, bounce.isList {
+        NativeListScrollAnchor(motion: bounce).frame(width: 0, height: 0)
+      }
+#endif
     }
   }
 }
 
+#if os(macOS)
+/// Keep native List selection and menus while feeding the same spring motion
+/// from AppKit's live-scroll notifications, which include momentum scrolling.
+private struct NativeListScrollBounce: ViewModifier {
+  @State private var motion = ScrollMotion(isList: true)
+
+  func body(content: Content) -> some View {
+    content
+      .environment(\.chatScrollMotion, motion)
+      .coordinateSpace(name: motion.coordinateSpace)
+      .scrollBounceBehavior(.always, axes: .vertical)
+      .onDisappear {
+        motion.listObserver?.detach()
+        motion.reset()
+      }
+  }
+}
+
+@MainActor
+private final class NativeListScrollObserver: NSObject {
+  private weak var motion: ScrollMotion?
+  private weak var scroll: NSScrollView?
+  private var isScrolling = false
+
+  init(motion: ScrollMotion) { self.motion = motion }
+
+  func attach(to scroll: NSScrollView) {
+    guard self.scroll !== scroll else { return }
+    detach()
+    self.scroll = scroll
+    let center = NotificationCenter.default
+    center.addObserver(self, selector: #selector(started),
+      name: NSScrollView.willStartLiveScrollNotification, object: scroll)
+    center.addObserver(self, selector: #selector(ended),
+      name: NSScrollView.didEndLiveScrollNotification, object: scroll)
+    center.addObserver(self, selector: #selector(changed),
+      name: NSView.boundsDidChangeNotification, object: scroll.contentView)
+    scroll.contentView.postsBoundsChangedNotifications = true
+  }
+
+  func detach() {
+    NotificationCenter.default.removeObserver(self)
+    scroll = nil
+    isScrolling = false
+    motion?.reset()
+  }
+
+  @objc private func started(_ notification: Notification) {
+    isScrolling = true
+    changed(notification)
+  }
+
+  @objc private func ended(_ notification: Notification) {
+    isScrolling = false
+    motion?.reset()
+  }
+
+  @objc private func changed(_ notification: Notification) {
+    guard isScrolling, let scroll, let document = scroll.documentView else { return }
+    let viewport = scroll.contentView.bounds
+    let top = -scroll.contentInsets.top
+    let bottom = max(top, document.bounds.height - viewport.height + scroll.contentInsets.bottom)
+    let offset = viewport.minY
+    motion?.update(ScrollSample(offset: offset,
+      overscroll: offset - min(max(offset, top), bottom), viewportHeight: viewport.height))
+  }
+
+  deinit { NotificationCenter.default.removeObserver(self) }
+}
+
+private struct NativeListScrollAnchor: NSViewRepresentable {
+  let motion: ScrollMotion
+
+  func makeNSView(context: Context) -> Anchor { Anchor() }
+  func updateNSView(_ view: Anchor, context: Context) {
+    view.motion = motion
+    view.attach()
+  }
+
+  final class Anchor: NSView {
+    var motion: ScrollMotion?
+
+    override func viewDidMoveToWindow() {
+      super.viewDidMoveToWindow()
+      attach()
+    }
+
+    override func viewDidMoveToSuperview() {
+      super.viewDidMoveToSuperview()
+      attach()
+    }
+
+    func attach() {
+      guard let motion, let scroll = enclosingScrollView else { return }
+      if motion.listObserver == nil { motion.listObserver = NativeListScrollObserver(motion: motion) }
+      motion.listObserver?.attach(to: scroll)
+      // Let the row move beyond its hosting cell during edge stretching.
+      var ancestor = superview
+      while let view = ancestor, view !== scroll.documentView {
+        view.clipsToBounds = false
+        ancestor = view.superview
+      }
+    }
+  }
+}
+#endif
+
 public extension View {
+#if os(macOS)
+  func listScrollBounce() -> some View {
+    modifier(NativeListScrollBounce())
+  }
+#endif
   /// Animate visible chat rows without publishing raw scroll coordinates to the view tree.
   func chatScrollBounce(phase: ScrollPhase, enabled: Bool = true) -> some View {
     modifier(ChatScrollBounce(phase: phase, enabled: enabled))

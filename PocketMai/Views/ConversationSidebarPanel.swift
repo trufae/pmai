@@ -1,3 +1,4 @@
+import MaiUI
 import SwiftUI
 
 /// Adjacent rows share one pill header; stores keep their existing sort order.
@@ -36,9 +37,6 @@ struct SidebarGroupHeader: View {
     }
     .padding(.horizontal, 14)
     .padding(.vertical, 7)
-    .listRowInsets(EdgeInsets())
-    .listRowBackground(Color.clear)
-    .listRowSeparator(.hidden)
     .accessibilityAddTraits(.isHeader)
   }
 
@@ -53,20 +51,22 @@ struct SidebarPanel<Rows: View, Actions: View>: View {
   var onBack: () -> Void = {}
   @ViewBuilder let rows: () -> Rows
   @ViewBuilder let actions: (Bool) -> Actions
+  @State private var scrollPhase: ScrollPhase = .idle
 
   var body: some View {
     GeometryReader { proxy in
       ZStack(alignment: .bottom) {
-        List {
+        ScrollView {
+          LazyVStack(spacing: 0) {
+            ForEach(subviews: rows()) { row in
+              row.messageScrollBounce()
+            }
+          }
           // Keep row content aligned as the drawer moves across the window.
-          rows()
-            .listRowInsets(EdgeInsets(top: 14, leading: 16, bottom: 14, trailing: 16))
-            .listRowBackground(Color.clear)
+          .padding(.horizontal, 16)
         }
-        .environment(\.defaultMinListRowHeight, 0)
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
-        .contentMargins(.horizontal, 16, for: .scrollContent)
+        .chatScrollBounce(phase: scrollPhase)
+        .onScrollPhaseChange { _, phase in scrollPhase = phase }
         .scrollIndicators(.hidden)
         .safeAreaInset(edge: .bottom, spacing: 0) {
           Color.clear.frame(height: 100)
@@ -81,6 +81,15 @@ struct SidebarPanel<Rows: View, Actions: View>: View {
           .background { HeaderFadeBlur() }
       }
     }
+  }
+}
+
+extension View {
+  func sidebarRow(isSelected: Bool = false) -> some View {
+    padding(.vertical, 14)
+      .padding(.horizontal, 16)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .background(SidebarRowBackground(isSelected: isSelected))
   }
 }
 

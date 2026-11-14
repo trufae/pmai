@@ -108,7 +108,7 @@ struct HostsView: View, Equatable {
     ) {
       onSelectHost(id)
     }
-    .listRowBackground(SidebarRowBackground(isSelected: selected)).listRowSeparator(.hidden)
+    .sidebarRow(isSelected: selected)
   }
 }
 
@@ -155,7 +155,7 @@ struct RemoteFoldersView: View, Equatable {
           filterFocused = false
           onSelectFolder(folder.cwd)
         }
-        .listRowBackground(SidebarRowBackground(isSelected: selected)).listRowSeparator(.hidden)
+        .sidebarRow(isSelected: selected)
         .contextMenu {
           SidebarFolderActions(
             isPinned: pinned,
@@ -171,17 +171,20 @@ struct RemoteFoldersView: View, Equatable {
       }
       if hosts.loading {
         ProgressView(hosts.waitingApproval ? "Waiting for server approval…" : "Connecting…")
+          .sidebarRow()
       }
       if hosts.waitingApproval {
         Text("Accept this PocketMai client in the serving REPL with /remote accept.")
           .font(.footnote).foregroundStyle(.secondary)
+          .sidebarRow()
       }
-      if let error = hosts.error { Text(error).foregroundStyle(.red).font(.callout) }
+      if let error = hosts.error { Text(error).foregroundStyle(.red).font(.callout).sidebarRow() }
       if !hosts.supportsDiscovery {
         Text(
           "This agent shares its configured workspace. Update the remote pmai to browse all folders and chats."
         )
         .font(.footnote).foregroundStyle(.secondary)
+        .sidebarRow()
       }
     } actions: { compact in
       HStack(spacing: compact ? 6 : 10) {
@@ -288,7 +291,7 @@ struct RemoteConversationsView: View, Equatable {
           onSelectConversation(chat.id)
         }
         .disabled(hosts.selectedHost?.requiresApproval == true || hosts.selectedFolderID == nil)
-        .listRowBackground(SidebarRowBackground(isSelected: selected)).listRowSeparator(.hidden)
+        .sidebarRow(isSelected: selected)
         .modifier(
           ConversationSummaryActionsModifier(
             store: appStore,
@@ -322,8 +325,9 @@ struct RemoteConversationsView: View, Equatable {
               ? "No conversations in this folder yet." : "No matching conversations.")
         )
         .font(.callout).foregroundStyle(.secondary)
+        .sidebarRow()
       }
-      if let error = hosts.error { Text(error).foregroundStyle(.red).font(.callout) }
+      if let error = hosts.error { Text(error).foregroundStyle(.red).font(.callout).sidebarRow() }
     }
   }
 }

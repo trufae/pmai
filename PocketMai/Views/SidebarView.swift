@@ -54,8 +54,7 @@ struct ConversationFoldersView: View, Equatable {
           onSelectFolder(folder.id)
         }
         .disabled(!store.canUseConversationFolder(folder.id))
-        .listRowBackground(SidebarRowBackground(isSelected: isSelected))
-        .listRowSeparator(.hidden)
+        .sidebarRow(isSelected: isSelected)
         .contextMenu {
           SidebarFolderActions(
             isPinned: store.isFolderPinned(folder.id),
@@ -74,8 +73,7 @@ struct ConversationFoldersView: View, Equatable {
         isSelected: isShowingBookmarks,
         action: onSelectBookmarks
       )
-      .listRowBackground(SidebarRowBackground(isSelected: isShowingBookmarks))
-      .listRowSeparator(.hidden)
+      .sidebarRow(isSelected: isShowingBookmarks)
     } actions: { compact in
       floatingActions(compact: compact)
     }
@@ -376,6 +374,7 @@ struct SidebarView: View {
           .font(.callout)
           .foregroundStyle(.secondary)
           .padding(.vertical, 12)
+          .sidebarRow()
       }
       SidebarGroupedRows(
         items: visibleConversations,
@@ -403,11 +402,13 @@ struct SidebarView: View {
             .foregroundStyle(.secondary)
         }
         .padding(.vertical, 12)
+        .sidebarRow()
       } else if visibleBookmarks.isEmpty {
         Text(searchQuery.isEmpty ? "No bookmarked messages." : "No matching bookmarks.")
           .font(.callout)
           .foregroundStyle(.secondary)
           .padding(.vertical, 12)
+          .sidebarRow()
       }
       SidebarGroupedRows(
         items: visibleBookmarks,
@@ -442,8 +443,8 @@ struct SidebarView: View {
         Label("Unbookmark", systemImage: "bookmark.slash")
       }
     }
-    .listRowBackground(Color(uiColor: .secondarySystemGroupedBackground))
-    .listRowSeparator(.hidden)
+    .sidebarRow()
+    .background(Color(uiColor: .secondarySystemGroupedBackground))
   }
 
   @ViewBuilder
@@ -477,8 +478,7 @@ struct SidebarView: View {
         },
         onAfterClone: onDismiss)
     )
-    .listRowBackground(SidebarRowBackground(isSelected: isSelected && !isSelectionMode))
-    .listRowSeparator(.hidden)
+    .sidebarRow(isSelected: isSelected && !isSelectionMode)
   }
 
   private var emptyMessage: String? {
