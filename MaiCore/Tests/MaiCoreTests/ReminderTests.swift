@@ -38,6 +38,8 @@ import Testing
   let utc = try ReminderDate.parse("2027-01-02T08:00:00Z")
   #expect(try ReminderDate.parse("2027-01-02T09:00:00+01:00") == utc)
   #expect(throws: ReminderError.self) { try ReminderDate.parse("2027-01-02T09:00:00") }
+  #expect(throws: ReminderError.self) { try ReminderDate.parse("2027-02-30T09:00:00+01:00") }
+  #expect(throws: ReminderError.self) { try ReminderDate.parse("2027-01-02T09:00:00+88:00") }
   let item = try await store.add(title: "Pay rent", due: utc, alert: .notification)
   await #expect(throws: ReminderError.self) {
     try await store.update(id: item.id, title: "Changed", due: .clear, alert: nil, completed: nil)
