@@ -50,6 +50,7 @@ import org.json.JSONObject
                             trailingContent = { Switch(group.enabled, { model.command("groupEnabled", "id" to group.id, "enabled" to it.toString()) }, enabled = editable) })
                         if (expanded || query.isNotBlank()) {
                             Text(group.description, Modifier.padding(horizontal = 20.dp, vertical = 8.dp), style = MaterialTheme.typography.bodySmall)
+                            if (group.id == "reminders") ReminderControls(state, model, editable)
                             tools.filter { query.isBlank() || group.name.contains(query, true) || it.name.contains(query, true) }.forEach { tool ->
                                 ListItem(headlineContent = { Text(tool.name) }, supportingContent = { Text(tool.description, maxLines = 3, overflow = TextOverflow.Ellipsis) },
                                     trailingContent = { Switch(tool.enabled, { model.command("toolEnabled", "name" to tool.name, "enabled" to it.toString()) }, enabled = editable && group.enabled) })

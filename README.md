@@ -305,6 +305,7 @@ options, and [file browsing over ACP](doc/acp.md#file-browsing-from-pocketmai).
 - [Reusable prompts and skills](doc/prompts.md)
 - [Editing configuration and conversation context](doc/edit.md) · [Context strategies](doc/context.md)
 - [ACP and MCP integration](doc/acp.md) · [Tool proxy](doc/proxy.md)
+- [Reminders on CLI, Mac, iOS, and Android](doc/reminders.md)
 - [Vim integration](doc/vim.md) · [Android builds](PocketMaiKotlin/README.md)
 - [Voice setup and privacy](#voice-setup-and-privacy) · [Build from source](#build)
 

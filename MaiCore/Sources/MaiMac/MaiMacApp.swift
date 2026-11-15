@@ -1,5 +1,7 @@
 import AppKit
 import MaiCLI
+import MaiCore
+import UserNotifications
 import SwiftUI
 
 /// Explicit command-line arguments still enter the shared CLI for diagnostics.
@@ -217,14 +219,21 @@ private struct MacWorkspaceCommands: Commands {
 }
 
 @MainActor
-final class MacAppDelegate: NSObject, NSApplicationDelegate {
-  weak var backend: MacBackend?
+final class MacAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
+  weak var backend: MacBackend? {
+    didSet {
+      guard reminderMonitor == nil, let backend else { return }
+      reminderMonitor = Task { await backend.reminders.monitor() }
+    }
+  }
   var newTab: (() -> Void)?
   private var terminating = false
   private var updateCheck: Task<Void, Never>?
+  private var reminderMonitor: Task<Void, Never>?
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     NSWindow.allowsAutomaticWindowTabbing = false
+    UNUserNotificationCenter.current().delegate = self
     updateCheck = Task {
       // A failed background check should never interrupt startup or offline use.
       guard let update = try? await CLIUpdater.availableUpdate(), !Task.isCancelled else { return }
@@ -239,6 +248,16 @@ final class MacAppDelegate: NSObject, NSApplicationDelegate {
     }
   }
 
+  nonisolated func userNotificationCenter(
+    _ center: UNUserNotificationCenter, willPresent notification: UNNotification
+  ) async -> UNNotificationPresentationOptions {
+    AppleReminderNotifications.owns(notification.request.identifier) ? [.banner, .list, .sound] : []
+  }
+
+  func applicationDidBecomeActive(_ notification: Notification) {
+    if let backend { Task { await backend.reminders.refresh() } }
+  }
+
   @objc func newWindowForTab(_ sender: Any?) { newTab?() }
 
   func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -247,6 +266,9 @@ final class MacAppDelegate: NSObject, NSApplicationDelegate {
     terminating = true
     Task {
       await backend.close()
+      reminderMonitor?.cancel()
+      await reminderMonitor?.value
+      await backend.reminders.refresh()
       sender.reply(toApplicationShouldTerminate: true)
     }
     return .terminateLater

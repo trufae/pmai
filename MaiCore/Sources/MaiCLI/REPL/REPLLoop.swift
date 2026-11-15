@@ -307,6 +307,10 @@ extension MaiCLI {
       catalogs = changes.catalogs
       await terminal.configureColors(configuration?.ui ?? .init())
     }
+    let reminderAlerts = Task {
+      await deliverReminderAlerts(store: ReminderStore(directory: home.rootURL), terminal: terminal)
+    }
+    defer { reminderAlerts.cancel() }
     let editor = TerminalLineEditor(historyURL: historyURL)
     let aliases = CommandAliasStore(home: home)
     var agentsMarkdownChoice: (directory: URL, mode: AgentsMDMode, approved: Bool)?

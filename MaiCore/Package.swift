@@ -112,7 +112,7 @@ let package = Package(
     .target(name: "MaiCore", dependencies: ["CMaiWinHTTP"]),
     .target(name: "MaiVoice", dependencies: ["MaiCore", "MaiOpenAI"]),
     .target(name: "MaiMarkdown"),
-    .target(name: "MaiUI"),
+    .target(name: "MaiUI", dependencies: ["MaiCore"]),
     .target(name: "MaiOpenAI", dependencies: [
       "MaiCore", .product(name: "Crypto", package: "swift-crypto"),
       .product(name: "CryptoExtras", package: "swift-crypto"),

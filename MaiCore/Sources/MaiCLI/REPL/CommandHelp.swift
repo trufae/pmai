@@ -341,6 +341,7 @@ extension MaiCLI {
     /theme                 List, apply, or customize terminal themes
     /then [LINE]           Queue a prompt or command until all tasks finish; no args lists it
     /todo                  Show or edit the project's todo list
+    /reminders             Manage reminders and due alerts
     /tools                 List tool groups for this agent; /tools full includes tools
     /unalias NAME          Unregister a global alias (/help alias for details)
     /unthen                Clear all pending /then actions

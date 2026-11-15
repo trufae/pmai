@@ -30,7 +30,8 @@ data class McpInfo(val id: String, val name: String, val url: String, val enable
 data class LocalApproval(val id: String, val name: String, val description: String, val arguments: String)
 data class AgentState(val enabled: Boolean = false, val loading: Boolean = false, val error: String = "",
     val tools: List<AgentToolInfo> = emptyList(), val servers: List<McpInfo> = emptyList(),
-    val skills: List<SkillInfo> = emptyList(), val activity: List<Message> = emptyList(), val approvals: List<LocalApproval> = emptyList(), val groups: List<ToolGroupInfo> = emptyList())
+    val skills: List<SkillInfo> = emptyList(), val activity: List<Message> = emptyList(), val approvals: List<LocalApproval> = emptyList(), val groups: List<ToolGroupInfo> = emptyList(),
+    val remindersWriteEnabled: Boolean = true)
 data class RemoteState(
     val hostID: String = "", val folder: String = "", val conversationID: String = "",
     val connected: Boolean = false, val busy: Boolean = false, val status: String = "",
@@ -115,6 +116,7 @@ data class AppState(
                         terminal.optBoolean("running"), terminal.optBoolean("isError")),
                 ),
                 agent = AgentState(enabled = a.optBoolean("enabled"), loading = a.optBoolean("loading"), error = a.optString("error"),
+                    remindersWriteEnabled = a.optBoolean("remindersWriteEnabled", true),
                     tools = a.optJSONArray("tools").objects().map { AgentToolInfo(it.getString("name"), it.getString("description"), it.getBoolean("enabled")) },
                     servers = a.optJSONArray("servers").objects().map { McpInfo(it.getString("id"), it.getString("name"), it.getString("url"), it.getBoolean("enabled"), it.getBoolean("hasToken")) },
                     skills = a.optJSONArray("skills").objects().map { SkillInfo(it.getString("name"), it.getString("description"), it.getString("body"), it.getString("toolName"), it.getBoolean("enabled")) },
@@ -134,11 +136,10 @@ internal fun JSONArray?.objects(): List<JSONObject> =
     if (this == null) emptyList() else (0 until length()).map { getJSONObject(it) }
 
 class MaiApplication : Application() {
-    lateinit var repository: MaiRepository
-        private set
+    val repository: MaiRepository by lazy { MaiRepository(this) }
     override fun onCreate() {
         super.onCreate()
-        repository = MaiRepository(this)
+        ReminderNotifications.start(this)
     }
 }
 

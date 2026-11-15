@@ -16,6 +16,7 @@ private struct MobileAgentSettings: Codable {
   var enabled = false
   var disabledTools: Set<String> = []
   var disabledGroups: Set<String>?
+  var remindersWriteEnabled: Bool?
   var servers: [MobileMCP] = []
 }
 private struct ToolActivity {
@@ -36,6 +37,8 @@ private struct ToolActivity {
   private var skills: AgentSkillCatalog
   var error = ""
   var loading = false
+  private var reminderStore: ReminderStore { ReminderStore(directory: directory) }
+  private var toolFactory: MaiStandardToolFactory { MaiStandardToolFactory(reminders: reminderStore) }
   private var skillsRoot: URL { directory.appendingPathComponent("skills") }
   private var settingsFile: URL { directory.appendingPathComponent("agent.json") }
 
@@ -52,7 +55,7 @@ private struct ToolActivity {
     defer { loading = false }
     do {
       definitions = try await standardTools().map(\.definition)
-      groups = try await MaiStandardToolFactory().toolGroups(context: toolContext)
+      groups = try await toolFactory.toolGroups(context: toolContext)
     }
     catch { self.error = error.localizedDescription }
   }
@@ -60,13 +63,16 @@ private struct ToolActivity {
   private func standardTools() async throws -> [any AgentTool] {
     let workspace = directory.appendingPathComponent("workspace")
     try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
-    let tools = try await MaiStandardToolFactory().makeTools(context: toolContext)
+    let tools = try await toolFactory.makeTools(context: toolContext)
     // Mobile hosts have no bundled pmai executable or desktop process environment.
     return tools.filter { !$0.definition.name.hasPrefix("run") && !$0.definition.name.hasPrefix("pmai") }
   }
 
   private var toolContext: PluginFactoryContext {
-    PluginFactoryContext(id: "mobile", options: ["filesRoot": .string(directory.appendingPathComponent("workspace").path)])
+    PluginFactoryContext(id: "mobile", options: [
+      "filesRoot": .string(directory.appendingPathComponent("workspace").path),
+      ReminderTools.writeOption: .bool(settings.remindersWriteEnabled ?? true),
+    ])
   }
 
   func run(_ request: ProviderRequest, provider: any ChatProvider,
@@ -80,7 +86,7 @@ private struct ToolActivity {
     try await runtime.register(provider)
     let standard = try await standardTools()
     definitions = standard.map(\.definition)
-    groups = try await MaiStandardToolFactory().toolGroups(context: toolContext)
+    groups = try await toolFactory.toolGroups(context: toolContext)
     let policy = AgentToolPolicy(automatic: false,
       groups: Dictionary(uniqueKeysWithValues: (settings.disabledGroups ?? []).map { ($0, .disabled) }),
       tools: Dictionary(uniqueKeysWithValues: settings.disabledTools.map { ($0, .disabled) }))
@@ -164,6 +170,7 @@ private struct ToolActivity {
     let action = command["action"] ?? ""
     switch action {
     case "toolsEnabled": settings.enabled = command["enabled"] == "true"
+    case "remindersWriteEnabled": settings.remindersWriteEnabled = command["enabled"] == "true"
     case "toolEnabled":
       if command["enabled"] == "true" { settings.disabledTools.remove(command["name"] ?? "") }
       else { settings.disabledTools.insert(command["name"] ?? "") }
@@ -201,8 +208,24 @@ private struct ToolActivity {
     try ACPStateFiles.write(settings, to: settingsFile)
   }
 
+  func manageReminder(_ command: [String: String]) async {
+    do {
+      if command["action"] == "remindersAlerts" {
+        try await reminderStore.setNotificationsEnabled(command["enabled"] == "true")
+      } else if let op = ReminderTools.Operation(rawValue: command["action"] ?? "") {
+        var arguments = command.mapValues(JSONValue.string)
+        for key in ["completed", "clear_due"] {
+          if let value = command[key] { arguments[key] = .bool(value == "true") }
+        }
+        _ = try await ReminderTools.execute(op, arguments: arguments, backend: reminderStore)
+      }
+      error = ""
+    } catch { self.error = error.localizedDescription }
+  }
+
   var snapshot: [String: Any] {
     ["enabled": settings.enabled, "loading": loading, "error": error,
+      "remindersWriteEnabled": settings.remindersWriteEnabled ?? true,
       "tools": definitions.map { ["name": $0.name, "description": $0.description,
         "enabled": !settings.disabledTools.contains($0.name)] as [String: Any] },
       "groups": groups.compactMap { group -> [String: Any]? in

@@ -1,4 +1,5 @@
 import MaiCore
+import MaiUI
 import MaiOpenAI
 import Speech
 import SwiftUI
@@ -1615,6 +1616,17 @@ struct SettingsView: View {
         .buttonStyle(.borderless)
         .padding(.top, 6)
       }
+    case .reminders:
+      Toggle("Allow the assistant to change reminders",
+        isOn: settingsBinding(\.toolSettings.remindersWriteEnabled))
+      Toggle("Apple Reminders integration",
+        isOn: settingsBinding(\.toolSettings.remindersAppleEnabled))
+      if store.settings.toolSettings.remindersAppleEnabled {
+        AppleReminderPermissionButton()
+        Text("Ask for Apple Reminders to use the PocketMai list there. Apple Reminders handles alerts and any sync for that list.")
+          .font(.caption).foregroundStyle(.secondary)
+      }
+      ReminderSettings(notifications: PocketMaiReminders.notifications)
     case .alarms:
       Text(
         "Lets the assistant schedule, list, and cancel real alarms on this device, such as 'in 5 minutes' or at a specific time or weekday. Disabled by default; each call asks for confirmation, requires the AlarmKit permission, and needs iOS 26.1 or later."
