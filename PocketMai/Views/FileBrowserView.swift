@@ -1,6 +1,7 @@
 import MaiStandardTools
 import QuickLook
 import SwiftUI
+import UIKit
 import UniformTypeIdentifiers
 
 struct FileBrowserView: View {
@@ -127,6 +128,7 @@ private struct FileBrowserDirectoryView: View {
         browser.browse()
         await browser.operation?.value
       }
+      .gesture(FileBrowserParentSwipe(isEnabled: browser.canGoUp, onSwipe: browser.goUp))
     }
     .navigationTitle("Files").navigationBarTitleDisplayMode(.inline)
     .searchable(text: $search, prompt: "Filter files")
@@ -234,6 +236,38 @@ private struct FileBrowserDirectoryView: View {
     if type?.conforms(to: .audio) == true { return "waveform" }
     if type?.conforms(to: .movie) == true { return "film" }
     return "doc"
+  }
+}
+
+private struct FileBrowserParentSwipe: UIGestureRecognizerRepresentable {
+  let isEnabled: Bool
+  let onSwipe: @MainActor () -> Void
+
+  func makeUIGestureRecognizer(context: Context) -> UISwipeGestureRecognizer {
+    let recognizer = UISwipeGestureRecognizer()
+    recognizer.direction = .right
+    recognizer.isEnabled = isEnabled
+    recognizer.delegate = context.coordinator
+    return recognizer
+  }
+
+  func updateUIGestureRecognizer(_ recognizer: UISwipeGestureRecognizer, context: Context) {
+    recognizer.isEnabled = isEnabled
+  }
+
+  func handleUIGestureRecognizerAction(_ recognizer: UISwipeGestureRecognizer, context: Context) {
+    if recognizer.state == .recognized { onSwipe() }
+  }
+
+  func makeCoordinator(converter: CoordinateSpaceConverter) -> Coordinator { Coordinator() }
+
+  final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+    func gestureRecognizer(
+      _ gestureRecognizer: UIGestureRecognizer,
+      shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer
+    ) -> Bool {
+      (other.view as? UIScrollView)?.panGestureRecognizer === other
+    }
   }
 }
 
