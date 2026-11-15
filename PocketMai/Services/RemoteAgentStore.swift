@@ -671,7 +671,9 @@ final class RemoteAgentChat {
   private var reconnectDelay = 1
   private var shouldReconnect = false
   private(set) var configurationOptions: [RemoteSessionOption] = []
-  private(set) var settingsLoading = false
+  private var settingsRefreshing = false
+  private(set) var settingsSaving = false
+  var settingsLoading: Bool { settingsRefreshing || settingsSaving }
   private(set) var settingsError: String?
   private var configurationLoaded = false
   var permissions: [RemoteAgentPermission] = []
@@ -896,10 +898,10 @@ final class RemoteAgentChat {
   func refreshConfiguration(force: Bool = false) async {
     guard force || !configurationLoaded else { return }
     guard connected, !settingsLoading, !isOffline(), let client else { return }
-    settingsLoading = true
+    settingsRefreshing = true
     settingsError = nil
     let attempt = generation
-    defer { if generation == attempt { settingsLoading = false } }
+    defer { if generation == attempt { settingsRefreshing = false } }
     do {
       let options = try await client.configurationOptions()
       guard generation == attempt, connected, !Task.isCancelled else { return }
@@ -922,7 +924,7 @@ final class RemoteAgentChat {
     let reviewOnly = updates.allSatisfy { $0.id == "tools.review" }
     guard connected, (!busy || reviewOnly), !settingsLoading, !isOffline(), let client else { return }
     if !reviewOnly { busy = true }
-    settingsLoading = true
+    settingsSaving = true
     settingsError = nil
     let attempt = generation
     let task = Task {
@@ -941,7 +943,7 @@ final class RemoteAgentChat {
       }
       guard generation == attempt else { return }
       if !reviewOnly { busy = false; operation = nil }
-      settingsLoading = false
+      settingsSaving = false
     }
     if !reviewOnly { operation = task }
   }
@@ -1241,7 +1243,8 @@ final class RemoteAgentChat {
     isConnecting = false
     historyRewindSupported = false
     configurationOptions = []
-    settingsLoading = false
+    settingsRefreshing = false
+    settingsSaving = false
     settingsError = nil
     busy = false
     responding = false
@@ -1277,7 +1280,8 @@ final class RemoteAgentChat {
       error = failure.localizedDescription
     }
     if let failure, !RemoteConnectionRecovery.shouldRetry(failure) { shouldReconnect = false }
-    settingsLoading = false
+    settingsRefreshing = false
+    settingsSaving = false
     configurationLoaded = false
     pendingPrompt = nil
     connected = false

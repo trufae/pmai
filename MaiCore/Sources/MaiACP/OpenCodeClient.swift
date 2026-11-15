@@ -285,42 +285,52 @@ public actor OpenCodeClient: RemoteSessionClient {
     defer { configuring = false }
     let state = try await loadConfiguration()
     guard let selected = value.stringValue,
-      state.options.first(where: { $0.id == id })?.accepts(value) == true
+      let option = state.options.first(where: { $0.id == id }), option.accepts(value)
     else {
       throw JSONRPCError.invalidParams("Choose an available OpenCode setting.")
     }
-    if state.options.first(where: { $0.id == id })?.currentValue == value { return state.options }
+    if option.currentValue == value, id == "agent" || state.savedModel != nil {
+      return state.options
+    }
     if id == "agent" {
       _ = try await http.request(
         ["api", "session", sessionID, "agent"], method: "POST",
         body: .object(["agent": value]))
-    } else {
-      var model = state.model
-      if id == "provider" || id == "model" {
-        let provider = id == "provider" ? selected : model["providerID"]?.stringValue
-        guard
-          let choice = state.models.first(where: {
-            $0["providerID"]?.stringValue == provider
-              && (id == "provider" || $0["id"]?.stringValue == selected)
-          }), let modelID = choice["id"], let providerID = choice["providerID"]
-        else {
-          throw invalidResponse()
-        }
-        model = ["id": modelID, "providerID": providerID]
-      } else if id == "variant" {
-        model["variant"] = selected.isEmpty ? nil : value
-      }
-      _ = try await http.request(
-        ["api", "session", sessionID, "model"], method: "POST",
-        body: .object(["model": .object(model)]))
+      return try await loadConfiguration().options
     }
-    return try await loadConfiguration().options
+    var model = state.model
+    if id == "variant" {
+      model["variant"] = selected.isEmpty ? nil : value
+    } else if option.currentValue != value {
+      let provider = id == "provider" ? selected : model["providerID"]?.stringValue
+      guard
+        let choice = state.models.first(where: {
+          $0["providerID"]?.stringValue == provider
+            && (id == "provider" || $0["id"]?.stringValue == selected)
+        }), let modelID = choice["id"], let providerID = choice["providerID"]
+      else {
+        throw invalidResponse()
+      }
+      model = ["id": modelID, "providerID": providerID]
+    }
+    _ = try await http.request(
+      ["api", "session", sessionID, "model"], method: "POST",
+      body: .object(["model": .object(model)]))
+    let updated = try await loadConfiguration()
+    guard let saved = updated.savedModel,
+      saved["id"] == model["id"], saved["providerID"] == model["providerID"],
+      (saved["variant"]?.stringValue ?? "default") == (model["variant"]?.stringValue ?? "default")
+    else {
+      throw JSONRPCError.invalidParams("OpenCode did not confirm the model change. Refresh Chat Settings and try again.")
+    }
+    return updated.options
   }
 
   private struct ConfigurationState {
     var options: [RemoteSessionOption]
     var models: [[String: JSONValue]]
     var model: [String: JSONValue]
+    var savedModel: [String: JSONValue]?
   }
 
   private func loadConfiguration() async throws -> ConfigurationState {
@@ -343,7 +353,21 @@ public actor OpenCodeClient: RemoteSessionClient {
       $0["enabled"]?.boolValue != false && $0["id"]?.stringValue != nil
         && $0["providerID"]?.stringValue != nil
     }
-    var model = info["model"]?.objectValue ?? [:]
+    let agents = agentEntries.compactMap(\.objectValue)
+    let primaryAgents = agents.filter {
+      $0["hidden"]?.boolValue != true && $0["mode"]?.stringValue != "subagent"
+        && $0["id"]?.stringValue != nil
+    }
+    // The agent list puts the server's default primary agent first.
+    let agent = info["agent"]?.stringValue ?? primaryAgents.first?["id"]?.stringValue
+    let savedModel = info["model"]?.objectValue
+    var model = savedModel ?? [:]
+    if model.isEmpty, let agent,
+      let preferred = agents.first(where: { $0["id"]?.stringValue == agent })?["model"]?.objectValue,
+      models.contains(where: { $0["id"] == preferred["id"] && $0["providerID"] == preferred["providerID"] })
+    {
+      model = preferred
+    }
     if model.isEmpty {
       let fallback = try await http.request(["api", "model", "default"], query: query)
       if let fields = fallback.objectValue?["data"]?.objectValue,
@@ -380,22 +404,16 @@ public actor OpenCodeClient: RemoteSessionClient {
           id: "variant", name: "Variant", currentValue: model["variant"] ?? .string(""),
           choices: [.init("", "Default")] + variants.filter { !$0.isEmpty }.map { .init($0, $0) }))
     }
-    let agents = agentEntries.compactMap(\.objectValue).filter {
-      $0["hidden"]?.boolValue != true && $0["mode"]?.stringValue != "subagent"
-        && $0["id"]?.stringValue != nil
-    }
-    // The agent list puts the server's default primary agent first.
-    if !agents.isEmpty {
+    if let agent, !primaryAgents.isEmpty {
       options.append(
         .init(
-          id: "agent", name: "Agent",
-          currentValue: info["agent"] ?? agents[0]["id"]!,
-          choices: agents.map {
+          id: "agent", name: "Agent", currentValue: .string(agent),
+          choices: primaryAgents.map {
             .init($0["id"]!.stringValue!, $0["name"]?.stringValue ?? $0["id"]!.stringValue!)
           }))
     }
     try checkOpen()
-    return ConfigurationState(options: options, models: models, model: model)
+    return ConfigurationState(options: options, models: models, model: model, savedModel: savedModel)
   }
 
   public func prompt(

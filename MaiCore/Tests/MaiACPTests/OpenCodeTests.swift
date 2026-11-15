@@ -811,7 +811,13 @@ func openCodeSessionSettings() async throws {
   let initial = try await client.configurationOptions()
   #expect(initial.first(where: { $0.id == "provider" })?.currentValue == .string("one"))
   #expect(initial.first(where: { $0.id == "agent" })?.choices.map(\.id) == ["build", "plan"])
+  state.ignoreNextModelUpdate()
+  await #expect(throws: JSONRPCError.self) {
+    _ = try await client.setConfigurationOption(id: "provider", value: .string("two"))
+  }
+  #expect(try await client.configurationOptions().first(where: { $0.id == "provider" })?.currentValue == .string("one"))
   let changed = try await client.setConfigurationOption(id: "provider", value: .string("two"))
+  #expect(changed.first(where: { $0.id == "provider" })?.currentValue == .string("two"))
   #expect(changed.first(where: { $0.id == "model" })?.currentValue == .string("alias"))
   #expect(changed.first(where: { $0.id == "variant" })?.choices.map(\.id) == ["", "high"])
   let high = try await client.setConfigurationOption(id: "variant", value: .string("high"))
@@ -828,10 +834,47 @@ func openCodeSessionSettings() async throws {
   await client.disconnect()
 }
 
+@Test("Explicitly selecting an inherited OpenCode model pins it across agent changes and reconnects")
+func openCodePinsInheritedModel() async throws {
+  let host = "inherited-model.opencode.test"
+  let fixture = OpenCodeSettingsFixture(agentModel: .object([
+    "id": .string("alias"), "providerID": .string("two"), "variant": .string("high"),
+  ]))
+  StubURLProtocol.install(forHost: host) { request in try fixture.respond(request) }
+  defer { StubURLProtocol.reset(host: host) }
+  let connection = try OpenCodeConnection(
+    name: "Fixture", url: URL(string: "https://\(host)")!, token: "secret", cwd: "/project with spaces")
+  let client = OpenCodeClient(
+    connection: connection, sessionID: "session", configuration: openCodeTestConfiguration())
+  _ = try await client.connect()
+  let inherited = try await client.configurationOptions()
+  #expect(inherited.first(where: { $0.id == "model" })?.currentValue == .string("alias"))
+  _ = try await client.setConfigurationOption(id: "model", value: .string("alias"))
+  _ = try await client.setConfigurationOption(id: "agent", value: .string("plan"))
+  await client.disconnect()
+
+  let reopened = OpenCodeClient(
+    connection: connection, sessionID: "session", configuration: openCodeTestConfiguration())
+  _ = try await reopened.connect()
+  let saved = try await reopened.configurationOptions()
+  #expect(saved.first(where: { $0.id == "provider" })?.currentValue == .string("two"))
+  #expect(saved.first(where: { $0.id == "model" })?.currentValue == .string("alias"))
+  #expect(saved.first(where: { $0.id == "variant" })?.currentValue == .string("high"))
+  await reopened.disconnect()
+}
+
 private final class OpenCodeSettingsFixture: @unchecked Sendable {
   private let lock = NSLock()
   private var model: JSONValue?
   private var agent = "build"
+  private let agentModel: JSONValue?
+  private var ignoreModelUpdate = false
+
+  init(agentModel: JSONValue? = nil) { self.agentModel = agentModel }
+
+  func ignoreNextModelUpdate() {
+    lock.withLock { ignoreModelUpdate = true }
+  }
 
   func respond(_ request: URLRequest) throws -> (HTTPURLResponse, Data) {
     lock.lock()
@@ -845,7 +888,8 @@ private final class OpenCodeSettingsFixture: @unchecked Sendable {
       let body = try JSONDecoder().decode(JSONValue.self, from: requestBodyData(request))
         .objectValue!
       if let value = body["model"] {
-        model = value
+        if !ignoreModelUpdate { model = value }
+        ignoreModelUpdate = false
         #expect(value.objectValue?["id"]?.stringValue == "alias")
         #expect(value.objectValue?["providerID"]?.stringValue == "two")
         #expect(Set(value.objectValue!.keys).isSubset(of: ["id", "providerID", "variant"]))
@@ -884,9 +928,13 @@ private final class OpenCodeSettingsFixture: @unchecked Sendable {
           ])
         ])
       } else if path == "/api/agent" {
+        var build: [String: JSONValue] = [
+          "id": .string("build"), "name": .string("Build"), "mode": .string("primary"),
+        ]
+        build["model"] = agentModel
         result = .object([
           "data": .array([
-            .object(["id": .string("build"), "name": .string("Build"), "mode": .string("primary")]),
+            .object(build),
             .object(["id": .string("plan"), "name": .string("Plan"), "mode": .string("primary")]),
             .object(["id": .string("internal"), "mode": .string("subagent")]),
             .object(["id": .string("hidden"), "hidden": .bool(true)]),
