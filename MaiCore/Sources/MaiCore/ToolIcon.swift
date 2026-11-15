@@ -20,6 +20,7 @@ public enum ToolIcon {
     "agent_start": "🚀", "agent_status": "📡", "agent_result": "📦", "agent_stop": "🛑",
     "context_list": "📜", "context_remove": "✂️", "context_rewrite": "🖋️",
     "context_compact": "🗜️", "todo_list": "📋", "todo_add": "📌", "todo_done": "✅",
+    "reminders_list": "🔔", "reminders_add": "⏰", "reminders_update": "🗓️", "reminders_remove": "🔕",
     "chats_list": "💬", "chats_search": "🪞", "chats_read": "📚",
     "chats_read_document": "📄", "pmai_run": "🎛️", "pmai_help": "💡",
     "list-tools": "🧰", "call-tool": "⚙️", "mastodon": "📣",
