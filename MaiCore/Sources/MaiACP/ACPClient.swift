@@ -743,6 +743,12 @@ public actor ACPClient {
       }
       await tunnel.close()
       try Task.checkCancellation()
+      if let failure = failure as? ForwirohConnectionError, failure.retryable,
+        failure.stage == .peerDial || failure.stage == .streamSetup
+      {
+        await tunnel.recoverEndpointAfterDialFailure()
+        try Task.checkCancellation()
+      }
       throw failure
     }
   }
