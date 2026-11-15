@@ -273,7 +273,11 @@ func acpWorkspaceFiles() async throws {
   #expect(rootListing.writeEnabled && rootListing.entries.map(\.name) == ["new"])
   let unregisteredFolder = try #require(rootListing.entries.first?.path)
   let picked = try #require(try await request(.init(.list), cwd: unregisteredFolder).listing)
-  #expect(picked.path == unregisteredFolder && picked.entries.isEmpty)
+  // Enumeration can return /private/var on macOS while ACP resolves the same folder to /var.
+  let expectedFolder = URL(fileURLWithPath: unregisteredFolder)
+    .resolvingSymlinksInPath().standardizedFileURL
+  #expect(picked.path == expectedFolder.path)
+  #expect(picked.entries.isEmpty)
   await #expect(throws: JSONRPCError.self) { _ = try await request(.init(.read, path: "secret")) }
   policy.set(.init(url: root.appendingPathComponent("ask"), access: .ask))
   await #expect(throws: JSONRPCError.self) { _ = try await request(.init(.mkdir, path: "ask")) }
