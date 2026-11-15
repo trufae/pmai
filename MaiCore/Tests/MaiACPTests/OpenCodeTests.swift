@@ -51,6 +51,21 @@ private func openCodeTestConfiguration() -> URLSessionConfiguration {
   return configuration
 }
 
+@Test("OpenCode server info exposes advertised direct addresses through the saved connection")
+func openCodeAdvertisedURLs() async throws {
+  let host = "server-info.opencode.test"
+  StubURLProtocol.install(forHost: host) { request in
+    #expect(request.url?.path == "/api/info")
+    #expect(request.value(forHTTPHeaderField: "Authorization") == "Basic " + Data("opencode:test".utf8).base64EncodedString())
+    return try httpResponse(request, contentType: "application/json", body:
+      #"{"urls":["http://192.168.1.10:4096","http://[fd00::1]:4096","not a URL"]}"#)
+  }
+  defer { StubURLProtocol.reset(host: host) }
+  let connection = try OpenCodeConnection(url: #require(URL(string: "https://\(host)")), token: "test")
+  let urls = try await connection.advertisedURLs(configuration: openCodeTestConfiguration())
+  #expect(urls.map(\.absoluteString) == ["http://192.168.1.10:4096", "http://[fd00::1]:4096"])
+}
+
 @Test("Remote recovery retries network failures but stops for cancellation and credentials")
 func openCodeRecoveryPolicy() {
   #expect(RemoteConnectionRecovery.shouldRetry(URLError(.networkConnectionLost)))

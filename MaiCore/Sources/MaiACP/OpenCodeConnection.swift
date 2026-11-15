@@ -45,6 +45,17 @@ public struct OpenCodeConnection: Sendable {
     self.token = token
     self.cwd = cwd
   }
+
+  public func advertisedURLs(configuration: URLSessionConfiguration = .ephemeral) async throws -> [URL] {
+    let http = OpenCodeHTTP(url: url, token: token, configuration: configuration)
+    defer { http.close() }
+    let info = try await http.request(["api", "info"], timeout: 5)
+    return (info.objectValue?["urls"]?.arrayValue ?? []).compactMap { value in
+      guard let text = value.stringValue, let url = URL(string: text),
+        (try? OpenCodeHTTP.validate(url)) != nil else { return nil }
+      return url
+    }
+  }
 }
 
 /// `opencode pair` prints /auth/connect/:code links, but its QR contains {code, urls}.
