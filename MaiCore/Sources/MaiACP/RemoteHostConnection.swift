@@ -52,7 +52,8 @@ public struct RemoteHostConnection: Codable, Sendable {
     onUpdate: (@Sendable (JSONValue) async -> Void)? = nil,
     onPermission: (@Sendable (JSONValue) async throws -> String?)? = nil,
     onPermissionResponse: (@Sendable (JSONValue) async throws -> ACPPermissionResponse?)? = nil,
-    onDisconnect: (@Sendable () async -> Void)? = nil
+    onDisconnect: (@Sendable () async -> Void)? = nil,
+    onConnectionFailure: (@Sendable (any Error) async -> Void)? = nil
   ) throws -> any RemoteSessionClient {
     if backend == .openCode {
       let permission: (@Sendable (JSONValue) async throws -> String?)?
@@ -66,7 +67,8 @@ public struct RemoteHostConnection: Codable, Sendable {
     }
     return ACPClient(configuration: try acpConfiguration(cwd: cwd ?? self.cwd, sessionID: sessionID, resumeID: resumeID),
       onUpdate: onUpdate, onPermission: onPermission,
-      onPermissionResponse: onPermissionResponse, onDisconnect: onDisconnect)
+      onPermissionResponse: onPermissionResponse, onDisconnect: onDisconnect,
+      onConnectionFailure: onConnectionFailure)
   }
 
   /// Workspace connections have their own lifetime, independent of chat prompts.

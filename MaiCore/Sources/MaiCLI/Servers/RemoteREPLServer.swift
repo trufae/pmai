@@ -290,7 +290,9 @@ actor RemoteREPLServer {
         let node = ForwirohRemote(
           directory: directory.appendingPathComponent("forwiroh"), name: connection.name)
         forwiroh = node
-        connection.url = try await node.serve(port: port)
+        connection.url = try await node.serve(port: port) { error in
+          await terminal?.line("Forwiroh: \(error)", to: .standardError)
+        }
         forwirohWatcher = Task { [weak self] in
           var seen = Set<String>()
           while !Task.isCancelled {
@@ -298,7 +300,7 @@ actor RemoteREPLServer {
               let requests = try await node.pending()
               for request in requests where seen.insert(request.id).inserted {
                 await terminal?.line(
-                  "Forwiroh pairing: \(request.name) · /remote accept fw-\(request.id) or /remote reject fw-\(request.id). After accepting, approve the ACP request too."
+                  "Forwiroh pairing: \(request.name) · /remote accept fw-\(request.id) or /remote reject fw-\(request.id). Approve the ACP request if one follows."
                 )
               }
               try await Task.sleep(for: .seconds(1))

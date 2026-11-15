@@ -293,7 +293,10 @@ final class HostNavigationStore {
         let client = try host.makeClient(
           token: token, cwd: host.cwd,
           httpConfiguration: httpConfiguration,
-          onDisconnect: { [weak self] in await self?.connectionClosed(attempt: attempt) })
+          onDisconnect: { [weak self] in await self?.connectionClosed(attempt: attempt) },
+          onConnectionFailure: { [weak self] error in
+            await self?.connectionClosed(attempt: attempt, failure: error)
+          })
         self.client = client
         let snapshot = try await client.workspace()
         guard generation == attempt, !Task.isCancelled else { return }
@@ -341,15 +344,15 @@ final class HostNavigationStore {
     waitingApproval = false
   }
 
-  private func connectionClosed(attempt: Int) {
+  private func connectionClosed(attempt: Int, failure: (any Error)? = nil) {
     // Discovery reports its own handshake failure before a host is connected.
     guard generation == attempt, connectedHostID != nil else { return }
     if let selectedHostID { remotes.setConnectionFailed(true, for: selectedHostID) }
     connectedHostID = nil
-    error = "Connection lost."
+    error = failure?.localizedDescription ?? "Connection lost."
     // Invalidate callbacks before closing the failed client.
     stopDiscovery()
-    scheduleReconnect()
+    if failure.map(RemoteConnectionRecovery.shouldRetry) != false { scheduleReconnect() }
   }
 
   private func scheduleReconnect() {

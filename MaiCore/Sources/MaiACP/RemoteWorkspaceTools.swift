@@ -109,7 +109,7 @@ public actor RemoteWorkspaceTools {
       return try await workspaceCall(name, fields: fields, host: host)
     } catch {
       try Task.checkCancellation()
-      if error is ACPClientError || (error as? JSONRPCTransportError) == .closed
+      if error is ACPClientError || error is ForwirohConnectionError || (error as? JSONRPCTransportError) == .closed
         || (error is URLError && RemoteConnectionRecovery.shouldRetry(error))
       {
         await onConnectionFailure(host.id)

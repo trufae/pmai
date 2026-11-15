@@ -105,6 +105,7 @@ public struct JSONRPCError: Codable, Equatable, Sendable, LocalizedError {
 /// MCP server ride on the same abstraction; only the peers' handlers differ.
 public protocol JSONRPCTransport: Sendable {
   var isRunning: Bool { get }
+  var connectionError: (any Error)? { get }
   var recentErrorOutput: String { get }
   /// Every message the other side sends, until the stream closes.
   func messages() -> AsyncStream<JSONRPCMessage>
@@ -114,6 +115,7 @@ public protocol JSONRPCTransport: Sendable {
 
 extension JSONRPCTransport {
   public var isRunning: Bool { true }
+  public var connectionError: (any Error)? { nil }
   public var recentErrorOutput: String { "" }
 }
 
@@ -367,7 +369,7 @@ public actor JSONRPCPeer {
       }
     }
     let tasks = Array(incoming.values)
-    finish()
+    finish(error: transport.connectionError ?? JSONRPCTransportError.closed)
     for task in tasks { await task.value }
   }
 
@@ -382,7 +384,7 @@ public actor JSONRPCPeer {
     params: JSONValue? = nil,
     timeout: TimeInterval? = nil
   ) async throws -> JSONValue {
-    guard !closed else { throw JSONRPCTransportError.closed }
+    guard !closed else { throw transport.connectionError ?? JSONRPCTransportError.closed }
     let id = nextID
     nextID += 1
     return try await withTaskCancellationHandler {
@@ -479,14 +481,14 @@ public actor JSONRPCPeer {
     }
   }
 
-  private func finish() {
+  private func finish(error: any Error = JSONRPCTransportError.closed) {
     guard !closed else { return }
     closed = true
     reader?.cancel()
     for task in incoming.values { task.cancel() }
     for request in pending.values {
       request.timeout?.cancel()
-      request.continuation.resume(throwing: JSONRPCTransportError.closed)
+      request.continuation.resume(throwing: error)
     }
     pending.removeAll()
   }
