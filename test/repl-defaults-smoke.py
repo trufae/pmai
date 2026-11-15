@@ -59,6 +59,17 @@ def main():
         assert saved['ui']['tools'] == 0, saved
         assert saved['ui']['toolcalls'] == 'truncate', saved
         assert 'ui.toolcalls = truncate' in run(['/set ui.'])
+        # The REPL command and native tool group must use the same installation home.
+        output = run(['/tools show reminders', '/reminders add Renew passport'])
+        assert 'reminders_add' in output and 'reminders_list' in output, output
+        reminders = user_home / '.pmai/reminders.json'
+        [reminder] = json.loads(reminders.read_text())['reminders']
+        assert reminder['title'] == 'Renew passport' and reminder['alert'] == 'none', reminder
+        assert 'Renew passport' in run(['/reminders'])
+        run(['/reminders done ' + reminder['id']])
+        assert 'Renew passport' not in run(['/reminders'])
+        assert 'Renew passport' in run(['/reminders all'])
+
         # Querying awake must not toggle it or try to acquire a system inhibitor.
         assert 'awake = off' in run(['/set awake'])
         assert 'awake = off' in run(['/set awake off', '/reset awake', '/set awake'])
