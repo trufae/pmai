@@ -21,6 +21,7 @@ struct RemoteAgentBookmark: Codable, Identifiable, Sendable {
   var backend: RemoteAgentBackend?
   var isPinned: Bool?
   var pinnedFolderPaths: [String]?
+  var addedFolderPaths: [String]?
   var pinnedConversationIDs: [UUID]?
   var agentAccess: Bool?
   var terminalWorkingDirectory: String? {
@@ -312,6 +313,12 @@ final class RemoteAgentStore {
   func updateWorkspace(_ hostID: UUID, snapshot: ACPWorkspaceSnapshot, inBackground: Bool = false) {
     guard let index = connections.firstIndex(where: { $0.id == hostID }) else { return }
     connections[index].workspace = snapshot
+    connections[index].addedFolderPaths?.removeAll { cwd in
+      snapshot.folders.contains { $0.cwd == cwd }
+    }
+    if connections[index].addedFolderPaths?.isEmpty == true {
+      connections[index].addedFolderPaths = nil
+    }
     var chats = connections[index].conversations ?? []
     for session in snapshot.sessions {
       if let chatIndex = chats.firstIndex(where: { $0.sessionID == session.sessionID }) {
@@ -397,13 +404,22 @@ final class RemoteAgentStore {
     }
   }
 
+  func addFolder(hostID: UUID, cwd: String) {
+    guard RemoteWorkspacePath.isAbsolute(cwd),
+      let index = connections.firstIndex(where: { $0.id == hostID }),
+      connections[index].workspace?.folders.contains(where: { $0.cwd == cwd }) != true,
+      connections[index].addedFolderPaths?.contains(cwd) != true else { return }
+    // A chosen folder may not be in the host's inventory until its first chat starts.
+    connections[index].addedFolderPaths = (connections[index].addedFolderPaths ?? []) + [cwd]
+    do { try save() } catch { self.error = error.localizedDescription }
+  }
+
   func folders(for host: RemoteAgentBookmark) -> [ACPWorkspaceFolder] {
     var folders = host.workspace?.folders ?? []
-    if host.workspace == nil {
-      let paths = [host.cwd] + (host.conversations ?? []).map(\.cwd)
-      for cwd in paths where !cwd.isEmpty && !folders.contains(where: { $0.cwd == cwd }) {
-        folders.append(.init(cwd: cwd, name: ""))
-      }
+    var paths = host.addedFolderPaths ?? []
+    if host.workspace == nil { paths += [host.cwd] + (host.conversations ?? []).map(\.cwd) }
+    for cwd in paths where !cwd.isEmpty && !folders.contains(where: { $0.cwd == cwd }) {
+      folders.append(.init(cwd: cwd, name: ""))
     }
     var latest: [String: Date] = [:]
     func record(_ cwd: String, _ date: Date?) {

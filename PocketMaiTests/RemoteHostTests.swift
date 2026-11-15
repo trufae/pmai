@@ -339,6 +339,42 @@ final class RemoteHostTests: XCTestCase {
     }
   }
 
+  func testAddedRemoteFolderAppearsBeforeFirstChatAndSurvivesRefreshAndReload() throws {
+    let snapshot = ACPWorkspaceSnapshot(folders: [.init(cwd: "/work", name: "Work")])
+    let first = RemoteAgentBookmark(
+      name: "First", url: try XCTUnwrap(URL(string: "wss://first.example/acp")), cwd: "/work",
+      workspace: snapshot)
+    let second = RemoteAgentBookmark(
+      name: "Second", url: try XCTUnwrap(URL(string: "https://second.example")), cwd: "/work",
+      workspace: snapshot, backend: .openCode)
+    try withStore([first, second]) { store, file in
+      let hosts = HostNavigationStore(remotes: store)
+      hosts.selectHost(first.id, isOffline: true)
+      store.addFolder(hostID: first.id, cwd: "/work/new")
+      hosts.selectFolder("/work/new")
+      XCTAssertEqual(hosts.folders.map(\.cwd), ["/work", "/work/new"])
+      XCTAssertEqual(hosts.selectedConversation?.cwd, "/work/new")
+      XCTAssertTrue(hosts.conversations.isEmpty)
+
+      store.addFolder(hostID: first.id, cwd: "/work/new")
+      // Discovery can still be serving the inventory from before the first chat.
+      store.updateWorkspace(first.id, snapshot: snapshot)
+      let restored = RemoteAgentStore(file: file)
+      XCTAssertEqual(
+        restored.folders(for: try XCTUnwrap(restored.host(first.id))).map(\.cwd),
+        ["/work", "/work/new"])
+      XCTAssertEqual(
+        restored.folders(for: try XCTUnwrap(restored.host(second.id))).map(\.cwd), ["/work"])
+
+      // Once discovered, the server owns the folder's metadata and removal.
+      let discovered = ACPWorkspaceFolder(cwd: "/work/new", name: "New Project", icon: "star")
+      store.updateWorkspace(first.id, snapshot: .init(folders: snapshot.folders + [discovered]))
+      XCTAssertEqual(hosts.folders.last, discovered)
+      store.updateWorkspace(first.id, snapshot: snapshot)
+      XCTAssertEqual(hosts.folders.map(\.cwd), ["/work"])
+    }
+  }
+
   func testFolderSortingKeepsPinsFirstAndUnknownDatesLast() throws {
     let early = Date(timeIntervalSince1970: 100)
     let late = Date(timeIntervalSince1970: 200)

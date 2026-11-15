@@ -69,8 +69,15 @@ private struct FileBrowserDirectoryView: View {
             Text("Read Only").font(.caption).foregroundStyle(.secondary)
           }
         }
-        Text(browser.path).font(.caption.monospaced()).foregroundStyle(.secondary)
-          .textSelection(.enabled).lineLimit(3)
+        HStack(spacing: 12) {
+          Button("Up", systemImage: "arrow.up", action: browser.goUp)
+            .labelStyle(.titleAndIcon)
+            .buttonStyle(.bordered)
+            .accessibilityLabel("Parent Folder")
+            .disabled(!browser.canGoUp)
+          Text(browser.path).font(.caption.monospaced()).foregroundStyle(.secondary)
+            .textSelection(.enabled).lineLimit(3)
+        }
         if let status = browser.status {
           HStack {
             if let progress = browser.progress {
@@ -173,10 +180,6 @@ private struct FileBrowserDirectoryView: View {
           }
         }
         .disabled(browser.isBusy)
-      }
-      ToolbarItem(placement: .bottomBar) {
-        Button("Parent Folder", systemImage: "chevron.up", action: browser.goUp)
-          .disabled(!browser.canGoUp)
       }
       ToolbarItem(placement: .bottomBar) { Spacer() }
       if let onSelectRemoteFolder {

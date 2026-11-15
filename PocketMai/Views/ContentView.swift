@@ -503,7 +503,9 @@ struct ContentView: View {
       guard let selected = hosts.selectedHost, selected.id == host.id,
         selected.revision == host.revision, selected.requiresApproval != true,
         !store.settings.isOffline else { return }
+      hosts.remotes.addFolder(hostID: host.id, cwd: cwd)
       hosts.selectFolder(cwd)
+      hosts.refresh(isOffline: store.settings.isOffline)
     }
   }
 
