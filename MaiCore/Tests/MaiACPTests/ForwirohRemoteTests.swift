@@ -103,4 +103,23 @@ import Testing
     #expect(throws: JSONRPCError.self) { try WebSocketJSONRPCTransport(url: url) }
   }
 
+  #if canImport(Forwiroh)
+    @Test func forwirohRejectsWrongQRTargetBeforeOpeningTheEndpoint() async throws {
+      let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+      defer { try? FileManager.default.removeItem(at: directory) }
+      let remote = ForwirohRemote(directory: directory)
+      let url = try #require(URL(string: "forwiroh://\(peerID)/acp"))
+      let otherID = String(repeating: "b", count: 64)
+      let data = try JSONEncoder().encode(["addr": ["id": otherID]])
+      let invitation = "forwiroh://pair?data=" + data.base64EncodedString()
+        .replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_")
+        .replacingOccurrences(of: "=", with: "")
+
+      await #expect(throws: JSONRPCError.invalidParams("The invitation belongs to a different Forwiroh host")) {
+        try await remote.pair(url: url, invitation: invitation)
+      }
+      #expect(!FileManager.default.fileExists(atPath: directory.path))
+    }
+  #endif
+
 #endif

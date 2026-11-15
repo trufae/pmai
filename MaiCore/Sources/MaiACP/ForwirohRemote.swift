@@ -155,16 +155,16 @@ public struct ForwirohPeerSummary: Sendable {
 
     public func pair(url: URL, invitation: String?) async throws {
       let id = try Self.peerID(in: url)
-      let node = try await endpoint()
-      if try await node.status().peers.contains(where: { $0.id == id }) { return }
       guard let invitation, !invitation.isEmpty else {
+        if try await endpoint().status().peers.contains(where: { $0.id == id }) { return }
         throw JSONRPCError.invalidParams("Scan a fresh Forwiroh connection QR from this host")
       }
+      try Self.checkInvitation(invitation, for: id)
+      let node = try await endpoint()
       try await withTaskCancellationHandler {
         try Task.checkCancellation()
         let paired = try await node.pair(invitation: invitation, device: "pmai")
         guard paired == id else {
-          try? await node.revoke(peer: paired)
           throw JSONRPCError.invalidParams("The invitation belongs to a different Forwiroh host")
         }
         try Task.checkCancellation()
@@ -203,6 +203,27 @@ public struct ForwirohPeerSummary: Sendable {
       let legacyRetry = stage == nil && (legacyDial || detail == "deadline has elapsed")
       return ForwirohConnectionError(
         stage: stage ?? (legacyDial ? .peerDial : .unknown), retryable: retryable ?? legacyRetry, detail: detail)
+    }
+
+    private static func checkInvitation(_ invitation: String, for id: String) throws {
+      // Match the destination before redeeming the invitation. The core validates the proof and address.
+      struct Envelope: Decodable {
+        struct Address: Decodable { let id: String }
+        let addr: Address
+      }
+      let prefix = "forwiroh://pair?data="
+      guard invitation.hasPrefix(prefix), invitation.utf8.count <= 4096 else {
+        throw JSONRPCError.invalidParams("Invalid Forwiroh invitation. Scan a fresh host QR.")
+      }
+      var payload = invitation.dropFirst(prefix.count)
+        .replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+      payload += String(repeating: "=", count: (4 - payload.utf8.count % 4) % 4)
+      guard let data = Data(base64Encoded: payload),
+        let envelope = try? JSONDecoder().decode(Envelope.self, from: data)
+      else { throw JSONRPCError.invalidParams("Invalid Forwiroh invitation. Scan a fresh host QR.") }
+      guard envelope.addr.id == id else {
+        throw JSONRPCError.invalidParams("The invitation belongs to a different Forwiroh host")
+      }
     }
 
     public struct Tunnel: Sendable {
