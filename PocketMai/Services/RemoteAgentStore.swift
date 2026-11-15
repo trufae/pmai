@@ -41,8 +41,11 @@ struct RemoteAgentBookmark: Codable, Identifiable, Sendable {
     return connection
   }
 
-  @MainActor func workspaceConnection(cwd: String, resumeID: String? = nil) throws -> WorkspaceConnection {
-    try connection(token: RemoteAgentStore.shared.token(for: id), cwd: cwd).workspace(resumeID: resumeID)
+  @MainActor func workspaceConnection(cwd: String, resumeID: String? = nil,
+    browsingFolders: Bool = false) throws -> WorkspaceConnection
+  {
+    try connection(token: RemoteAgentStore.shared.token(for: id), cwd: cwd)
+      .workspace(resumeID: resumeID, browsingFolders: browsingFolders)
   }
 
   func makeClient(

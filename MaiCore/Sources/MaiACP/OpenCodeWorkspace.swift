@@ -12,13 +12,15 @@ public actor OpenCodeWorkspace {
   private let root: String
   private let query: [URLQueryItem]
 
-  public init(connection: OpenCodeConnection, configuration: URLSessionConfiguration = .ephemeral) throws {
-    guard !connection.cwd.isEmpty else {
+  public init(connection: OpenCodeConnection, browsingFolders: Bool = false,
+    configuration: URLSessionConfiguration = .ephemeral) throws
+  {
+    guard browsingFolders || !connection.cwd.isEmpty else {
       throw WorkspaceFileError("Choose an OpenCode project first.")
     }
     http = OpenCodeHTTP(url: connection.url, token: connection.token, configuration: configuration)
-    root = URL(fileURLWithPath: connection.cwd).standardized.path
-    query = [.init(name: "location[directory]", value: connection.cwd)]
+    root = browsingFolders ? connection.cwd : URL(fileURLWithPath: connection.cwd).standardized.path
+    query = connection.cwd.isEmpty ? [] : [.init(name: "location[directory]", value: connection.cwd)]
   }
 
   deinit { http.close() }
@@ -32,26 +34,7 @@ public actor OpenCodeWorkspace {
     let path = try resolve(request.path)
     switch request.operation {
     case .list:
-      let response = try await http.request(
-        ["api", "fs", "list"], query: query + [.init(name: "path", value: path)])
-      guard let nodes = response.objectValue?["data"]?.arrayValue else { throw invalidResponse() }
-      let entries = try nodes.compactMap { node -> WorkspaceFileEntry? in
-        guard let fields = node.objectValue, let relative = fields["path"]?.stringValue,
-          let type = fields["type"]?.stringValue, ["file", "directory"].contains(type)
-        else { throw invalidResponse() }
-        let child = URL(fileURLWithPath: root, isDirectory: true).appendingPathComponent(relative).standardized
-        guard child.deletingLastPathComponent().path == path else { throw invalidResponse() }
-        if !request.showHidden && child.lastPathComponent.hasPrefix(".") { return nil }
-        return .init(path: child.path, name: child.lastPathComponent, isDirectory: type == "directory", size: -1)
-      }.sorted {
-        if $0.isDirectory != $1.isDirectory { return $0.isDirectory }
-        return $0.name.localizedStandardCompare($1.name) == .orderedAscending
-      }
-      let start = min(request.offset, entries.count)
-      let end = start + min(request.limit, 500, entries.count - start)
-      return .init(listing: .init(
-        root: root, path: path, writeEnabled: false, entries: Array(entries[start..<end]),
-        nextOffset: end < entries.count ? end : nil))
+      return try await list(request, path: path, foldersOnly: false)
     case .read:
       guard path != root else { throw WorkspaceFileError("Choose a file to open.") }
       let relative = String(path.dropFirst(root == "/" ? 1 : root.count + 1))
@@ -85,6 +68,47 @@ public actor OpenCodeWorkspace {
     default:
       throw WorkspaceFileError("OpenCode file browsing is read only.")
     }
+  }
+
+  func listFolders(_ request: WorkspaceFileRequest) async throws -> WorkspaceFileResponse {
+    guard request.offset >= 0,
+      request.path.isEmpty || RemoteWorkspacePath.isAbsolute(request.path)
+    else { throw WorkspaceFileError("Enter an absolute folder path.") }
+    return try await list(request, path: request.path.isEmpty ? nil : request.path, foldersOnly: true)
+  }
+
+  private func list(_ request: WorkspaceFileRequest, path: String?, foldersOnly: Bool)
+    async throws -> WorkspaceFileResponse
+  {
+    // The listing API can browse parents and siblings at the same OpenCode location.
+    let items = path.map { [URLQueryItem(name: "path", value: $0)] } ?? []
+    let response = try await http.request(["api", "fs", "list"], query: query + items)
+    let fields = response.objectValue
+    let base = (foldersOnly ? fields?["location"]?.objectValue?["directory"]?.stringValue : nil) ?? root
+    guard let nodes = fields?["data"]?.arrayValue,
+      let directory = RemoteWorkspacePath.resolve(path ?? base, relativeTo: base)
+    else { throw invalidResponse() }
+    let entries = try nodes.compactMap { node -> WorkspaceFileEntry? in
+      let fields = node.objectValue
+      guard let relative = fields?["path"]?.stringValue,
+        let type = fields?["type"]?.stringValue, ["file", "directory"].contains(type),
+        let child = RemoteWorkspacePath.resolve(relative, relativeTo: base),
+        RemoteWorkspacePath.parent(of: child) == directory,
+        let name = child.split(separator: "/").last
+      else { throw invalidResponse() }
+      if (foldersOnly && type != "directory") || (!request.showHidden && name.hasPrefix(".")) {
+        return nil
+      }
+      return .init(path: child, name: String(name), isDirectory: type == "directory", size: -1)
+    }.sorted {
+      if $0.isDirectory != $1.isDirectory { return $0.isDirectory }
+      return $0.name.localizedStandardCompare($1.name) == .orderedAscending
+    }
+    let start = min(request.offset, entries.count)
+    let end = start + min(request.limit, 500, entries.count - start)
+    return .init(listing: .init(
+      root: foldersOnly ? directory : root, path: directory, writeEnabled: false,
+      entries: Array(entries[start..<end]), nextOffset: end < entries.count ? end : nil))
   }
 
   private func resolve(_ path: String) throws -> String {
