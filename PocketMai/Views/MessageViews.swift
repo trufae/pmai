@@ -32,6 +32,13 @@ private struct MessageReplyDraft: Identifiable {
   let text: String
 }
 
+private struct MessageTextDraft: Identifiable {
+  let id = UUID()
+  let text: String
+  let confirmation: String?
+  let onSave: ((String) async throws -> Void)?
+}
+
 private extension Error {
   var imageSaveMessage: String {
     (self as? LocalizedError)?.errorDescription ?? localizedDescription
@@ -66,10 +73,15 @@ struct MessageBubbleActions {
   var onTogglePin: (() -> Void)? = nil
   var onBeginSelection: (() -> Void)? = nil
   var onEdit: ((String) -> Void)? = nil
+  var onEditRemote: ((String) async throws -> Void)? = nil
+  var editConfirmation: String? = nil
   var onEditAttachment: ((UUID, String) -> Void)? = nil
   var onTrimFromHere: (() -> Void)? = nil
   var onRestartFresh: (() -> Void)? = nil
+  var onStartNewChat: (() -> Void)? = nil
   var onResubmit: (() -> Void)? = nil
+  var onRetryUnsent: (() -> Void)? = nil
+  var deletesThroughEnd = false
   var onSpeakFromHere: ((String?) -> Void)? = nil
   var onReply: ((String) -> Void)? = nil
 }
@@ -188,7 +200,7 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
   var compactMetadata: Bool = false
   var isWaitingForResponse: Bool = false
   var showsResponsePlaceholder: Bool = true
-  @State private var showingTextSelection = false
+  @State private var textDraft: MessageTextDraft?
   @State private var selectedTextAttachment: ChatAttachment?
   @State private var selectedImageAttachment: ChatAttachment?
   @State private var imageSaveNotice: ToastNotice?
@@ -220,9 +232,15 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
       && lhs.actions.canReply == rhs.actions.canReply
       && lhs.actions.canRetry == rhs.actions.canRetry
       && lhs.actions.canResubmit == rhs.actions.canResubmit
+      && (lhs.actions.onEditRemote == nil) == (rhs.actions.onEditRemote == nil)
+      && lhs.actions.editConfirmation == rhs.actions.editConfirmation
+      && (lhs.actions.onToggleBookmark == nil) == (rhs.actions.onToggleBookmark == nil)
       && (lhs.actions.onTrimFromHere == nil) == (rhs.actions.onTrimFromHere == nil)
       && (lhs.actions.onRestartFresh == nil) == (rhs.actions.onRestartFresh == nil)
+      && (lhs.actions.onStartNewChat == nil) == (rhs.actions.onStartNewChat == nil)
       && (lhs.actions.onResubmit == nil) == (rhs.actions.onResubmit == nil)
+      && (lhs.actions.onRetryUnsent == nil) == (rhs.actions.onRetryUnsent == nil)
+      && lhs.actions.deletesThroughEnd == rhs.actions.deletesThroughEnd
       && (lhs.actions.onTogglePin == nil) == (rhs.actions.onTogglePin == nil)
       && (lhs.actions.onSpeakFromHere == nil) == (rhs.actions.onSpeakFromHere == nil)
       && lhs.isBookmarked == rhs.isBookmarked
@@ -260,11 +278,9 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
         case .visible(_, let visibleText):
           bubble(
             visibleText: visibleText,
-            rawText: displayText,
             canRenderMarkdown: canRenderMarkdown,
             partID: part.id,
             visiblePartIndex: prepared.visiblePartIndex(at: index),
-            actionText: prepared.visibleText,
             includeMessageExtras: index == prepared.firstVisiblePartIndex,
             isStreamingTail: index == prepared.parts.count - 1
           )
@@ -287,11 +303,9 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
       if prepared.parts.isEmpty && !prepared.hideBubble {
         bubble(
           visibleText: prepared.visibleText,
-          rawText: displayText,
           canRenderMarkdown: canRenderMarkdown,
           partID: 0,
           visiblePartIndex: 0,
-          actionText: prepared.visibleText,
           includeMessageExtras: true
         )
       }
@@ -307,6 +321,32 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
     }
     .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
     .messageActionsMenu { messageContextMenu(visibleText: prepared.visibleText) }
+    .sheet(item: $textDraft) { draft in
+      MessageTextSelectionSheet(
+        title: draft.onSave == nil ? message.role.displayName : "",
+        text: draft.text,
+        appearance: appearance,
+        initialFontSize: appearance.fontSize,
+        initialLineSpacing: appearance.lineSpacing,
+        fontFamily: appearance.fontFamily(for: message.role),
+        isEditable: draft.onSave != nil,
+        saveTitle: draft.confirmation == nil ? "Save" : "Retry",
+        saveConfirmation: draft.confirmation,
+        onSave: draft.onSave)
+    }
+    .sheet(item: $replyDraft) { draft in
+      MessageTextSelectionSheet(
+        title: "Reply",
+        text: draft.text,
+        appearance: appearance,
+        initialFontSize: appearance.fontSize,
+        initialLineSpacing: appearance.lineSpacing,
+        fontFamily: appearance.fontFamily(for: message.role),
+        isEditable: true,
+        saveTitle: "Send",
+        saveConfirmation: "Send this reply?",
+        onSave: { text in actions.onReply?(text) })
+    }
     .preference(
       key: ResponseScrollTargetsKey.self,
       value: responseScrollTarget(in: prepared).map { [message.id: $0] } ?? [:])
@@ -373,11 +413,9 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
   @ViewBuilder
   private func bubble(
     visibleText: String,
-    rawText: String,
     canRenderMarkdown: Bool,
     partID: Int,
     visiblePartIndex: Int,
-    actionText: String? = nil,
     includeMessageExtras: Bool = true,
     isStreamingTail: Bool = true
   )
@@ -385,7 +423,6 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
   {
     let messageFont = appearance.swiftUIFont(for: message.role)
     let messageFontFamily = appearance.fontFamily(for: message.role)
-    let messageText = actionText ?? visibleText
     let hasIncludedExtras = includeMessageExtras && hasDisplayedAttachmentContent
     let allowsProgressiveReveal =
       isUser && !isFullChatScreenshotRendering
@@ -527,19 +564,6 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
       }
     }
       .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-      .sheet(isPresented: $showingTextSelection) {
-        // Only the prose of the message: tool calls and reasoning are edited
-        // from their own rows, and are spliced back untouched on save.
-        MessageTextSelectionSheet(
-          title: actions.onEdit == nil ? message.role.displayName : "",
-          text: messageText,
-          appearance: appearance,
-          initialFontSize: appearance.fontSize,
-          initialLineSpacing: appearance.lineSpacing,
-          fontFamily: appearance.fontFamily(for: message.role),
-          isEditable: actions.onEdit != nil,
-          onSave: messageEditAction(rawText: rawText))
-      }
       .sheet(item: $selectedTextAttachment) { attachment in
         MessageTextSelectionSheet(
           title: attachment.displayName,
@@ -550,19 +574,6 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
           fontFamily: appearance.fontFamily(for: message.role),
           isEditable: actions.onEditAttachment != nil,
           onSave: { text in actions.onEditAttachment?(attachment.id, text) })
-      }
-      .sheet(item: $replyDraft) { draft in
-        MessageTextSelectionSheet(
-          title: "Reply",
-          text: draft.text,
-          appearance: appearance,
-          initialFontSize: appearance.fontSize,
-          initialLineSpacing: appearance.lineSpacing,
-          fontFamily: appearance.fontFamily(for: message.role),
-          isEditable: true,
-          saveTitle: "Send",
-          saveConfirmation: "Send this reply?",
-          onSave: { text in actions.onReply?(text) })
       }
       .fullScreenCover(item: $selectedImageAttachment) { attachment in
         MessageImageFullscreenLoader(attachment: attachment)
@@ -608,7 +619,8 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
 
   /// Applies an edit made on the bubble text back onto the whole message, keeping
   /// the tool and reasoning blocks the bubble does not show.
-  private func messageEditAction(rawText: String) -> ((String) -> Void)? {
+  private func messageEditAction(rawText: String) -> ((String) async throws -> Void)? {
+    if let onEditRemote = actions.onEditRemote { return onEditRemote }
     guard let onEdit = actions.onEdit else { return nil }
     return { edited in
       onEdit(MessageContentFilter.replacingVisibleText(in: rawText, with: edited))
@@ -781,10 +793,15 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
         imageSaveMenuTitle(at: index), systemImage: "square.and.arrow.down"
       ) { saveImageAttachment(attachment) })
     }
+    let editable = actions.onEdit != nil || actions.onEditRemote != nil
     editing.append(MessageActionMenus.action(
-      actions.onEdit == nil ? "View Text" : "Edit",
-      systemImage: actions.onEdit == nil ? "text.cursor" : "square.and.pencil"
-    ) { showingTextSelection = true })
+      editable ? (actions.editConfirmation == nil ? "Edit" : "Edit and Retry…") : "View Text",
+      systemImage: editable ? "square.and.pencil" : "text.cursor"
+    ) {
+      textDraft = MessageTextDraft(
+        text: visibleText, confirmation: actions.editConfirmation,
+        onSave: messageEditAction(rawText: displayText))
+    })
     editing.append(MessageActionMenus.action("Copy", systemImage: "doc.on.doc") {
       UIPasteboard.general.string = visibleText
     })
@@ -796,16 +813,26 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
     sections.append(UIMenu(options: .displayInline, children: editing))
 
     var history: [UIMenuElement] = []
+    if let resend = actions.onTrimFromHere {
+      history.append(MessageActionMenus.action(
+        message.role == .assistant ? "Retry Response…" : "Rewind",
+        systemImage: "arrow.uturn.backward", enabled: actions.canRetry, perform: resend))
+    }
     if message.role != .assistant {
-      if let resend = actions.onTrimFromHere {
-        history.append(MessageActionMenus.action(
-          "Rewind", systemImage: "arrow.uturn.backward", enabled: actions.canRetry, perform: resend))
-      }
       if let onRestartFresh = actions.onRestartFresh {
         history.append(MessageActionMenus.action(
           "New Chat With", systemImage: "arrow.triangle.2.circlepath",
           enabled: actions.canRetry, perform: onRestartFresh))
       }
+    }
+    if let onStartNewChat = actions.onStartNewChat {
+      history.append(MessageActionMenus.action(
+        "New Chat With This Prompt", systemImage: "plus.bubble", perform: onStartNewChat))
+    }
+    if let onRetryUnsent = actions.onRetryUnsent {
+      history.append(MessageActionMenus.action(
+        "Retry Sending", systemImage: "arrow.clockwise", enabled: actions.canResubmit,
+        perform: onRetryUnsent))
     }
     if message.role == .user, let resubmit = actions.onResubmit {
       history.append(MessageActionMenus.action(
@@ -817,7 +844,8 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
     if let onDelete = actions.onDelete {
       sections.append(UIMenu(options: .displayInline, children: [
         MessageActionMenus.action(
-          "Delete Message", systemImage: "trash", enabled: actions.allowsConversationMutation,
+          actions.deletesThroughEnd ? "Delete From Here…" : "Delete Message",
+          systemImage: "trash", enabled: actions.allowsConversationMutation,
           destructive: true, perform: onDelete)
       ]))
     }

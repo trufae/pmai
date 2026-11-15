@@ -575,6 +575,9 @@ func acpServerServesARuntime() async throws {
     ACP.Method.initialize, params: .object(["protocolVersion": .integer(1)]), timeout: 5)
   #expect(initialize.objectValue?["protocolVersion"]?.intValue == 1)
   #expect(initialize.objectValue?["agentInfo"]?.objectValue?["name"]?.stringValue == "pmai")
+  let capabilities = initialize.objectValue?["agentCapabilities"]?.objectValue
+  let pmai = capabilities?["_meta"]?.objectValue?["pmai"]?.objectValue
+  #expect(pmai?["messageEditing"]?.intValue == 1)
 
   let session = try await client.request(
     ACP.Method.sessionNew, params: .object(["cwd": .string("/tmp")]), timeout: 5)
@@ -600,6 +603,21 @@ func acpServerServesARuntime() async throws {
   let promptID = try #require(
     await snapshots.last.first(where: { $0.objectValue?["role"]?.stringValue == "user" })?
       .objectValue?["remoteID"]?.stringValue)
+  let answerID = try #require(
+    await snapshots.last.first(where: { $0.objectValue?["role"]?.stringValue == "assistant" })?
+      .objectValue?["remoteID"]?.stringValue)
+  _ = try await client.request(
+    ACP.Method.sessionEditMessage,
+    params: .object([
+      "sessionId": .string(sessionID), "messageId": .string(promptID), "text": .string("Edited hi"),
+    ]), timeout: 5)
+  #expect(await snapshots.last.compactMap { $0.objectValue?["text"]?.stringValue } == ["Edited hi", "Hello from pmai"])
+  _ = try await client.request(
+    ACP.Method.sessionEditMessage,
+    params: .object([
+      "sessionId": .string(sessionID), "messageId": .string(answerID), "text": .null,
+    ]), timeout: 5)
+  #expect(await snapshots.last.compactMap { $0.objectValue?["text"]?.stringValue } == ["Edited hi"])
   _ = try await client.request(
     ACP.Method.sessionRewind,
     params: .object(["sessionId": .string(sessionID), "messageId": .string(promptID)]), timeout: 5)
