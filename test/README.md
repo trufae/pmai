@@ -140,8 +140,8 @@ sample. Fixtures use the offline provider and command voice backends, so no
 network or native audio initialization is involved. These are warm filesystem
 measurements; terminal rendering and cold OS cache costs are not measured.
 For phase timings within one binary, including Android/Termux, use
-`PMAI_STARTUP_TIMING=1 pmai`; see the [startup diagnostics](../README.md#build)
-in the main README.
+`PMAI_STARTUP_TIMING=1 pmai`; see the [startup diagnostics](../doc/build.md#startup-diagnostics)
+in the build guide.
 
 Measured on 2026-10-29, comparing `d6b3cbd` with the startup changes on macOS 27
 arm64 using Swift 6.4. Both binaries used debug builds, `PMAI_NO_MLX=1`, the

@@ -1,578 +1,102 @@
+[![CI](https://github.com/trufae/pmai/actions/workflows/ci.yml/badge.svg)](https://github.com/trufae/pmai/actions/workflows/ci.yml)
+
 <p align="center">
-  <a href="https://trufae.github.io/pmai"><img src="mai-logo.png" alt="PocketMai logo" width="180" /></a>
+  <a href="https://trufae.github.io/pmai"><img src="mai-logo.png" alt="PocketMai logo" width="140" /></a>
 </p>
 
-# PocketMai + pmai
+# pmai + PocketMai
 
-[Official website](https://trufae.github.io/pmai) · [App Store](https://apps.apple.com/es/app/pocketmai/id6764296742) · [Releases](https://github.com/trufae/pmai/releases) · [CLI guide](MaiCore/README.md)
+**A personal AI agent for your terminal, desktop, and phone.**
 
-**Your models. Your tools. Your workstation in your pocket.**
+pmai is a terminal agent that can work on code, run tools, research, and create
+documents. PocketMai brings the same Swift engine to native apps. Choose your
+model, keep conversations by project, and use your workstation from your phone.
 
-Install the **pmai CLI** on macOS, Linux, or Android:
+[Website](https://trufae.github.io/pmai) · [Releases](https://github.com/trufae/pmai/releases) · [Documentation](doc/README.md)
+
+- **Your choice of model.** Connect OpenAI-compatible services such as Ollama,
+  llama.cpp, vLLM, and OpenRouter, sign in with ChatGPT, or run Apple Intelligence
+  and MLX locally on supported Apple hardware.
+- **Your workstation on your phone.** Share projects, chats, files, and terminals
+  over encrypted Iroh connections through built-in Forwiroh. Pair with a QR code
+  and approve access on the host; no separate tunnel command is needed.
+- **Project boxes.** Run agents and their tools in Docker or Podman containers
+  with a separate Git checkout. Review the diff and explicitly apply changes
+  back to your project.
+- **Tools and agents you control.** Use skills, MCP tools, ACP agents, and
+  subagents with their own models and tools. Set approvals and run limits, or
+  expose pmai itself to an ACP editor or MCP client.
+- **One workflow across devices.** Keep project memory and todos, transfer chats
+  with attachments and subagent history, use Vim and shell pipelines, or speak
+  to PocketMai and build WebXDC mini apps in chat.
+
+## Platforms
+
+| Interface | Platforms | Get it |
+| --- | --- | --- |
+| **pmai CLI** | macOS, Linux, Windows (beta), Android/Termux | [Install below](#install) · [CLI guide](MaiCore/README.md) |
+| **pmai for Mac** | Native macOS app | [Releases](https://github.com/trufae/pmai/releases) · [Build guide](doc/mac-app.md) |
+| **PocketMai for iOS** | iPhone and iPad, iOS 18+ | [App Store](https://apps.apple.com/es/app/pocketmai/id6764296742) |
+| **PocketMai for Android** | Native Kotlin/Compose app, arm64 | [Download APK](https://trufae.github.io/pmai/downloads/PocketMai-Android.apk) · [Android guide](PocketMaiKotlin/README.md) |
+
+Local models and device features depend on OS and hardware support. See the
+[feature guide](doc/features.md) and [build requirements](doc/build.md).
+
+## Install
+
+macOS, Linux, or Android/Termux:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/trufae/pmai/main/www/install.sh | sh
 ```
 
-No root needed. The installer selects the release for your platform, verifies its
-SHA-256 checksum, and chooses a writable install directory. Update with `pmai -U`.
-Linux releases include glibc and fully static musl builds; the installer detects
-musl automatically. See the [installer](www/install.sh) for custom install paths
-and version selection.
-
-On **Windows** (PowerShell 5.1 or 7):
+Windows (PowerShell):
 
 ```powershell
 irm https://raw.githubusercontent.com/trufae/pmai/main/www/install.ps1 | iex
 ```
 
-The [Windows installer](www/install.ps1) selects x64 or ARM64, verifies the
-SHA-256 checksum, and installs the executable and runtime DLLs in
-`%LOCALAPPDATA%\Programs\pmai` without administrator privileges. It adds that
-directory to your user PATH and the current PowerShell session. Update with
-`pmai -U`. Set `PMAI_INSTALL_DIR` for a custom directory or
-`PMAI_VERSION` for a specific release tag.
+The installers verify checksums and need no administrator privileges. Update
+with `pmai -U`. Run `pmai` to configure a provider and choose a model; see
+[getting started](doc/getting-started.md) for Ollama, ChatGPT, and other providers.
 
-[![CI](https://github.com/trufae/pmai/actions/workflows/ci.yml/badge.svg)](https://github.com/trufae/pmai/actions/workflows/ci.yml)
+## Three quick commands
 
-PocketMai brings a personal AI agent to your phone; pmai brings the same Swift
-engine to your terminal. Talk through an idea, work on a codebase, turn a chat
-into a document, or pick up a workstation project from your phone. Choose local
-inference or a remote provider, give each agent the tools it needs, and keep
-your conversations portable.
-
-Built on [MaiCore](MaiCore/README.md), following
-[MAI](https://github.com/trufae/mai)'s terminal and Vim workflows.
-
-| Interface | What you get | Get it |
-| --- | --- | --- |
-| **PocketMai for iOS** | Native voice, tools, documents, mini apps, and remote projects. iOS 18+; some features require newer iOS or supported hardware. | [App Store](https://apps.apple.com/es/app/pocketmai/id6764296742) |
-| **pmai CLI** | A terminal agent for macOS, Linux, and Android, with shell tools, projects, skills, MCP, ACP, and Vim integration. | Install command above · [Release downloads](https://github.com/trufae/pmai/releases) |
-| **pmai for Mac** | A native Mac interface using the CLI's projects, chat storage, providers, remote hosts, and subagents. | `make mac` · [Mac build and design notes](doc/mac-app.md) |
-| **PocketMai for Android** | Native Kotlin/Compose client with shared MaiCore, tools, MCP, skills, Forwiroh hosts and WebXDC apps. | [Download APK](https://trufae.github.io/pmai/downloads/PocketMai-Android.apk) · [Android guide](PocketMaiKotlin/README.md) |
-
-The older [pure Swift Android preview](PocketMaiAndroid/README.md) is deprecated.
-
-The [Pebble Time 2 app](PebbleApp/README.md) supports voice prompts and saved shortcuts through PocketMai for iOS and Android.
-Its CI artifacts are labeled `pureswift` and are excluded from GitHub releases
-and website downloads. The Android CLI is a separate terminal client.
-
-## Features
-
-### Make the agent yours
-
-- **Bring your model.** Use Apple Intelligence or MLX on supported Apple hardware,
-  sign in with a ChatGPT subscription, or connect an OpenAI-compatible API such
-  as OpenAI, Ollama, llama.cpp, vLLM, or OpenRouter. Native tool calling and text,
-  XML, and JSON fallbacks accommodate different providers.
-- **Build your own team.** Save prompts, create or import `SKILL.md` skills, and
-  give agents their own models and tools. Inspect subagent transcripts and usage,
-  send guidance, pause or resume work, and stop a branch. Choose separate models
-  for chat, compaction, tool decisions, and approval review.
-- **Set the boundaries.** Choose tools per agent and MCP server, set file and
-  folder rules to allow, ask, or deny, and review or edit tool arguments before
-  execution. Configure manual or model-assisted approval and limits on turns,
-  tool calls, tokens, elapsed time, and subagents.
-- **Connect your tools and agents.** Add Streamable HTTP MCP servers, plus local
-  stdio servers and native plugins in supported CLI builds. Use ACP agents as
-  providers or subagents, serve pmai to an ACP editor with `pmai --acp`, or expose
-  its configured agent to an MCP client with `pmai --mcp`. The
-  [tool proxy](doc/proxy.md) controls discovery and reduces tool-schema overhead.
-
-### Move between phone and terminal
-
-- **An adaptable workspace — iOS.** Keep conversations beside your chat on a
-  roomy display, or collapse the sidebar for more writing space. Narrow windows
-  use the swipeable drawer. The layout follows window size and safe areas when
-  opening or closing iPhone Duo or using Split View.
-- **Take your workstation with you.** Pair PocketMai or another pmai CLI with a
-  running host to continue saved chats, switch projects, and browse or transfer
-  files. Connect over your LAN or use encrypted OpenTunnel access across
-  firewalls, with pairing approved on the host.
-- **Stay in your coding flow.** Pipe context into pmai, run shell tools for builds,
-  tests, and Git, or hand the terminal over to an interactive program. Install the
-  [Vim integration](doc/vim.md) to review and apply changes to a selection.
-- **Keep the whole conversation.** Organize chats by project, search past work,
-  and carry persistent memory and todos forward. Share a `.pocketmai` file with
-  attachments, tool messages, and nested subagent chats, then continue on another
-  device using its own provider credentials.
-- **Shape the context.** Edit, undo, trim, search, or compact a conversation with
-  a focus. Queue `/then LINE` in iOS or the CLI to run a message or command after
-  all tasks finish, one line at a time. `/then` lists pending lines; `/unthen`
-  clears them. Commands such as `/model MODEL` and `/skills prompt NAME [TEXT]`
-  run before the next queued message. iOS keeps each queued action in its original
-  chat; `/model` selects that chat's model on its current provider.
-  Ask `/btw QUESTION` alongside a running reply in iOS or the interactive
-  CLI; it uses a fresh context without changing the main conversation.
-  In the CLI, `/hey TEXT` interrupts the focused agent, appends the text to its
-  prompt, and resubmits it as one user message. Bare `/hey` retries the same
-  running prompt. When idle, `/hey TEXT` sends TEXT as a new message.
-  Earlier exchanges and attachments stay in the chat.
-  Use `@PID /hey TEXT` for one agent or `@* /hey TEXT` for all active agents.
-  Address prefixes also dispatch other slash commands with each recipient
-  focused, such as `@3 /msg last`, `@3 /continue`, and `@* /stop`.
-
-### Put it to work
-
-- **Files and local knowledge — iOS + CLI.** Read, search, write, and patch files
-  within your configured workspace. Index documents and source with `vdb` to
-  retrieve passages with file and line references; default retrieval runs locally
-  without an embedding-model download. On iOS, browse, preview, and edit local
-  or remote files, create folders, and upload or download documents. Unsupported
-  chat attachments can be saved to the working folder, with a prompt to enable
-  Files tools when needed. `files_zip` and `files_unzip` pack and extract ZIP/XDC
-  archives without a shell; extraction creates a new folder and never overwrites
-  existing files. Archives are limited to 50 MB, expanding to 100 MB and 10,000
-  files. Packing uses stored compression and does not preserve empty folders or
-  file permissions.
-- **Research and everyday tools — iOS + CLI.** Search the web, including through
-  your own SearXNG instance, fetch readable pages, and download files. Browse
-  GitHub repositories, PR diffs, discussions, issues, releases, and CI logs.
-  With a writable token, post comments, review inline with code suggestions,
-  and create PRs from pushed branches. Check weather, calculate, or search
-  Mastodon and enable posting when needed.
-- **Documents in, documents out — iOS + CLI.** Import text, source, HTML,
-  Markdown, DOCX, EPUB, JSON, and PDF; export conversations to Word, EPUB,
-  Markdown, HTML, plain text, or JSON. Use local Apple Vision OCR on iOS and
-  macOS, or installed Tesseract on other CLI platforms. On iOS, attach PDF pages
-  as images and read scans with OCR.
-- **Talk naturally — iOS.** Speak a question, listen to replies, or import a
-  voice note, including Ogg Opus. Transcription stays on device by default;
-  choose a local model and device voice for offline conversations. Enable
-  Voiceover for short spoken summaries of finished replies. Native live
-  transcription requires iOS 26+ and an installed speech model. The share sheet
-  accepts pictures, audio, and documents from other apps.
-- **A browser you can take over — iOS.** Let the agent read text, DOM, links, or
-  OCR from a floating WebKit browser, then click, type, scroll, or run JavaScript.
-  Enlarge its picture-in-picture card and take over for sign-ins or any other step.
-- **Make little apps — iOS.** Create and run WebXDC mini apps with HTML, CSS, and
-  JavaScript inside the chat. Keep revisions, roll back changes, and share `.xdc`
-  files for PocketMai or Delta Chat. The runner blocks network access.
-- **Use your device — iOS.** Read your calendar and optionally create events,
-  use device location, and set countdowns or one-time and repeating alarms
-  (iOS 26.1+). Follow replies and tool calls through Lock Screen and Dynamic
-  Island Live Activities, receive background completion and approval
-  notifications, and optionally keep long replies working when the screen locks.
-
-For a walking or driving guide on iOS, enable **Location** in the chat's tool
-picker and allow location access when prompted. GPS is the default; each message
-gets a fresh position, its accuracy, and measurement time in the AI's context.
-Enable **Web Search** or **Browser** as well for nearby maps and information.
-Location is sampled when sending messages while using the app, rather than
-continuously tracked in the background. For a fixed place, turn off **Use GPS
-location** in Settings → Tools → Contextual → Location and enter a manual location.
-If access was denied, use **Open iOS Settings** there to restore it.
-
-Offline use depends on selecting a local model and local tools; remote providers
-still need a connection. CLI Airplane Mode limits tools, not the inference
-provider. File-tool rules enforce workspace boundaries; CLI shell commands run
-with the pmai process's privileges and their own approval rules.
-
-## Start in the terminal
-
-Run `pmai`, add your provider, and choose a model. For a local Ollama server
-already running with a downloaded model:
-
-```text
-/provider add local http://127.0.0.1:11434/v1
-/models local
-/model local::MODEL_FROM_THE_LIST
-```
-
-The selection is saved for future runs. You can also use
-[ChatGPT sign-in](#use-your-chatgpt-subscription), a remote API, or native
-[Apple Intelligence and MLX providers](MaiCore/README.md).
-
-To use an installed, authenticated coding agent over ACP, enter either
-`/agent acp add claude` or `/agent acp add opencode` inside pmai. Each command
-saves and selects the agent. See [ACP setup and shell one-liners](doc/acp.md#acp-providers-in-the-normal-prompt).
-The [Claude guide](doc/claude.md) covers installation, model selection, reasoning
-effort, and disabling commit attribution.
-Use `/providers` to list connections and `/provider del ID` to remove an unused
-one; `/about` shows setup options and `/help provider` explains provider commands.
+**Run a prompt** with your configured model, from a project directory:
 
 ```sh
 pmai "explain this project"
-pmai --progress "review this project" > review.md
-git diff | pmai --stdin "review this change"
-pmai --vim install
 ```
 
-Use `--progress` for live model-turn, tool, and message feedback on stderr while
-stdout contains only the final reply. It also works in the REPL and with redirected output.
-
-In Vim, select lines and press `m` to choose a prompt, review the reply, and apply
-it. Use `pmai --vim update` to refresh the integration or `pmai --vim uninstall`
-to remove it. In the REPL, try `/projects` and `/help`.
-
-Project data uses an existing `.pmai` directory when present. Otherwise chats,
-settings, memory, todos, skills, and the vector index live under
-`~/.pmai/projects/<project-id>/`, outside the checkout so `git clean -xdf` cannot
-remove them. `--home DIR` or `PMAI_HOME` relocates the central store; for example,
-`PMAI_HOME=~/.config/pmai` uses `~/.config/pmai/projects/`. Create `.pmai` before
-first opening a project to choose local storage. Existing local data stays in
-place and is still vulnerable to repository cleanup; it is not migrated automatically.
-
-Consecutive tool calls in iOS start collapsed into one tappable row with the call
-count and elapsed wall time. Expand the row to access the usual individual calls.
-Old chats without recorded timings show “time unavailable”.
-
-In the CLI, `/set ui.toolgroups on` enables the same clickable summaries and
-switches to buffer mode. `/set ui.toolgroups off` restores individual rows;
-`/set ui.tools` still controls their result previews. The status bar shows the
-current prompt's elapsed time at the right, including time spent awaiting approval.
-
-Use `/set ui.toolcalls first` to read the complete first line of tool arguments,
-wrapped to the terminal width, or `/set ui.toolcalls 5` to show the first five
-source lines of each argument (including heredoc scripts). Hidden lines are
-counted after the preview. `/set ui.toolcalls truncate` restores the default
-single-row previews clipped to the available terminal columns. Resizing the
-terminal updates existing previews in buffer mode. This setting is saved;
-`ui.tools` controls result visibility separately, and `ui.tools icons` keeps calls
-as icons.
-
-`/tools` lists groups in an aligned table with shared mode and call-count columns;
-`/tools full` adds each group's individual tools. Terminal Markdown tables are
-frameless by default to save space. Use `/set ui.tableborders on` to draw frames
-and separators, or `off` to remove them. This applies to command output and
-replies, including existing tables in buffer mode.
-
-## Bring your workstation to your phone
-
-In the host's pmai REPL, share a project over Forwiroh:
+**Serve this project over Iroh.** Enter this inside the `pmai` REPL, then scan the
+QR in PocketMai's **Hosts** screen and approve pairing on the host:
 
 ```text
-/remote serve --path /path/to/project
+/remote serve --path .
 ```
 
-In PocketMai, open **Hosts → +**, choose **pmai**, tap **Scan Host QR**, name the
-host, and tap **Add**. Manual import and connection fields are under **Advanced**.
-Approve the Forwiroh device request
-and then the ACP chat request on the host with `/remote accept`, then browse its
-projects, continue a chat, or open its files.
-The serving REPL stays usable; `/remote stop` or exiting it ends the server.
+Forwiroh is the default transport. See [remote hosts](doc/remote-hosts.md) for
+pairing, remote terminals, and LAN access.
 
-Forwiroh is the default and needs no external tunnel command. For direct LAN
-access, use `/remote serve --protocol local --path /path/to/project`. To use
-OpenTunnel, install its CLI on the host and run
-`/remote serve --protocol opentunnel --path /path/to/project`.
-Scan the connection QR in PocketMai, paste its URI in Android's **Hosts** tab,
-or run `/remote pair '<URI>'` on another CLI. Saved hosts reconnect
-without scanning again; `/remote qr` creates a fresh five-minute invitation for
-another device. Forwiroh grants access only to pmai's loopback ACP endpoint.
-
-CLI users can use `/remote ls HOST`, `/remote get HOST REMOTE [LOCAL]`,
-`/remote put HOST LOCAL [REMOTE]`, and `/remote run HOST COMMAND` for files and
-commands on paired pmai or OpenCode hosts. `/remote shell HOST` sends typed
-commands directly to that host until `exit`. See `/help remote` for pairing and
-path examples.
-
-PocketMai's iOS terminal uses SwiftTerm with a persistent Unix PTY on updated
-pmai hosts, including Forwiroh connections. It supports interactive programs
-such as Vim, pinch font sizing, a keyboard control bar, and separate terminal
-sessions selected through the `…` menu. Done detaches the panel; Close Terminal
-ends that shell. Sessions reconnect after an app restart or network loss while
-the host's pmai server stays running.
-Use `/set limits.terminalTimeout 3m20s` (or `1h20m`, or plain seconds) on the host
-to expire terminals with no input or output; `0` (the default) keeps them until explicitly closed.
-Older pmai hosts and OpenCode use command mode instead: each
-command starts in the selected workspace. SwiftTerm is an iOS app dependency;
-it is not linked into the CLI or Android clients. Open a terminal from a host's
-long-press menu or a remote workspace. Add Host offers PocketMai, WebSocketACP,
-and OpenCode; WebSocketACP includes a local gateway command and QR setup hint.
-
-To let a local conversation work on a remote host, edit that host and enable
-**Allow Remote Tool**, then enable the native **Remote Hosts** tool in the
-conversation. On the CLI, use `/remote tools HOST on` and enable the `remote`
-tool group with `/tools`. The `remote_hosts`, `remote_files`, `remote_run`, and
-`remote_terminal` tools access only hosts you have explicitly enabled. Turning
-host access off prevents subsequent calls and closes its agent terminals;
-ordinary tool approvals and the remote host's permissions still apply.
-
-Forwiroh [0.1.6](https://github.com/trufae/forwiroh/releases/tag/v0.1.6) is supplied as a prebuilt SwiftPM dependency under `Vendor/Forwiroh`:
-no Rust build or wrapper generation is needed. Its release binaries support
-macOS, iOS, Linux, Android and Windows (x64/ARM64). Linux glibc binaries require Ubuntu 24.04/glibc
-2.39 or newer; musl builds use the musl variants. The source package requires
-Swift 6.2 or newer (Android and Windows use the project's matching Swift 6.4 SDK). See
-[remote pmai hosts](MaiCore/README.md#remote-pmai-hosts) for setup and connection
-options, and [file browsing over ACP](doc/acp.md#file-browsing-from-pocketmai).
-
-## Guides
-
-- [CLI setup and command reference](MaiCore/README.md)
-- [Providers, agents, and task defaults](doc/task-agents.md)
-- [WebXDC apps and PocketMai inference/speech extensions](doc/webxdc.md)
-- [Reusable prompts and skills](doc/prompts.md)
-- [Editing configuration and conversation context](doc/edit.md) · [Context strategies](doc/context.md)
-- [ACP and MCP integration](doc/acp.md) · [Tool proxy](doc/proxy.md)
-- [Reminders on CLI, Mac, iOS, and Android](doc/reminders.md)
-- [Vim integration](doc/vim.md) · [Android builds](PocketMaiKotlin/README.md)
-- [Voice setup and privacy](#voice-setup-and-privacy) · [Build from source](#build)
-
-## Use your ChatGPT subscription
-
-In iOS Settings → Providers, add a provider, choose **ChatGPT subscription** in
-the API picker, then tap **Continue with ChatGPT**. Select an available model
-after signing in. Add separate providers for different accounts or workspaces.
-
-In the pmai CLI REPL:
-
-```text
-/provider add chatgpt --kind chatgpt
-/provider login chatgpt
-/models chatgpt
-/model chatgpt::MODEL_FROM_THE_LIST
-```
-
-The provider kind is `chatgpt`. API-key connections use `openai`; existing JSON
-using `openAICompatible` still loads and is saved with the new name.
-Eligible requests use your ChatGPT plan through
-the Responses API; no API key or Codex CLI is needed. Plan limits and account
-eligibility apply. [Manage usage](https://chatgpt.com/settings/usage).
-Use `/provider status chatgpt` to inspect the account and `/provider logout chatgpt`
-to sign out. Credentials stay in the iOS device's Keychain or owner-only files
-under `$PMAI_HOME/chatgpt` (`~/.pmai/chatgpt` by default); provider exports do not
-include them. Sign in independently on each device. This provider supports text,
-images, files, and pmai tools; audio and hosted Responses tools are unavailable.
-
-## Share a conversation between devices
-
-Tap the chat title, or long-press a chat in the left sidebar, then choose
-**Share...** and **AirDrop** or **Mail**. This sends a `.pocketmai`
-conversation file. Open the received file
-with PocketMai, choose its destination folder, and import it to continue chatting.
-On a computer, import the very same file in pmai:
-
-```text
-/import ~/Downloads/My Chat.pocketmai
-```
-
-The file keeps the conversation and its embedded attachments, including tool
-messages and nested subagent chats. It does not add the diagnostic report or
-export your provider credentials. The receiving device uses its own configured
-providers. Older `.pocketmai.json` conversation files remain importable; to send
-to an older PocketMai version, rename the file to end in `.pocketmai.json`.
-
-**Export...** offers readable copies such as Plain Text (.txt), Markdown, HTML and
-Word. **Debug Report** is for troubleshooting; it is not needed to transfer a chat.
-
-## Voice setup and privacy
-
-Use device voices or configure a speech provider independently of your chat
-model. Audio transcription stays on device by default; the resulting chat text
-goes to your selected model provider.
-
-<details>
-<summary>Configure OpenAI or compatible text-to-speech</summary>
-
-See [OpenAI-compatible chat and audio server](doc/audio-server.md) for CLI serving, native audio HTTP endpoints, and Groq transcription/voices.
-
-### OpenAI text-to-speech
-
-ChatGPT subscription sign-in provides the Responses API connection; it does not
-provide Speech API access. Keep ChatGPT selected for chat and configure a separate
-speech provider below. OpenAI speech requires an API key and separate API billing.
-See the [ChatGPT plan endpoint contract](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference).
-
-1. Open **Settings > Voices > Assistant** (or **User**). **Browse Built-in Voices**
-   lists OpenAI voices even before you configure a provider. Tap **Add OpenAI Speech
-   Provider**, or use **Settings > Providers > Add Provider**, choose **OpenAI API**,
-   set the base URL to `https://api.openai.com/v1`, and save your API key using
-   the provider's existing credentials form. Enable the provider. Adding it from
-   Voices selects it for that role without changing your chat provider.
-2. Open **Settings > Voices > Assistant** (or **User**) and select that provider.
-   Its built-in voices are available immediately, without voice discovery.
-3. Leave **Speech Model** at its `gpt-4o-mini-tts` default, or choose a supported
-   TTS model, then select a **Voice**. The speech model is shared by roles using
-   that provider and is independent of its chat model.
-4. Tap **Test Voice** for a paid preview. **Speak Message**, **Speak From Here**,
-   live conversation replies, and the `speak` tool use these same settings.
-
-Long messages are divided into bounded requests and played through the existing
-speech queue. Pausing while synthesis is pending keeps the returned audio paused.
-
-These are AI-generated voices. OpenAI documents 13 voices for `gpt-4o-mini-tts`;
-`tts-1` and `tts-1-hd` support a smaller set. Unsupported selections show an
-error without switching voices. Compatible servers are selectable before discovery
-and load `/voices` when selected. **Refresh Voices** reports discovery failures;
-you can also enter a **Voice ID** manually for servers without a voice catalog.
-Switching providers chooses an available voice instead of carrying an unsupported
-voice from the previous provider. Returning from System preserves the saved voice.
-Compatible servers retain custom speech model names; a blank speech model uses
-their server default.
-Existing compatible-provider configurations keep their previous synthesis model
-when migrated. Airplane Mode retains the existing system-voice behavior.
-See the [official TTS guide](https://developers.openai.com/api/docs/guides/text-to-speech).
-
-As of October 17, 2026, OpenAI has announced retirement of `tts-1`, `tts-1-hd`
-and the dated `gpt-4o-mini-tts` models on January 6, 2027. See
-[OpenAI's deprecation notice](https://developers.openai.com/api/docs/deprecations#2026-10-01-text-to-speech-models).
-Realtime speech is outside this integration.
-
-</details>
-
-<details>
-<summary>On-device transcription, live voice, and server fallback</summary>
-
-### Voice privacy
-
-Voice recordings and imported audio stay on device for transcription by default.
-Settings > Voices > **Allow Apple Server Transcription** explicitly permits an
-Apple-server fallback if local recognition fails or is unavailable. The app's
-airplane button overrides this permission immediately and cancels active server
-recognition. Returning online restores the saved preference.
-
-On iOS 26+, file transcription first tries `SpeechAnalyzer` / `SpeechTranscriber`
-with an already-installed language model. The fallback on iOS 26+ and the primary
-path on iOS 18–25 use `SFSpeechRecognizer`, checking `supportsOnDeviceRecognition`
-before setting `requiresOnDeviceRecognition = true`. Without the server opt-in,
-missing local support or recognition errors never trigger a server request.
-Native iOS Live always uses the on-device analyzer and requires an installed model.
-PocketMai does not initiate speech-model downloads.
-
-Apple documents the guarantees in
-[Asking Permission to Use Speech Recognition](https://developer.apple.com/documentation/speech/asking-permission-to-use-speech-recognition),
-[`requiresOnDeviceRecognition`](https://developer.apple.com/documentation/speech/sfspeechrecognitionrequest/requiresondevicerecognition)
-and [`supportsOnDeviceRecognition`](https://developer.apple.com/documentation/speech/sfspeechrecognizer/supportsondevicerecognition).
-This setting controls audio transcription; sending the resulting text to a chat
-still uses that chat's selected model provider.
-
-</details>
-
-## CarPlay
-
-On iOS 26.4 or later, PocketMai can start or resume a spoken chat from the car
-and run favorite user prompts with one tap. Mark favorites and grant microphone
-access under Settings > CarPlay on the iPhone. If the selected transcription
-backend needs Speech Recognition permission, grant it there as well.
-
-Device builds require the
-[CarPlay voice-based conversation entitlement](https://developer.apple.com/documentation/carplay/requesting-carplay-entitlements)
-from Apple for `io.github.trufae.mai`. Once it is enabled, regenerate the app's
-provisioning profile and build with the following Xcode setting for the PocketMai
-app target:
-
-```text
-POCKETMAI_ENTITLEMENTS = PocketMai/PocketMaiCarPlay.entitlements
-```
-
-For example, append
-`POCKETMAI_ENTITLEMENTS=PocketMai/PocketMaiCarPlay.entitlements` to an
-`xcodebuild -project PocketMai.xcodeproj -scheme PocketMai` device build.
-The default signing configuration uses the regular entitlement file.
-
-Test with CarPlay Simulator and a supported iPhone, then in a parked vehicle.
-With the iPhone locked, open PocketMai on CarPlay, ask two questions, end the
-session, reopen it with Resume Conversation, and run a favorite. Check that
-replies play through the car, the favorite returns to the menu without opening
-the microphone, and disconnecting or switching away stops capture and playback.
-
-## Build
-
-Build the iOS app with Xcode and the CLI with SwiftPM through Make.
-Build the Kotlin/Compose Android app with `make android-kotlin`, or use
-`make android-kotlin-release` for its release APK. See the
-[Kotlin Android guide](PocketMaiKotlin/README.md).
-The deprecated pure Swift Android preview remains buildable with `make android`.
-
-<details>
-<summary>Requirements, build commands, and local inference notes</summary>
-
-Requires Xcode 26.4+ and an iOS 18+ deployment target. iOS 26-only features
-such as Apple Foundation Models, Native iOS Live speech transcription, and
-Liquid Glass controls fall back or report unavailable at runtime on older OS
-versions.
-
-MLX inference requires a physical device with Apple GPU family 7 or later
-(A14/M1 or newer). PocketMai checks `MTLDevice.supportsFamily(.apple7)` before
-enabling MLX selection, downloading, or loading models. The iPhone XS's A12,
-A13 devices, and A12X/A12Z iPads do not meet this requirement. These devices
-can use an OpenAI-compatible service or connect to Ollama/llama.cpp on a computer
-through Settings > Providers > Add Provider.
-
-This GPU cutoff follows the SIMD-group matrix operations used by
-[MLX's Metal kernels](https://github.com/ml-explore/mlx/blob/v0.31.1/mlx/backend/metal/kernels/steel/gemm/mma.h)
-and [Apple's GPU feature table](https://developer.apple.com/metal/Metal-Feature-Set-Tables.pdf).
-The [MLX iOS guide](https://github.com/ml-explore/mlx-swift/blob/0.31.6/Source/MLX/Documentation.docc/Articles/running-on-ios.md)
-also rules out Simulator inference and describes iOS memory limits. Simulator
-builds support the UI and remote providers; test MLX on a supported device or
-an Apple silicon Mac using Designed for iPad. GPU support does not guarantee
-every model fits in memory: start with a small 4-bit model and a short context,
-and keep the app in the foreground while generating.
-
-The project pins `mlx-swift` 0.31.6 (includes the iOS build fix) and
-`mlx-swift-lm` 3.31.4.
-
-CI and release builds use Swift 6.4.0, including matching Static Linux and
-Android SDKs. The packages keep Swift 6 language mode. SwiftPM now defaults
-to Swift Build; use `swift build --package-path MaiCore --show-bin-path`
-(with the same build system, configuration and SDK arguments) to locate binaries.
-Android uses `--build-system native` and the SDK's `setup-android-sdk.sh` to
-avoid a Swift Build 6.4 planner crash on Linux. CI exercises the optimized
-Android release build and musl x64 networking/no-AVX checks; other CI builds
-use debug configurations. Release tags build the optimized distribution
-artifacts in the Release workflow.
+**Work in a project box** from a Git checkout on macOS or Linux with Docker or
+Podman running:
 
 ```sh
-make build               # builds for the iOS Simulator without code signing
-make repl-build          # builds the debug CLI without starting the REPL
-make repl-install        # installs an unoptimized CLI without debug information
-make mac-dmg             # builds the Release Mac app and packages build/pmai.dmg
-make run                 # installs and launches Xcode's latest signed device build
-make fmt                 # swift-format the sources
+pmai box create --share-home && pmai "review this project"
 ```
 
-For startup diagnostics on any CLI platform (including Android/Termux), run
-`PMAI_STARTUP_TIMING=1 pmai`. It prints cumulative and per-phase milliseconds to
-stderr through the first input handoff, including plugin setup, tools/skills,
-chat loading, and each configured provider or MCP connection. Normal launches
-do not print these timings.
+`--share-home` shares your pmai settings, credentials, and chats with the box.
+The box starts from committed HEAD; review with `pmai box diff` and import with
+`pmai box apply`. See [boxes](doc/boxes.md) for private homes and container options.
 
-The CLI and iOS app reuse `MaiLocalProviders` for Apple Intelligence and MLX.
-On macOS, add a native provider with `/provider add apple --kind apple` or
-`/provider add mlx --kind mlx`, then `/model apple::on-device` or
-`/model mlx::LiquidAI/LFM2.5-1.2B-Instruct-MLX-4bit`; no server URL is needed.
-`make repl-build` includes the CLI's MLX Metal resource. See
-[native provider setup](MaiCore/README.md) for requirements and configuration.
-`make repl-install` builds incrementally with `-c debug -debug-info-format none`
-and installs that executable and its MLX resource to `~/.local/bin` (or `BINDIR`).
+## Learn more
 
-Local builds reuse their existing outputs. Xcode compilation caching is
-enabled, and Make's command-line builds skip editor indexing, coverage
-instrumentation, and remote package update checks. The default Debug
-Simulator build compiles only the host Mac's architecture; Release
-builds keep their full architecture set. Keep the same toolchain and build
-options between invocations; use `make clean` only when you need to discard
-iOS build outputs. Set `XCODE_ARCH_FLAGS=`, `XCODE_BUILD_FLAGS=`, or
-`SWIFT_BUILD_FLAGS=` to override the command-line defaults.
-To check package remotes again, run
-`make build XCODE_PACKAGE_FLAGS=-skipPackagePluginValidation`.
+- [Install, providers, and terminal setup](doc/getting-started.md) · [CLI reference](MaiCore/README.md)
+- [Remote hosts and Iroh pairing](doc/remote-hosts.md) · [Project boxes](doc/boxes.md)
+- [Features](doc/features.md) · [PocketMai voice, sharing, and CarPlay](doc/pocketmai.md)
+- [Build and releases](doc/build.md) · [All documentation](doc/README.md)
 
-`make run` selects the first connected iOS device and uses the latest signed
-`Debug` device app in Xcode's Derived Data. Use `make run DEVICE=<UDID>` to
-select a specific device, or `make run APP_BUNDLE=<path>` to select an app
-bundle. Build in Xcode first after source changes; this preserves Xcode's
-private-key access for code signing. Open `PocketMai.xcodeproj` when you need
-debugger attachment or to run in the Simulator.
-
-</details>
-
-## Releases
-
-Get PocketMai from the [App Store](https://apps.apple.com/es/app/pocketmai/id6764296742).
-The [GitHub releases](https://github.com/trufae/pmai/releases) include the iOS IPA,
-the native Mac app as `pmai-macos-arm64.dmg` and `pmai-macos-x64.dmg`,
-the Kotlin Android app as `PocketMai-Android.apk` (arm64), source
-archives, and pmai CLI binaries for macOS and Linux (arm64 and x64), plus
-Android arm64. `SHA256SUMS` covers the CLI archives, DMGs, IPA, and Android APK.
-The Mac app and DMG use ad hoc signatures; they are not Developer ID signed or
-notarized. See the [Mac build notes](doc/mac-app.md) for local signing options.
-Static musl builds omit native plugin loading.
-
-The website's [Android APK](https://trufae.github.io/pmai/downloads/PocketMai-Android.apk)
-is the Kotlin app's release APK from the latest successful main-branch build,
-for arm64 devices. Its [SHA-256 checksum](https://trufae.github.io/pmai/downloads/PocketMai-Android.apk.sha256)
-is published alongside it. CI builds use a generated debug signing key;
-updating between builds may require reinstalling.
+Built on [MaiCore](MaiCore/README.md), following
+[MAI](https://github.com/trufae/mai)'s terminal and Vim workflows.
 
 —pancake
