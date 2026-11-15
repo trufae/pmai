@@ -36,9 +36,9 @@ struct RemoteChatSettingsView: View {
                   isOn: Binding(
                     get: { option.currentValue.boolValue ?? false },
                     set: { chat.setConfigurationOption(id: option.id, value: .bool($0)) }))
-              } else if chat.bookmark.backend == .openCode, option.id == "model" {
+              } else if chat.bookmark.backend == .openCode, ["model", "provider"].contains(option.id) {
                 NavigationLink {
-                  RemoteOpenCodeModelPicker(chat: chat)
+                  RemoteOpenCodeOptionPicker(chat: chat, optionID: option.id)
                 } label: {
                   let current = option.currentValue.stringValue ?? ""
                   LabeledContent(
@@ -67,7 +67,9 @@ struct RemoteChatSettingsView: View {
             }
             .disabled((chat.busy && option.id != "tools.review") || chat.settingsLoading || store.settings.isOffline)
           }
-          if chat.settingsLoading {
+          if chat.settingsSaving {
+            ProgressView("Saving settings…")
+          } else if chat.settingsLoading {
             ProgressView()
           } else if chat.configurationOptions.isEmpty, chat.settingsError == nil {
             Text("This host does not expose chat settings.").foregroundStyle(.secondary)
@@ -82,10 +84,15 @@ struct RemoteChatSettingsView: View {
       }
       .navigationTitle("Chat Settings")
       .navigationBarTitleDisplayMode(.inline)
-      .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+      .toolbar {
+        ToolbarItem(placement: .confirmationAction) {
+          Button("Done") { dismiss() }.disabled(chat.settingsSaving)
+        }
+      }
       .task(id: chat.connected) { await chat.refreshConfiguration() }
       .refreshable { await chat.refreshConfiguration(force: true) }
     }
+    .interactiveDismissDisabled(chat.settingsSaving)
   }
 }
 
@@ -203,15 +210,16 @@ struct RemoteToolPickerContent: View {
   }
 }
 
-private struct RemoteOpenCodeModelPicker: View {
+private struct RemoteOpenCodeOptionPicker: View {
   @EnvironmentObject private var store: AppStore
   @Environment(\.dismiss) private var dismiss
   @State private var search = ""
   @FocusState private var searchFocused: Bool
   let chat: RemoteAgentChat
+  let optionID: String
 
   private var option: RemoteSessionOption? {
-    chat.configurationOptions.first { $0.id == "model" }
+    chat.configurationOptions.first { $0.id == optionID }
   }
 
   var body: some View {
@@ -227,7 +235,7 @@ private struct RemoteOpenCodeModelPicker: View {
       }
       ForEach(matches) { choice in
         Button {
-          chat.setConfigurationOption(id: "model", value: .string(choice.id))
+          chat.setConfigurationOption(id: optionID, value: .string(choice.id))
           dismiss()
         } label: {
           HStack {
@@ -247,16 +255,18 @@ private struct RemoteOpenCodeModelPicker: View {
         ContentUnavailableView.search(text: search)
       }
     }
-    .navigationTitle(option?.name ?? "Model")
+    .navigationTitle(option?.name ?? "")
     .navigationBarTitleDisplayMode(.inline)
     .scrollDismissesKeyboard(.interactively)
     .safeAreaInset(edge: .bottom) {
-      FloatingSearchField(text: $search, isFocused: $searchFocused, placeholder: "Filter models") {
-        search = ""
-        searchFocused = false
+      if optionID == "model" {
+        FloatingSearchField(text: $search, isFocused: $searchFocused, placeholder: "Filter models") {
+          search = ""
+          searchFocused = false
+        }
+        .padding(.horizontal, 18)
+        .padding(.bottom, 12)
       }
-      .padding(.horizontal, 18)
-      .padding(.bottom, 12)
     }
   }
 }
