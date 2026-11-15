@@ -2829,6 +2829,7 @@ enum ToolCallParser {
     case "files": return "folder"
     case "clipboard": return "doc.on.clipboard"
     case "alarms": return "alarm"
+    case "reminders": return "bell"
     case "webxdc apps": return "square.grid.2x2"
     case "memory": return "brain"
     default: return "wrench.and.screwdriver"

@@ -26,7 +26,7 @@ public struct MaiReminder: Codable, Equatable, Identifiable, Sendable {
     self.completed = completed
   }
 
-  public mutating func update(title: String?, due: ReminderDueChange,
+  fileprivate mutating func update(title: String?, due: ReminderDueChange,
     alert: ReminderAlert?, completed: Bool?
   ) throws {
     if let title { self.title = title }
@@ -58,14 +58,20 @@ public enum ReminderDueChange: Sendable {
 
 public enum ReminderDate {
   public static func parse(_ value: String) throws -> Date {
+    let hour = #"(?:[01][0-9]|2[0-3])"#
+    let minute = #"[0-5][0-9]"#
+    let pattern = #"^[0-9]{4}-[0-9]{2}-[0-9]{2}T\#(hour):\#(minute):\#(minute)(\.[0-9]+)?(Z|[+-]\#(hour):\#(minute))$"#
+    guard value.range(of: pattern, options: .regularExpression) != nil else {
+      throw ReminderError.invalidDate
+    }
+    let parts = value.prefix(10).split(separator: "-").compactMap { Int($0) }
+    let components = DateComponents(year: parts[0], month: parts[1], day: parts[2])
+    guard components.isValidDate(in: Calendar(identifier: .gregorian)) else {
+      throw ReminderError.invalidDate
+    }
     let formatter = ISO8601DateFormatter()
-    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-    let fractional = formatter.date(from: value)
-    formatter.formatOptions = [.withInternetDateTime]
-    guard value.range(of: #"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$"#,
-      options: .regularExpression) != nil,
-      let date = fractional ?? formatter.date(from: value)
-    else { throw ReminderError.invalidDate }
+    if value.contains(".") { formatter.formatOptions.insert(.withFractionalSeconds) }
+    guard let date = formatter.date(from: value) else { throw ReminderError.invalidDate }
     try validate(date)
     return date
   }
@@ -130,7 +136,7 @@ public struct ReminderStore: ReminderBackend {
   public func snapshot() throws -> Snapshot {
     do {
       return try JSONDecoder().decode(Snapshot.self, from: Data(contentsOf: url))
-    } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+    } catch CocoaError.fileReadNoSuchFile {
       return Snapshot()
     }
   }
@@ -188,14 +194,20 @@ public struct ReminderStore: ReminderBackend {
   }
 
   private func change<Result>(_ edit: (inout Snapshot) throws -> Result) async throws -> Result {
-    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
-      withIntermediateDirectories: true)
+    let manager = FileManager.default
+    let directory = url.deletingLastPathComponent()
+    try manager.createDirectory(at: directory, withIntermediateDirectories: true)
     let lock = try await MaiFileLock.acquire(url: url.appendingPathExtension("lock"))
     defer { withExtendedLifetime(lock) {} }
     var value = try snapshot()
     let old = value
     let result = try edit(&value)
-    if value != old { try JSONEncoder().encode(value).write(to: url, options: .atomic) }
+    guard value != old else { return result }
+    let staging = directory.appendingPathComponent(".pmai-reminders-\(UUID()).json")
+    guard manager.createFile(atPath: staging.path, contents: try JSONEncoder().encode(value),
+      attributes: [.posixPermissions: 0o600]) else { throw CocoaError(.fileWriteUnknown) }
+    defer { try? manager.removeItem(at: staging) }
+    try MaiFileReplacement.replaceItem(at: url, withItemAt: staging)
     return result
   }
 }
