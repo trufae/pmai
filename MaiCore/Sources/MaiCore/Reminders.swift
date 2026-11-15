@@ -66,7 +66,9 @@ public enum ReminderDate {
     }
     let parts = value.prefix(10).split(separator: "-").compactMap { Int($0) }
     let components = DateComponents(year: parts[0], month: parts[1], day: parts[2])
-    guard components.isValidDate(in: Calendar(identifier: .gregorian)) else {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+    guard components.isValidDate(in: calendar) else {
       throw ReminderError.invalidDate
     }
     let formatter = ISO8601DateFormatter()
