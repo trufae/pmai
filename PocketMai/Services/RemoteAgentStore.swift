@@ -28,6 +28,16 @@ struct RemoteAgentBookmark: Codable, Identifiable, Sendable {
     return workspace?.folders.first?.cwd
   }
 
+  func folderLabel(for cwd: String) -> String? {
+    guard !cwd.isEmpty else { return nil }
+    let folders = workspace?.folders ?? []
+    let name = ACPWorkspaceFolder.displayName(
+      for: cwd, name: folders.first(where: { $0.cwd == cwd })?.name)
+    return folders.contains {
+      $0.cwd != cwd && ACPWorkspaceFolder.displayName(for: $0.cwd, name: $0.name) == name
+    } ? cwd : name
+  }
+
   func connection(token: String, cwd: String) throws -> RemoteHostConnection {
     var connection: RemoteHostConnection
     if backend == .openCode {
@@ -392,8 +402,7 @@ final class RemoteAgentStore {
     if host.workspace == nil {
       let paths = [host.cwd] + (host.conversations ?? []).map(\.cwd)
       for cwd in paths where !cwd.isEmpty && !folders.contains(where: { $0.cwd == cwd }) {
-        folders.append(
-          .init(cwd: cwd, name: AgentProject.defaultName(forWorkingDirectory: cwd) ?? cwd))
+        folders.append(.init(cwd: cwd, name: ""))
       }
     }
     var latest: [String: Date] = [:]
@@ -404,7 +413,9 @@ final class RemoteAgentStore {
     for session in host.workspace?.sessions ?? [] { record(session.cwd, session.updatedAt) }
     for chat in host.conversations ?? [] { record(chat.cwd, chat.updatedAt) }
     for index in folders.indices {
-      folders[index].updatedAt = [folders[index].updatedAt, latest[folders[index].cwd]]
+      let folder = folders[index]
+      folders[index].name = ACPWorkspaceFolder.displayName(for: folder.cwd, name: folder.name)
+      folders[index].updatedAt = [folder.updatedAt, latest[folder.cwd]]
         .compactMap { $0 }.max()
     }
     return FolderPinning.ordered(folders, pins: host.pinnedFolderPaths ?? [], id: \.cwd)
@@ -677,6 +688,16 @@ final class RemoteAgentChat {
   }
 
   var canSend: Bool { connected && !busy && !isOffline() }
+
+  var providerModelLabel: String {
+    let provider = configurationOptions.first { $0.id == "provider" }
+    let model = configurationOptions.first { $0.category == "model" || $0.id == "model" }
+    return [provider, model].compactMap { option -> String? in
+      guard let option, let value = AgentTooling.firstNonEmpty(option.currentValue.stringValue)
+      else { return nil }
+      return AgentTooling.firstNonEmpty(option.choices.first { $0.id == value }?.name, value)
+    }.joined(separator: " · ")
+  }
 
   /// A disconnected remote can reconnect when the person submits a draft.
   /// The actual prompt remains pending until that connection completes.

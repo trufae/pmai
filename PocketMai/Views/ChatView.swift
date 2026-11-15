@@ -148,6 +148,9 @@ struct ChatView: View {
         if let remoteChat { onRemoteChatReady(remoteChat) }
         reconnectRemoteChat()
       }
+      .task(id: remoteChat?.connected) {
+        await remoteChat?.refreshConfiguration()
+      }
       .onChange(of: remoteHosts?.selectedConversation?.cwd) { _, _ in
         guard let remoteHosts, let host = remoteHosts.selectedHost,
           let draft = remoteHosts.selectedConversation, let chat = remoteChat,
@@ -668,14 +671,30 @@ struct ChatView: View {
   private var chatTitleLabel: some View {
     HStack(spacing: 6) {
       if keepAwake { AwakeIndicator() }
-      Text(
-        currentConversation?.displayTitle
-          ?? currentConversationSummary?.displayTitle
-          ?? "Chat"
-      )
-      .font(.headline)
-      .lineLimit(1)
-      .foregroundStyle(remoteChat.map { $0.connected ? Color.primary : .red } ?? .primary)
+      VStack(spacing: 2) {
+        Text(
+          currentConversation?.displayTitle
+            ?? currentConversationSummary?.displayTitle
+            ?? "Chat"
+        )
+        .font(.headline)
+        .lineLimit(1)
+        .foregroundStyle(remoteChat.map { $0.connected ? Color.primary : .red } ?? .primary)
+        if let remoteChat {
+          let host = remoteHosts?.selectedHost ?? remoteChat.bookmark
+          let providerModel = remoteChat.providerModelLabel
+          HStack(spacing: 4) {
+            Text(host.folderLabel(for: remoteChat.conversation.cwd) ?? "No folder selected")
+              .truncationMode(.head)
+              .layoutPriority(1)
+            if !providerModel.isEmpty { Text("· \(providerModel)") }
+          }
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .lineLimit(1)
+          .accessibilityHidden(true)
+        }
+      }
       if isLoadingCurrentLocalModel {
         ProgressView().controlSize(.mini)
           .accessibilityLabel("Loading local model into memory")
@@ -708,7 +727,11 @@ struct ChatView: View {
   }
 
   private var providerSubtitle: String {
-    if let remoteChat { return "\(remoteChat.bookmark.name) · \(remoteChat.status)" }
+    if let remoteChat {
+      let folder = AgentTooling.firstNonEmpty(remoteChat.conversation.cwd) ?? "No folder selected"
+      return [remoteChat.bookmark.name, folder, remoteChat.providerModelLabel, remoteChat.status]
+        .filter { !$0.isEmpty }.joined(separator: " · ")
+    }
     if store.isCompacting { return "Compacting…" }
     if isLoadingConversation { return "Loading…" }
     if isLoadingCurrentLocalModel { return "Loading local model into memory…" }
@@ -2370,7 +2393,7 @@ struct ChatView: View {
       ForEach(hosts.recentConversations) { chat in
         PreviousConversationSuggestionButton(
           title: chat.title, updatedAt: chat.updatedAt,
-          folderName: hosts.folders.first { $0.cwd == chat.cwd }?.name ?? chat.cwd,
+          folderName: hosts.selectedHost?.folderLabel(for: chat.cwd) ?? "No folder selected",
           systemImage: "folder", tint: .accentColor,
           isMostRecent: hosts.recentConversations.last?.id == chat.id
         ) {

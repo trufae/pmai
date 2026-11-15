@@ -316,6 +316,29 @@ final class RemoteHostTests: XCTestCase {
     }
   }
 
+  func testCachedRemoteFoldersUseTheirPathsWhenNamesAreBlankOrAmbiguous() throws {
+    let host = RemoteAgentBookmark(
+      name: "Worker", url: try XCTUnwrap(URL(string: "https://worker.example")), cwd: "/work/project",
+      workspace: .init(folders: [
+        .init(cwd: "/work/project", name: " \n "),
+        .init(cwd: "/other/project", name: "project"),
+        .init(cwd: "/", name: ""),
+        .init(cwd: "/work/notes", name: "Notes"),
+      ]), backend: .openCode)
+    try withStore([host]) { store, _ in
+      let navigation = HostNavigationStore(remotes: store)
+      navigation.selectHost(host.id, isOffline: true)
+      XCTAssertEqual(
+        navigation.folders(matching: "project", sortedBy: .name).map(\.cwd),
+        ["/other/project", "/work/project"])
+      let cached = try XCTUnwrap(navigation.selectedHost)
+      XCTAssertEqual(cached.folderLabel(for: "/work/project"), "/work/project")
+      XCTAssertEqual(cached.folderLabel(for: "/other/project"), "/other/project")
+      XCTAssertEqual(cached.folderLabel(for: "/work/notes"), "Notes")
+      XCTAssertEqual(cached.folderLabel(for: "/"), "/")
+    }
+  }
+
   func testFolderSortingKeepsPinsFirstAndUnknownDatesLast() throws {
     let early = Date(timeIntervalSince1970: 100)
     let late = Date(timeIntervalSince1970: 200)
