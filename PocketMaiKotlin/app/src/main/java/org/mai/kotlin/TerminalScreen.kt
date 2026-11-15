@@ -86,14 +86,14 @@ import org.connectbot.terminal.VTermKey
                         TextButton(onClick = session::reconnect) { Text("Reconnect") }
                     }
                 }
-                var font by remember { mutableFloatStateOf(preferences.getFloat("terminalFontSize", 14f).coerceIn(8f, 32f)) }
+                var font by remember { mutableFloatStateOf(preferences.getFloat("terminalFontSize", 14f).coerceIn(4f, 32f)) }
                 TerminalViewport(session, font.sp, Modifier.weight(1f).fillMaxWidth(),
                     swipeKeys = session.canInput && session.interactive && when (swipeMode) {
                         "keys" -> true
                         "history" -> false
                         else -> session.applicationGestures
                     },
-                    onZoom = { font = (font * it).coerceIn(8f, 32f) },
+                    onZoom = { font = (font * it).coerceIn(4f, 32f) },
                     onZoomFinished = { preferences.edit().putFloat("terminalFontSize", font).apply() })
                 if (!session.interactive) Text(session.status, Modifier.padding(horizontal = 12.dp), style = MaterialTheme.typography.labelSmall)
                 TerminalKeyBar(session, onHistory = { history = true })

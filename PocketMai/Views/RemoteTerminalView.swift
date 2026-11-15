@@ -417,7 +417,7 @@ struct RemoteTerminalView: View {
       .simultaneousGesture(MagnifyGesture()
         .onChanged { value in
           if pinchBase == nil { pinchBase = fontSize }
-          fontSize = min(32, max(8, (pinchBase ?? fontSize) * value.magnification))
+          fontSize = min(32, max(4, (pinchBase ?? fontSize) * value.magnification))
         }
         .onEnded { _ in fontSize = fontSize.rounded(); pinchBase = nil })
       if let active { TerminalStatus(controller: active) }
