@@ -65,6 +65,16 @@ events; a `resync` event means refresh `status()` and `pendingPairings()`. Cance
 observation does not close the endpoint. Avoid making an indefinitely running
 event task the sole owner of the endpoint; close it when your feature stops.
 
+A forward ID means the local listener was created. Each accepted TCP socket
+emits `tunnel_ready` after the remote destination connects, or `tunnel_error`
+when setup or forwarding fails. Forward events provide `peer` and `tunnel`;
+failures also carry `stage`, `error`, and `retryable`. Before stopping the
+tunnel, query the last failure with
+`command(["op": .string("tunnel_failure"), "id": .string(tunnel)])`. This
+returns the error event or JSON null and works even when local socket closure
+arrives ahead of the event. A listener may serve multiple sockets, so use a
+separate tunnel per socket if the caller needs unambiguous failure attribution.
+
 Typed methods cover invitations, pairing approval/rejection/cancellation, peers,
 policies, forwards, reverse forwards, SOCKS, VPN sessions and packets. `command`
 accepts a Sendable `[String: JSONValue]` for protocol extensions. Core errors throw

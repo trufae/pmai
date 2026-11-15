@@ -1,6 +1,6 @@
 # Forwiroh SwiftPM dependency
 
-`Forwiroh/` contains the small SwiftPM **0.1.5** release package from
+`Forwiroh/` contains the small SwiftPM **0.1.6** release package from
 https://github.com/trufae/forwiroh/releases. The Swift sources and license are
 vendored; `Artifacts/manifest.json` pins immutable release binary URLs and
 SHA-256 checksums. SwiftPM fetches only the Apple XCFramework on a Mac or the
@@ -23,4 +23,4 @@ set `native` explicitly, including when run on a Mac.
 Maintainers can set `PMAI_FORWIROH_PATH` to a prepared SDK package when testing
 upstream fixes before release. Ordinary builds use the pinned vendored package.
 
-Release package SHA-256: `ea4112463935fc35c4f3c692f21d9fb9c7ea59558a3cb0cb0f9c78a904681137`.
+Release package SHA-256: `450b6f6533f8bd85c7de9e48d0251273a30dc668684dc4a82ec51704e051250c`.
