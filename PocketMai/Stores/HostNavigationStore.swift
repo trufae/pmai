@@ -13,6 +13,7 @@ enum RemoteFolderSortOrder: String, CaseIterable, Identifiable {
 
 enum HostConnectionState: String {
   case connected = "Connected"
+  case connecting = "Connecting…"
   case failed = "Connection broken"
   case disconnected = "Not connected"
 }
@@ -77,6 +78,11 @@ final class HostNavigationStore {
   func connectionState(_ id: UUID, isOffline: Bool) -> HostConnectionState {
     guard !isOffline else { return .disconnected }
     if isConnected(id) { return .connected }
+    if (selectedHostID == id && loading)
+      || (activeChat?.bookmark.id == id && activeChat?.isConnecting == true)
+    {
+      return .connecting
+    }
     return remotes.failedHostIDs.contains(id) ? .failed : .disconnected
   }
 

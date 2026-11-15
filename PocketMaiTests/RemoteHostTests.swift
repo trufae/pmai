@@ -732,6 +732,8 @@ final class RemoteHostTests: XCTestCase {
       XCTAssertEqual(hosts.connectionState(original.id, isOffline: false), .disconnected)
       // No credential was stored for this bookmark, so discovery fails before networking.
       hosts.selectHost(original.id, isOffline: false)
+      XCTAssertEqual(hosts.connectionState(original.id, isOffline: false), .connecting)
+      XCTAssertEqual(hosts.connectionState(original.id, isOffline: true), .disconnected)
       for _ in 0..<500 {
         if !hosts.loading { break }
         try await Task.sleep(for: .milliseconds(10))
@@ -751,7 +753,7 @@ final class RemoteHostTests: XCTestCase {
       hosts.selectHost(nil, isOffline: false)
       XCTAssertEqual(hosts.connectionState(original.id, isOffline: false), .failed)
       hosts.reconnect(original.id, isOffline: false)
-      XCTAssertEqual(hosts.connectionState(original.id, isOffline: false), .disconnected)
+      XCTAssertEqual(hosts.connectionState(original.id, isOffline: false), .connecting)
       hosts.disconnect(original.id)
       await Task.yield()
       XCTAssertEqual(hosts.connectionState(original.id, isOffline: false), .disconnected)
@@ -767,6 +769,7 @@ final class RemoteHostTests: XCTestCase {
         bookmark: original, conversation: .init(cwd: "/work"), store: store)
       hosts.activeChat = chat
       chat.connect()
+      XCTAssertEqual(hosts.connectionState(original.id, isOffline: false), .connecting)
       for _ in 0..<500 {
         if !chat.busy { break }
         try await Task.sleep(for: .milliseconds(10))

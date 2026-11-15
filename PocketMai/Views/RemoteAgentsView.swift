@@ -7,32 +7,44 @@ import VisionKit
 
 struct RemoteAgentsView: View {
   @EnvironmentObject private var appStore: AppStore
+  @Environment(HostNavigationStore.self) private var hosts: HostNavigationStore?
   @State private var store = RemoteAgentStore.shared
   @State private var adding = false
   @State private var editing: RemoteAgentBookmark?
   @State private var renaming: RemoteAgentBookmark?
+  @State private var deleting: RemoteAgentBookmark?
   @State private var terminalLocation: RemoteTerminalLocation?
 
   var body: some View {
     List {
       Section {
         ForEach(store.connections) { connection in
+          let connecting = hosts?.connectionState(
+            connection.id, isOffline: appStore.settings.isOffline) == .connecting
           Button {
             editing = connection
           } label: {
-            VStack(alignment: .leading) {
-              Text(connection.name)
-              Text(connection.url.absoluteString).font(.caption).foregroundStyle(.secondary)
-              Text(connection.cwd).font(.caption).foregroundStyle(.secondary)
+            HStack {
+              VStack(alignment: .leading) {
+                Text(connection.name)
+                Text(connection.url.absoluteString).font(.caption).foregroundStyle(.secondary)
+                Text(connection.cwd).font(.caption).foregroundStyle(.secondary)
+              }
+              if connecting {
+                Spacer()
+                ProgressView().controlSize(.small).accessibilityHidden(true)
+              }
             }
           }
           .foregroundStyle(.primary)
+          .accessibilityValue(connecting ? HostConnectionState.connecting.rawValue : "")
           .contextMenu {
             RemoteHostMenu(
               host: connection, store: store, isOffline: appStore.settings.isOffline,
               rename: { renaming = connection },
               terminal: { if let cwd = connection.terminalWorkingDirectory { terminalLocation = .init(host: connection, cwd: cwd) } },
-              edit: { editing = connection })
+              edit: { editing = connection },
+              delete: { deleting = connection })
           }
         }
         Button("Add Remote Host", systemImage: "plus") { adding = true }
@@ -48,6 +60,7 @@ struct RemoteAgentsView: View {
     .sheet(item: $editing) { host in RemoteAgentConnectionView(initialHost: host) }
     .fullScreenCover(item: $terminalLocation) { RemoteTerminalView(location: $0).environmentObject(appStore) }
     .modifier(RemoteHostRenameModifier(host: $renaming))
+    .modifier(RemoteHostDeletionModifier(host: $deleting, store: store))
   }
 }
 
@@ -59,6 +72,7 @@ struct RemoteHostMenu: View {
   var connect: (() -> Void)?
   var terminal: (() -> Void)?
   let edit: () -> Void
+  let delete: () -> Void
 
   var body: some View {
     Button("Rename", systemImage: "character.cursor.ibeam", action: rename)
@@ -75,6 +89,7 @@ struct RemoteHostMenu: View {
     }
     Divider()
     Button("Edit Host", systemImage: "pencil", action: edit)
+    Button("Delete Host", systemImage: "trash", role: .destructive) { delete() }
   }
 }
 
@@ -106,6 +121,38 @@ struct RemoteHostRenameModifier: ViewModifier {
   }
 }
 
+struct RemoteHostDeletionModifier: ViewModifier {
+  @Binding var host: RemoteAgentBookmark?
+  let store: RemoteAgentStore
+  var onDeleted: (() -> Void)?
+  @State private var notice: ToastNotice?
+
+  func body(content: Content) -> some View {
+    content
+      .alert(
+        "Delete Host?",
+        isPresented: Binding(get: { host != nil }, set: { if !$0 { host = nil } }),
+        presenting: host
+      ) { host in
+        Button("Cancel", role: .cancel) {}
+        Button("Delete Host", role: .destructive) {
+          guard store.remove(host.id) else {
+            notice = ToastNotice(store.error ?? "Couldn't delete host.")
+            return
+          }
+          if let onDeleted {
+            onDeleted()
+          } else {
+            notice = ToastNotice("Deleted \(host.name)", style: .success)
+          }
+        }
+      } message: { host in
+        Text("This removes \(host.name) and its saved chats from this device.")
+      }
+      .toast($notice)
+  }
+}
+
 struct RemoteAgentConnectionView: View {
   var onAdded: ((UUID) -> Void)? = nil
   var initialHost: RemoteAgentBookmark? = nil
@@ -126,7 +173,7 @@ struct RemoteAgentConnectionView: View {
   @State private var importing = false
   @State private var importTask: Task<Void, Never>?
   @State private var advanced = false
-  @State private var deleting = false
+  @State private var deleting: RemoteAgentBookmark?
   @State private var agentAccess = false
   @State private var advertisedIP: (url: URL, address: String)?
   @State private var repairHostID: UUID?
@@ -222,9 +269,9 @@ struct RemoteAgentConnectionView: View {
         } footer: {
           Text("Permit the native remote tool in local conversations to access this host’s files and run programs. Tool approvals still apply.")
         }
-        if initialHost != nil {
+        if let initialHost {
           Section {
-            Button("Delete Host", systemImage: "trash", role: .destructive) { deleting = true }
+            Button("Delete Host", systemImage: "trash", role: .destructive) { deleting = initialHost }
               .disabled(importing)
           }
         }
@@ -269,16 +316,8 @@ struct RemoteAgentConnectionView: View {
           }
         }
       }
-      .alert("Delete Host?", isPresented: $deleting) {
-        Button("Delete Host", role: .destructive) {
-          guard let host = initialHost else { return }
-          RemoteAgentStore.shared.remove(host.id)
-          dismiss()
-        }
-        Button("Cancel", role: .cancel) {}
-      } message: {
-        Text("This removes the saved connection and its chats from this device.")
-      }
+      .modifier(
+        RemoteHostDeletionModifier(host: $deleting, store: .shared, onDeleted: { dismiss() }))
       .task {
         if let host = initialHost {
           name = host.name

@@ -566,12 +566,19 @@ final class RemoteAgentStore {
     connections = hosts
   }
 
-  func remove(_ id: UUID) {
+  @discardableResult
+  func remove(_ id: UUID) -> Bool {
     Task { await PocketMaiRemoteTools.shared.revoke(host: id.uuidString.lowercased()) }
     SecItemDelete(Self.keychainQuery(id) as CFDictionary)
     connections.removeAll { $0.id == id }
     failedHostIDs.remove(id)
-    do { try save() } catch { self.error = error.localizedDescription }
+    do {
+      try save()
+      return true
+    } catch {
+      self.error = error.localizedDescription
+      return false
+    }
   }
 
   private func save() throws {
@@ -655,6 +662,7 @@ final class RemoteAgentChat {
   var error: String?
   var busy = false
   var connected = false
+  private(set) var isConnecting = false
   private(set) var responding = false
   private(set) var injecting = false
   var unsentPrompt: String?
@@ -1017,6 +1025,7 @@ final class RemoteAgentChat {
     busy = true
     responding = false
     error = nil
+    isConnecting = true
     status = "Connecting…"
     historyRewindSupported = false
     configurationLoaded = false
@@ -1049,6 +1058,7 @@ final class RemoteAgentChat {
         if connected { reconnectDelay = 1 }
         store.setConnectionFailed(!connected, for: bookmark.id)
         connectingHistory = nil
+        isConnecting = false
         status = connected ? (responding ? "Responding…" : "Connected") : "Disconnected"
         if connected {
           catalogTask = Task { [weak self] in await self?.refreshPromptCatalog() }
@@ -1063,6 +1073,7 @@ final class RemoteAgentChat {
         historyRewindSupported = false
         self.error = error.localizedDescription
         connected = false
+        isConnecting = false
         if !RemoteConnectionRecovery.shouldRetry(error) { shouldReconnect = false }
         if !(error is CancellationError) { store.setConnectionFailed(true, for: bookmark.id) }
         status = "Disconnected"
@@ -1227,6 +1238,7 @@ final class RemoteAgentChat {
       pendingOperation?.cancel()
     }
     connected = false
+    isConnecting = false
     historyRewindSupported = false
     configurationOptions = []
     settingsLoading = false
@@ -1269,6 +1281,7 @@ final class RemoteAgentChat {
     configurationLoaded = false
     pendingPrompt = nil
     connected = false
+    isConnecting = false
     busy = false
     responding = false
     injecting = false

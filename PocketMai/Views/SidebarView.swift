@@ -1819,7 +1819,7 @@ struct SidebarFolderRow: View {
   let systemImage: String
   var iconColor: Color? = nil
   let isSelected: Bool
-  var connectionStatus: String? = nil
+  var connectionStatus: HostConnectionState? = nil
   var isPinned = false
   var updatedAt: Date? = nil
   let action: () -> Void
@@ -1827,10 +1827,16 @@ struct SidebarFolderRow: View {
   var body: some View {
     Button(action: action) {
       HStack(spacing: 10) {
-        Image(systemName: systemImage)
-          .font(.subheadline)
-          .foregroundStyle(iconColor ?? Color.secondary)
-          .frame(width: 18)
+        Group {
+          if connectionStatus == .connecting {
+            ProgressView().controlSize(.small).accessibilityHidden(true)
+          } else {
+            Image(systemName: systemImage)
+              .font(.subheadline)
+              .foregroundStyle(iconColor ?? Color.secondary)
+          }
+        }
+        .frame(width: 18)
         VStack(alignment: .leading, spacing: 4) {
           Text(title)
             .font(.body.weight(.medium))
@@ -1868,7 +1874,7 @@ struct SidebarFolderRow: View {
     .accessibilityValue(
       [
         isSelected ? "Selected" : nil, isPinned ? "Pinned" : nil,
-        connectionStatus,
+        connectionStatus?.rawValue,
       ]
         .compactMap { $0 }.joined(separator: ", "))
   }
