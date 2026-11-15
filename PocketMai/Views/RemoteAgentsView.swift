@@ -1,6 +1,7 @@
 import AVFoundation
 import MaiACP
 import MaiCore
+import Network
 import SwiftUI
 import VisionKit
 
@@ -127,10 +128,27 @@ struct RemoteAgentConnectionView: View {
   @State private var advanced = false
   @State private var deleting = false
   @State private var agentAccess = false
+  @State private var advertisedIP: (url: URL, address: String)?
 
   private enum HostType: String, CaseIterable { case pocketMai = "PocketMai", webSocketACP = "WebSocketACP", openCode = "OpenCode" }
   private var hostType: HostType {
     backend == .openCode ? .openCode : connectionProtocol == .local ? .webSocketACP : .pocketMai
+  }
+
+  private var hostIPAddress: String? {
+    guard let url = URL(string: address.trimmingCharacters(in: .whitespacesAndNewlines)),
+      backend == .openCode || connectionProtocol == .local else { return nil }
+    let advertisedAddress = backend == .openCode && advertisedIP?.url == url
+      ? advertisedIP?.address : nil
+    return Self.numericIPAddress(url) ?? advertisedAddress
+  }
+
+  private static func numericIPAddress(_ url: URL) -> String? {
+    guard let host = url.host(percentEncoded: false)?.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+    else { return nil }
+    if let ip = IPv4Address(host), ip.rawValue.first != 127, host != "0.0.0.0" { return host }
+    if let ip = IPv6Address(host), ip != IPv6Address("::"), ip != IPv6Address("::1") { return host }
+    return nil
   }
 
   var body: some View {
@@ -145,15 +163,6 @@ struct RemoteAgentConnectionView: View {
           }
           .pickerStyle(.menu)
           .disabled(importing)
-          Button {
-            Task { await scan() }
-          } label: {
-            Label("Scan Host QR", systemImage: "qrcode.viewfinder")
-              .labelStyle(.titleAndIcon)
-          }
-          .buttonStyle(.borderedProminent)
-          .controlSize(.regular)
-          .disabled(importing || !DataScannerViewController.isSupported)
           VStack(alignment: .leading, spacing: 8) {
             Text(hostType == .pocketMai ? "In the pmai REPL, run:" : "On your computer, run:")
             Text(hostType == .openCode ? "opencode pair --remote" : hostType == .webSocketACP
@@ -183,6 +192,11 @@ struct RemoteAgentConnectionView: View {
             Label("Connection details added", systemImage: "checkmark.circle")
               .font(.footnote).foregroundStyle(.secondary)
           }
+          if let hostIPAddress {
+            LabeledContent("IP Address") {
+              Text(hostIPAddress).monospaced().textSelection(.enabled)
+            }
+          }
         }
         Section {
           DisclosureGroup("Advanced", isExpanded: $advanced) {
@@ -208,6 +222,16 @@ struct RemoteAgentConnectionView: View {
           }
         }
         if let error { Text(error).foregroundStyle(.red) }
+      }
+      .contentMargins(.bottom, 80, for: .scrollContent)
+      .overlay(alignment: .bottomTrailing) {
+        FloatingActionIcon(
+          systemImage: "qrcode.viewfinder", accessibilityLabel: "Scan Host QR", isActive: true
+        ) {
+          Task { await scan() }
+        }
+        .disabled(importing || !DataScannerViewController.isSupported)
+        .padding(16)
       }
       .navigationTitle(initialHost == nil ? "Add Host" : "Edit Host")
       .navigationBarTitleDisplayMode(.inline)
@@ -261,6 +285,13 @@ struct RemoteAgentConnectionView: View {
           agentAccess = host.agentAccess == true
           do { token = try RemoteAgentStore.shared.token(for: host.id) } catch {
             self.error = error.localizedDescription
+          }
+          if backend == .openCode, hostIPAddress == nil, !appStore.settings.isOffline,
+            let connection = try? OpenCodeConnection(url: host.url, token: token),
+            let urls = try? await connection.advertisedURLs(),
+            let ip = urls.lazy.compactMap(Self.numericIPAddress).first
+          {
+            advertisedIP = (host.url, ip)
           }
         }
       }
@@ -400,6 +431,7 @@ struct RemoteAgentConnectionView: View {
             backend = .openCode
             name = initialHost?.name ?? profile.name
             address = profile.url.absoluteString
+            advertisedIP = link.urls.lazy.compactMap(Self.numericIPAddress).first.map { (profile.url, $0) }
             token = profile.token
             cwd = initialHost?.cwd ?? profile.cwd
             requiresApproval = false
