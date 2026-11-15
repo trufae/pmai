@@ -33,6 +33,7 @@ struct HostsView: View, Equatable {
   @State private var adding = false
   @State private var editing: RemoteAgentBookmark?
   @State private var renaming: RemoteAgentBookmark?
+  @State private var deleting: RemoteAgentBookmark?
   @State private var terminalLocation: RemoteTerminalLocation?
 
   nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
@@ -74,6 +75,7 @@ struct HostsView: View, Equatable {
     .sheet(item: $editing) { host in RemoteAgentConnectionView(initialHost: host) }
     .fullScreenCover(item: $terminalLocation) { RemoteTerminalView(location: $0).environmentObject(appStore) }
     .modifier(RemoteHostRenameModifier(host: $renaming))
+    .modifier(RemoteHostDeletionModifier(host: $deleting, store: hosts.remotes))
   }
 
   private func connectionState(_ id: UUID) -> HostConnectionState {
@@ -91,7 +93,8 @@ struct HostsView: View, Equatable {
         rename: { renaming = host },
         connect: { hosts.reconnect(host.id, isOffline: appStore.settings.isOffline) },
         terminal: { if let cwd = host.terminalWorkingDirectory { terminalLocation = .init(host: host, cwd: cwd) } },
-        edit: { editing = host })
+        edit: { editing = host },
+        delete: { deleting = host })
     }
   }
 
@@ -103,7 +106,7 @@ struct HostsView: View, Equatable {
       title: title, subtitle: subtitle, systemImage: image,
       iconColor: iconColor,
       isSelected: selected,
-      connectionStatus: state?.rawValue,
+      connectionStatus: state,
       isPinned: id.map { hosts.isHostPinned($0) } ?? false
     ) {
       onSelectHost(id)

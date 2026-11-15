@@ -399,6 +399,7 @@ struct ContentView: View {
     }
     .tint(selectedHostTint)
     .accentColor(selectedHostTint)
+    .environment(hosts)
   }
 
   private func updateRemoteConnections() async {

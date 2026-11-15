@@ -668,6 +668,12 @@ struct ChatView: View {
     }
   }
 
+  private var isConnectingToRemoteHost: Bool {
+    guard let remoteChat, !remoteChat.connected, !store.settings.isOffline else { return false }
+    return remoteChat.isConnecting
+      || (remoteHosts?.selectedHostID == remoteChat.bookmark.id && remoteHosts?.loading == true)
+  }
+
   private var chatTitleLabel: some View {
     HStack(spacing: 6) {
       if keepAwake { AwakeIndicator() }
@@ -695,7 +701,9 @@ struct ChatView: View {
           .accessibilityHidden(true)
         }
       }
-      if isLoadingCurrentLocalModel {
+      if isConnectingToRemoteHost {
+        ProgressView().controlSize(.mini).accessibilityHidden(true)
+      } else if isLoadingCurrentLocalModel {
         ProgressView().controlSize(.mini)
           .accessibilityLabel("Loading local model into memory")
       }
@@ -729,7 +737,9 @@ struct ChatView: View {
   private var providerSubtitle: String {
     if let remoteChat {
       let folder = AgentTooling.firstNonEmpty(remoteChat.conversation.cwd) ?? "No folder selected"
-      return [remoteChat.bookmark.name, folder, remoteChat.providerModelLabel, remoteChat.status]
+      let status = isConnectingToRemoteHost
+        ? HostConnectionState.connecting.rawValue : remoteChat.status
+      return [remoteChat.bookmark.name, folder, remoteChat.providerModelLabel, status]
         .filter { !$0.isEmpty }.joined(separator: " · ")
     }
     if store.isCompacting { return "Compacting…" }
