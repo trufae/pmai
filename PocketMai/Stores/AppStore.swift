@@ -223,6 +223,7 @@ final class AppStore: ObservableObject {
   }
   let speechTranscriptionPolicy = SpeechTranscriptionPolicy()
   private var networkMonitor: NetworkAvailabilityMonitor?
+  @Published private(set) var networkPathRevision = 0
   @Published var respondingConversationIDs: Set<UUID> = []
   @Published private(set) var loadingLocalModelConversationIDs: Set<UUID> = []
   @Published private(set) var queuedUserMessagesByConversationID: [UUID: [QueuedChatMessage]] = [:] {
@@ -684,8 +685,9 @@ final class AppStore: ObservableObject {
   }
 
   func updateNetworkAvailability(_ available: Bool) {
-    guard settings.networkAvailable != available else { return }
-    settings.networkAvailable = available
+    if settings.networkAvailable != available { settings.networkAvailable = available }
+    // A Wi-Fi to cellular handoff can keep both paths satisfied.
+    networkPathRevision &+= 1
   }
 
   func setAirplaneMode(_ enabled: Bool) {
@@ -6767,6 +6769,7 @@ final class AppStoreViewObservation: ObservableObject {
       observe(store.$settings)
     case .content:
       observe(store.$settings)
+      observe(store.$networkPathRevision)
       observe(store.$errorMessage)
       observe(store.$commandOutput)
       observe(store.$pendingWebXDCImports)
