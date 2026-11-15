@@ -113,10 +113,8 @@ public actor OpenCodeClient: RemoteSessionClient {
         snapshot.folders.append(
           .init(
             cwd: path,
-            name: path == directory
-              ? fields["name"]?.stringValue
-                ?? URL(fileURLWithPath: path).lastPathComponent
-              : URL(fileURLWithPath: path).lastPathComponent,
+            name: ACPWorkspaceFolder.displayName(
+              for: path, name: path == directory ? fields["name"]?.stringValue : nil),
             updatedAt: fields["time"]?.objectValue?["updated"]?.numberValue.map {
               Date(timeIntervalSince1970: $0 / 1000)
             }))
@@ -144,7 +142,7 @@ public actor OpenCodeClient: RemoteSessionClient {
             }))
         if !snapshot.folders.contains(where: { $0.cwd == directory }) {
           snapshot.folders.append(
-            .init(cwd: directory, name: URL(fileURLWithPath: directory).lastPathComponent))
+            .init(cwd: directory, name: ACPWorkspaceFolder.displayName(for: directory)))
         }
       }
       cursor = page.objectValue?["cursor"]?.objectValue?["next"]?.stringValue

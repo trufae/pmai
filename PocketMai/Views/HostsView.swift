@@ -259,8 +259,7 @@ struct RemoteConversationsView: View, Equatable {
 
   var body: some View {
     SidebarPanel(
-      title: hosts.folders.first { $0.cwd == hosts.selectedFolderID }?.name
-        ?? hosts.selectedFolderID.flatMap(AgentProject.defaultName(forWorkingDirectory:))
+      title: hosts.selectedFolderID.flatMap { hosts.selectedHost?.folderLabel(for: $0) }
         ?? "Conversations",
       backTitle: "Folders", onBack: onShowFolders
     ) {

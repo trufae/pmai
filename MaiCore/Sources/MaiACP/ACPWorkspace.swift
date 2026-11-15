@@ -20,6 +20,13 @@ public struct ACPWorkspaceFolder: Codable, Identifiable, Equatable, Sendable {
     self.updatedAt = updatedAt
   }
 
+  public static func displayName(for cwd: String, name: String? = nil) -> String {
+    if let name = AgentTooling.firstNonEmpty(name) { return name }
+    let path = RemoteWorkspacePath.resolve(cwd, relativeTo: cwd) ?? cwd
+    return AgentTooling.firstNonEmpty(path.split(separator: "/").last.map(String.init), path)
+      ?? "Folder"
+  }
+
   var json: JSONValue {
     var fields: [String: JSONValue] = ["cwd": .string(cwd), "name": .string(name)]
     if let icon { fields["icon"] = .string(icon) }
