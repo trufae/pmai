@@ -30,6 +30,17 @@ struct ContentView: View {
   @State private var isShowingBookmarksFolder = false
   @State private var sidebarIsCollapsed = false
 
+  private struct RemoteConnectionLifecycle: Equatable {
+    let phase: ScenePhase
+    let isOffline: Bool
+    let networkPathRevision: Int
+  }
+
+  private var remoteConnectionLifecycle: RemoteConnectionLifecycle {
+    .init(phase: scenePhase, isOffline: store.settings.isOffline,
+      networkPathRevision: store.networkPathRevision)
+  }
+
   var body: some View {
     GeometryReader { proxy in
       let layout = AdaptiveChatLayout(
@@ -366,26 +377,16 @@ struct ContentView: View {
       settingsStoreObservation.connect(to: store)
       screenshotService.store = store
       store.drainPendingSharedLaunchCommand()
-      hosts.resumeConnections(isOffline: store.settings.isOffline)
     }
     .onChange(of: scenePhase) { _, phase in
       store.handleScenePhaseChange(phase)
-      if phase == .background { hosts.suspendConnections() }
       if phase == .active {
-        hosts.resumeConnections(isOffline: store.settings.isOffline)
         store.refreshAppleIntelligenceAvailabilityInBackground()
         store.refreshLocalMLXModelsInBackground()
         store.drainPendingSharedLaunchCommand()
       }
     }
-    .onChange(of: store.settings.isOffline) { _, enabled in
-      if enabled {
-        hosts.suspendConnections()
-        Task { await ForwirohRemote.shared.close() }
-      } else {
-        hosts.resumeConnections(isOffline: false)
-      }
-    }
+    .task(id: remoteConnectionLifecycle) { await updateRemoteConnections() }
     .onChange(of: hosts.remotes.connections.map(\.id)) { _, ids in
       if let id = hosts.selectedHostID, !ids.contains(id) {
         hosts.selectHost(nil, isOffline: store.settings.isOffline)
@@ -398,6 +399,20 @@ struct ContentView: View {
     }
     .tint(selectedHostTint)
     .accentColor(selectedHostTint)
+  }
+
+  private func updateRemoteConnections() async {
+    guard !Task.isCancelled else { return }
+    if store.settings.isOffline {
+      hosts.suspendConnections()
+      await ForwirohRemote.shared.closeWhenOffline()
+    } else if scenePhase == .background {
+      hosts.suspendConnections()
+    } else if scenePhase == .active {
+      await ForwirohRemote.shared.networkChanged()
+      guard !Task.isCancelled, !store.settings.isOffline else { return }
+      hosts.resumeConnections(isOffline: false)
+    }
   }
 
   private var selectedHostTint: Color? {

@@ -306,6 +306,29 @@ public struct ForwirohPeerSummary: Sendable {
     }
     public func revoke(id: String) async throws { try await endpoint().revoke(peer: id) }
 
+    private var endpointRecoveryAvailable = true
+
+    public func networkChanged() async {
+      guard !Task.isCancelled else { return }
+      endpointRecoveryAvailable = true
+      try? await core?.networkChanged()
+    }
+
+    public func closeWhenOffline() async {
+      guard !Task.isCancelled else { return }
+      await close()
+    }
+
+    fileprivate func recoverEndpointAfterDialFailure(_ failed: Forwiroh) async {
+      #if os(iOS)
+        guard !Task.isCancelled, endpointRecoveryAvailable, core === failed,
+          startingTunnels == 0, tunnelDiagnostics.isEmpty else { return }
+        endpointRecoveryAvailable = false
+        // The next connection opens the same directory and reuses the saved identity.
+        await close()
+      #endif
+    }
+
     public func close() async {
       if let closing {
         await closing.value
@@ -373,6 +396,12 @@ public struct ForwirohPeerSummary: Sendable {
     #endif
   }
 
+  extension ForwirohRemote.Tunnel {
+    func recoverEndpointAfterDialFailure() async {
+      await owner.recoverEndpointAfterDialFailure(node)
+    }
+  }
+
 #else
   /// Other pmai transports remain available on platforms without SDK binaries.
   public actor ForwirohRemote {
@@ -390,6 +419,7 @@ public struct ForwirohPeerSummary: Sendable {
       public let url: URL
       func failure() async -> ForwirohConnectionError? { nil }
       public func close() async {}
+      func recoverEndpointAfterDialFailure() async {}
     }
     public func connect(url: URL) async throws -> Tunnel { throw Self.unavailable }
     public func serve(port: Int, onError: (@Sendable (String) async -> Void)? = nil) async throws -> URL {
@@ -400,6 +430,8 @@ public struct ForwirohPeerSummary: Sendable {
     public func approve(id: String, accept: Bool) async throws { throw Self.unavailable }
     public func peers() async throws -> [ForwirohPeerSummary] { throw Self.unavailable }
     public func revoke(id: String) async throws { throw Self.unavailable }
+    public func networkChanged() async {}
+    public func closeWhenOffline() async {}
     public func close() async {}
   }
 #endif

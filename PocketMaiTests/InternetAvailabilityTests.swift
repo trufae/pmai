@@ -65,6 +65,16 @@ final class InternetAvailabilityTests: XCTestCase {
     XCTAssertTrue(store.speechTranscriptionPolicy.allowsServerRecognition)
   }
 
+  func testNetworkPathRevisionAdvancesWhileAvailabilityStaysOnline() {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = AppStore(persistence: PersistenceStore(localBaseURL: root), monitorNetwork: false)
+    let revision = store.networkPathRevision
+    store.updateNetworkAvailability(true)
+    XCTAssertFalse(store.settings.isOffline)
+    XCTAssertEqual(store.networkPathRevision, revision + 1)
+  }
+
   func testLiveOfflinePolicyRejectsCallsFromAnOnlineSnapshot() async {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
