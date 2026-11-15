@@ -54,11 +54,13 @@ struct RemoteAgentBookmark: Codable, Identifiable, Sendable {
     onUpdate: (@Sendable (JSONValue) async -> Void)? = nil,
     onPermission: (@Sendable (JSONValue) async throws -> String?)? = nil,
     onPermissionResponse: (@Sendable (JSONValue) async throws -> ACPPermissionResponse?)? = nil,
-    onDisconnect: (@Sendable () async -> Void)? = nil
+    onDisconnect: (@Sendable () async -> Void)? = nil,
+    onConnectionFailure: (@Sendable (any Error) async -> Void)? = nil
   ) throws -> any RemoteSessionClient {
     try connection(token: token, cwd: cwd).makeSession(sessionID: sessionID, resumeID: resumeID,
       configuration: httpConfiguration, onUpdate: onUpdate, onPermission: onPermission,
-      onPermissionResponse: onPermissionResponse, onDisconnect: onDisconnect)
+      onPermissionResponse: onPermissionResponse, onDisconnect: onDisconnect,
+      onConnectionFailure: onConnectionFailure)
   }
 }
 
@@ -862,6 +864,9 @@ final class RemoteAgentChat {
       },
       onDisconnect: { [weak self] in
         await self?.connectionClosed(generation: generation)
+      },
+      onConnectionFailure: { [weak self] error in
+        await self?.connectionClosed(generation: generation, failure: error)
       })
   }
 
@@ -1107,7 +1112,7 @@ final class RemoteAgentChat {
     persist()
   }
 
-  private func connectionClosed(generation: Int) {
+  private func connectionClosed(generation: Int, failure: (any Error)? = nil) {
     // The connection attempt reports its own handshake failure.
     guard self.generation == generation, connected else { return }
     flushMessages()
@@ -1125,7 +1130,10 @@ final class RemoteAgentChat {
       unsentPrompt = pendingInjection
       self.pendingInjection = nil
       error = "Connection lost while sending. Check the restored conversation before resending."
+    } else if let failure {
+      error = failure.localizedDescription
     }
+    if let failure, !RemoteConnectionRecovery.shouldRetry(failure) { shouldReconnect = false }
     settingsLoading = false
     configurationLoaded = false
     pendingPrompt = nil

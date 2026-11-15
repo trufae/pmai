@@ -17,6 +17,8 @@ public enum RemoteConnectionRecovery {
   /// Invalid credentials and protocol/configuration errors need user action.
   public static func shouldRetry(_ error: any Error) -> Bool {
     if error is CancellationError { return false }
+    if let error = error as? ForwirohConnectionError { return error.retryable }
+    if error is JSONRPCTransportError { return true }
     if let error = error as? JSONRPCError {
       return error.code == JSONRPCError.internalError
     }

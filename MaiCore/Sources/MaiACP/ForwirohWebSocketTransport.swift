@@ -12,7 +12,7 @@ final class ForwirohWebSocketTransport: JSONRPCTransport, @unchecked Sendable {
   fileprivate static let maximumSize = 16 * 1024 * 1024
   private let lock = NSLock()
   private var closed = false
-  private var detail = ""
+  private var failure: (any Error)?
   private var channel: Channel?
   private var tasks: [Task<Void, Never>] = []
   private var upgradeResolved = false
@@ -66,7 +66,8 @@ final class ForwirohWebSocketTransport: JSONRPCTransport, @unchecked Sendable {
         } catch { self?.fail(error) }
       },
       Task { [weak self] in
-        do { try await Task.sleep(for: .seconds(30)) } catch { return }
+        // A cached stream, fresh peer dial, and new stream can each take 15 seconds.
+        do { try await Task.sleep(for: .seconds(60)) } catch { return }
         guard let self, !self.lock.withLock({ self.upgradeResolved }) else { return }
         self.fail(JSONRPCTransportError.timedOut("WebSocket upgrade"))
       },
@@ -77,11 +78,13 @@ final class ForwirohWebSocketTransport: JSONRPCTransport, @unchecked Sendable {
   }
 
   var isRunning: Bool { lock.withLock { !closed } }
-  var recentErrorOutput: String { lock.withLock { detail } }
+  var connectionError: (any Error)? { lock.withLock { failure } }
+  var recentErrorOutput: String { connectionError?.localizedDescription ?? "" }
+  func waitForUpgrade() async throws { try await ready.futureResult.get() }
   func messages() -> AsyncStream<JSONRPCMessage> { incoming.stream }
 
   func send(_ message: JSONRPCMessage) throws {
-    guard isRunning else { throw JSONRPCTransportError.closed }
+    guard isRunning else { throw connectionError ?? JSONRPCTransportError.closed }
     let data = try JSONEncoder().encode(message)
     guard data.count <= Self.maximumSize else {
       throw JSONRPCError.invalidParams("ACP message exceeds 16 MiB")
@@ -125,8 +128,19 @@ final class ForwirohWebSocketTransport: JSONRPCTransport, @unchecked Sendable {
     if complete { ready.completeWith(result) }
   }
   fileprivate func fail(_ error: any Error) {
-    lock.withLock { if !closed { detail = String(describing: error) } }
-    resolveUpgrade(.failure(error))
+    let failure: any Error
+    if error is IOError || error is ChannelError {
+      failure = ForwirohConnectionError(stage: .webSocket, retryable: true, detail: String(describing: error))
+    } else {
+      failure = error
+    }
+    let firstFailure = lock.withLock {
+      guard !closed, self.failure == nil else { return false }
+      self.failure = failure
+      return true
+    }
+    guard firstFailure else { return }
+    resolveUpgrade(.failure(failure))
     close()
   }
   fileprivate func received(_ bytes: Data) throws {
@@ -159,11 +173,15 @@ private final class UpgradeRequest: ChannelInboundHandler, RemovableChannelHandl
   }
   func channelRead(context: ChannelHandlerContext, data: NIOAny) {
     if case .head(let response) = unwrapInboundIn(data) {
-      owner.fail(JSONRPCError.invalidParams("ACP WebSocket upgrade rejected (\(response.status.code))"))
+      if response.status == .unauthorized {
+        owner.fail(ACPClientError.gatewayUnauthorized)
+      } else {
+        owner.fail(JSONRPCError.invalidParams("ACP WebSocket upgrade rejected (\(response.status.code))"))
+      }
     }
   }
   func errorCaught(context: ChannelHandlerContext, error: Error) { owner.fail(error) }
-  func channelInactive(context: ChannelHandlerContext) { owner.close() }
+  func channelInactive(context: ChannelHandlerContext) { owner.fail(JSONRPCTransportError.closed) }
 }
 
 private final class Frames: ChannelInboundHandler, @unchecked Sendable {
@@ -189,7 +207,10 @@ private final class Frames: ChannelInboundHandler, @unchecked Sendable {
     }
   }
   func handlerRemoved(context: ChannelHandlerContext) { heartbeat?.cancel() }
-  func channelInactive(context: ChannelHandlerContext) { heartbeat?.cancel(); owner.close() }
+  func channelInactive(context: ChannelHandlerContext) {
+    heartbeat?.cancel()
+    owner.fail(JSONRPCTransportError.closed)
+  }
   func errorCaught(context: ChannelHandlerContext, error: Error) { owner.fail(error) }
   func channelRead(context: ChannelHandlerContext, data: NIOAny) {
     let frame = unwrapInboundIn(data)
@@ -206,7 +227,7 @@ private final class Frames: ChannelInboundHandler, @unchecked Sendable {
         else if frame.opcode == .ping {
           context.writeAndFlush(
             wrapOutboundOut(ForwirohWebSocketTransport.frame(.pong, data: frame.data)), promise: nil)
-        } else { owner.close() }
+        } else { owner.fail(JSONRPCTransportError.closed) }
       case .text, .continuation:
         guard (frame.opcode == .text && fragmented == nil)
           || (frame.opcode == .continuation && fragmented != nil) else {

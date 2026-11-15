@@ -80,6 +80,7 @@ public actor ACPClient {
   private let onPermission: (@Sendable (JSONValue) async throws -> String?)?
   private let onPermissionResponse: (@Sendable (JSONValue) async throws -> ACPPermissionResponse?)?
   private let onDisconnect: (@Sendable () async -> Void)?
+  private let onConnectionFailure: (@Sendable (any Error) async -> Void)?
   private var reader: Task<Void, Never>?
   private var peer: JSONRPCPeer?
   private var sessionID: String?
@@ -128,7 +129,8 @@ public actor ACPClient {
     onUpdate: (@Sendable (JSONValue) async -> Void)? = nil,
     onPermission: (@Sendable (JSONValue) async throws -> String?)? = nil,
     onPermissionResponse: (@Sendable (JSONValue) async throws -> ACPPermissionResponse?)? = nil,
-    onDisconnect: (@Sendable () async -> Void)? = nil
+    onDisconnect: (@Sendable () async -> Void)? = nil,
+    onConnectionFailure: (@Sendable (any Error) async -> Void)? = nil
   ) {
     self.configuration = configuration
     self.sessionID = configuration.sessionID
@@ -136,6 +138,7 @@ public actor ACPClient {
     self.onPermission = onPermission
     self.onPermissionResponse = onPermissionResponse
     self.onDisconnect = onDisconnect
+    self.onConnectionFailure = onConnectionFailure
   }
 
   deinit {
@@ -442,6 +445,8 @@ public actor ACPClient {
       return token
     } catch {
       await disconnect()
+      try Task.checkCancellation()
+      if transport is ForwirohWebSocketTransport { throw error }
       if !(error is CancellationError), !transport.recentErrorOutput.isEmpty {
         throw ACPClientError.launchFailed(
           command: configuration.command, detail: transport.recentErrorOutput)
@@ -663,8 +668,10 @@ public actor ACPClient {
   public func disconnect() async {
     let previous = peer
     let transport = transport
+    let tunnel = forwirohTunnel
     peer = nil
     self.transport = nil
+    forwirohTunnel = nil
     reader?.cancel()
     reader = nil
     sessionLoaded = false
@@ -677,8 +684,6 @@ public actor ACPClient {
     supportsAgents = false
     supportsVoice = false
     supportsPromptImages = false
-    let tunnel = forwirohTunnel
-    forwirohTunnel = nil
     transport?.close()
     await previous?.close()
     await tunnel?.close()
@@ -690,16 +695,22 @@ public actor ACPClient {
 
   private func connectionClosed(_ peer: JSONRPCPeer) async {
     guard self.peer === peer else { return }
+    let transport = transport
+    let tunnel = forwirohTunnel
     self.peer = nil
     transport?.close()
-    transport = nil
+    self.transport = nil
+    forwirohTunnel = nil
     reader = nil
     sessionLoaded = false
     await subagentJobs?.disconnected()
-    let tunnel = forwirohTunnel
-    forwirohTunnel = nil
+    let failure = await tunnel?.failure() ?? transport?.connectionError
     await tunnel?.close()
-    await onDisconnect?()
+    if let failure, let onConnectionFailure {
+      await onConnectionFailure(failure)
+    } else {
+      await onDisconnect?()
+    }
   }
 
   private func remoteTransport(url: URL, pairing: Bool = false) async throws
@@ -716,11 +727,23 @@ public actor ACPClient {
       try Task.checkCancellation()
       let transport = try ForwirohWebSocketTransport(
         url: tunnel.url, bearerToken: configuration.bearerToken)
+      try await withTaskCancellationHandler {
+        try await transport.waitForUpgrade()
+        try Task.checkCancellation()
+      } onCancel: {
+        transport.close()
+      }
       forwirohTunnel = tunnel
       return transport
     } catch {
+      let failure: any Error = if !Task.isCancelled, RemoteConnectionRecovery.shouldRetry(error) {
+        await tunnel.failure() ?? error
+      } else {
+        error
+      }
       await tunnel.close()
-      throw error
+      try Task.checkCancellation()
+      throw failure
     }
   }
 
@@ -773,6 +796,7 @@ public actor ACPClient {
         transport = try await remoteTransport(url: url)
       } catch {
         try Task.checkCancellation()
+        if url.scheme == "forwiroh" { throw error }
         throw ACPClientError.launchFailed(command: configuration.command, detail: error.localizedDescription)
       }
     } else {
@@ -865,6 +889,7 @@ public actor ACPClient {
     } catch {
       await disconnect()
       try Task.checkCancellation()
+      if transport is ForwirohWebSocketTransport { throw error }
       throw ACPClientError.launchFailed(
         command: configuration.command,
         detail: transport.recentErrorOutput.isEmpty
@@ -888,16 +913,18 @@ public actor ACPClient {
     }
     if let sessionID, supportsLoad {
       params["sessionId"] = .string(sessionID)
-      let result = try await peer.request(
-        ACP.Method.sessionLoad,
-        params: .object(params), timeout: 60)
+      let result: JSONValue
+      do {
+        result = try await peer.request(ACP.Method.sessionLoad, params: .object(params), timeout: 60)
+      } catch let error as JSONRPCError {
+        throw ACPClientError.sessionRestoreFailed(error.localizedDescription)
+      }
       readSessionOptions(result)
       sessionLoaded = true
       return sessionID
     }
     if sessionID != nil {
-      throw JSONRPCError.invalidParams(
-        "This agent cannot restore sessions. Start a new chat to continue.")
+      throw ACPClientError.sessionRestoreFailed("This agent does not support restoring sessions.")
     }
     let result = try await peer.request(
       ACP.Method.sessionNew,
@@ -1078,6 +1105,8 @@ public actor ACPClient {
 public enum ACPClientError: LocalizedError, Equatable, Sendable {
   case launchFailed(command: String, detail: String)
   case noSession(String)
+  case gatewayUnauthorized
+  case sessionRestoreFailed(String)
 
   public var errorDescription: String? {
     switch self {
@@ -1085,6 +1114,10 @@ public enum ACPClientError: LocalizedError, Equatable, Sendable {
       "The ACP agent '\(command)' did not start: \(detail)"
     case .noSession(let command):
       "The ACP agent '\(command)' did not open a session (it may need logging in with its own CLI first)."
+    case .gatewayUnauthorized:
+      "The host rejected the saved ACP authorization (HTTP 401). Scan a fresh host QR to request approval."
+    case .sessionRestoreFailed(let detail):
+      "Could not restore the ACP chat. \(detail) Start a new chat to continue."
     }
   }
 }
