@@ -70,7 +70,8 @@ public struct RemoteHostConnection: Codable, Sendable {
   }
 
   /// Workspace connections have their own lifetime, independent of chat prompts.
-  public func workspace(cwd: String? = nil, resumeID: String? = nil, configuration: URLSessionConfiguration = .ephemeral)
+  public func workspace(cwd: String? = nil, resumeID: String? = nil, browsingFolders: Bool = false,
+    configuration: URLSessionConfiguration = .ephemeral)
     throws -> WorkspaceConnection
   {
     guard requiresApproval != true else {
@@ -79,7 +80,8 @@ public struct RemoteHostConnection: Codable, Sendable {
     let cwd = cwd ?? self.cwd
     if backend == .openCode {
       return .openCode(try OpenCodeWorkspace(
-        connection: .init(name: name, url: url, token: token, cwd: cwd), configuration: configuration))
+        connection: .init(name: name, url: url, token: token, cwd: cwd),
+        browsingFolders: browsingFolders, configuration: configuration))
     }
     return .remote(ACPClient(configuration: try acpConfiguration(cwd: cwd, sessionID: nil, resumeID: resumeID)), cwd: cwd)
   }

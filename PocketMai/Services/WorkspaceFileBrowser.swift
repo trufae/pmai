@@ -16,7 +16,8 @@ enum FileBrowserLocation: Identifiable {
   var title: String {
     switch self {
     case .local(let context): context.displayName
-    case .remote(let host, let cwd): "\(host.name) · \(URL(fileURLWithPath: cwd).lastPathComponent)"
+    case .remote(let host, let cwd):
+      cwd.isEmpty ? host.name : "\(host.name) · \(URL(fileURLWithPath: cwd).lastPathComponent)"
     }
   }
   var root: String {
@@ -27,7 +28,7 @@ enum FileBrowserLocation: Identifiable {
   }
   var isRemote: Bool { if case .remote = self { true } else { false } }
 
-  @MainActor func connection() throws -> FileBrowserConnection {
+  @MainActor func connection(browsingFolders: Bool = false) throws -> FileBrowserConnection {
     switch self {
     case .local(let context):
       return .local(
@@ -37,7 +38,7 @@ enum FileBrowserLocation: Identifiable {
             isSecurityScoped: context.isSecurityScoped,
             hiddenRootEntryNames: context.hidesModelsFolder ? ["Models"] : [])))
     case .remote(let host, let cwd):
-      return try host.workspaceConnection(cwd: cwd)
+      return try host.workspaceConnection(cwd: cwd, browsingFolders: browsingFolders)
     }
   }
 }
@@ -68,6 +69,7 @@ struct BrowserFile: Identifiable {
 final class WorkspaceFileBrowser: ObservableObject {
   static let previewLimit = 16 * 1024 * 1024
   let location: FileBrowserLocation
+  let browsingFolders: Bool
   private let isOffline: () -> Bool
   private var connection: FileBrowserConnection?
   private var temporaryFolders: [URL] = []
@@ -77,6 +79,7 @@ final class WorkspaceFileBrowser: ObservableObject {
   @Published private(set) var root: String
   @Published private(set) var entries: [WorkspaceFileEntry] = []
   @Published private(set) var nextOffset: Int?
+  @Published private(set) var hasLoaded = false
   @Published private(set) var writeEnabled = true
   @Published private(set) var isBusy = false
   @Published private(set) var status: String?
@@ -86,20 +89,30 @@ final class WorkspaceFileBrowser: ObservableObject {
   @Published var download: BrowserFile?
   @Published var showHidden = false
 
-  init(location: FileBrowserLocation, isOffline: @escaping () -> Bool = { false }) {
+  init(location: FileBrowserLocation, browsingFolders: Bool = false,
+    isOffline: @escaping () -> Bool = { false })
+  {
     self.location = location
+    self.browsingFolders = browsingFolders
     self.isOffline = isOffline
     path = location.root
     root = location.root
   }
 
-  var canGoUp: Bool { path != root && !isBusy }
-
-  func browse(_ directory: String? = nil, append: Bool = false) {
-    run("Loading files…") { try await self.load(directory ?? self.path, append: append) }
+  private var parentFolder: String? {
+    if browsingFolders { return RemoteWorkspacePath.parent(of: path) }
+    return path == root ? nil : URL(fileURLWithPath: path).deletingLastPathComponent().path
   }
 
-  func goUp() { if canGoUp { browse(URL(fileURLWithPath: path).deletingLastPathComponent().path) } }
+  var canGoUp: Bool { !isBusy && parentFolder != nil }
+
+  func browse(_ directory: String? = nil, append: Bool = false) {
+    run(browsingFolders ? "Loading folders…" : "Loading files…") {
+      try await self.load(directory ?? self.path, append: append)
+    }
+  }
+
+  func goUp() { if let parentFolder { browse(parentFolder) } }
 
   func createDirectory(_ name: String) {
     run("Creating folder…") {
@@ -216,30 +229,45 @@ final class WorkspaceFileBrowser: ObservableObject {
     }
   }
 
-  private func request(_ request: WorkspaceFileRequest) async throws -> WorkspaceFileResponse {
+  private func activeConnection() throws -> FileBrowserConnection {
     try Task.checkCancellation()
     guard !location.isRemote || !isOffline() else {
       throw WorkspaceFileError("Turn off Airplane Mode to access remote files.")
     }
-    if connection == nil { connection = try location.connection() }
-    let response = try await connection!.request(request)
+    if let connection { return connection }
+    let connection = try location.connection(browsingFolders: browsingFolders)
+    self.connection = connection
+    return connection
+  }
+
+  private func request(_ request: WorkspaceFileRequest) async throws -> WorkspaceFileResponse {
+    let response = try await activeConnection().request(request)
     try Task.checkCancellation()
     return response
   }
 
   private func load(_ directory: String, append: Bool = false) async throws {
-    let response = try await request(
-      .init(
-        .list, path: directory, offset: append ? nextOffset ?? 0 : 0,
-        limit: 200, showHidden: showHidden))
-    guard let listing = response.listing else {
-      throw WorkspaceFileError("The host returned an invalid directory listing.")
+    let offset = append ? nextOffset ?? 0 : 0
+    let listing: WorkspaceFileListing
+    if browsingFolders {
+      listing = try await activeConnection().listFolders(
+        path: directory, scope: root, offset: offset, showHidden: showHidden)
+      try Task.checkCancellation()
+    } else {
+      let response = try await request(
+        .init(.list, path: directory, offset: offset, limit: 200, showHidden: showHidden))
+      guard let files = response.listing else {
+        throw WorkspaceFileError("The host returned an invalid directory listing.")
+      }
+      listing = files
     }
     root = listing.root
     path = listing.path
     writeEnabled = listing.writeEnabled
-    entries = append ? entries + listing.entries : listing.entries
+    let page = browsingFolders ? listing.entries.filter(\.isDirectory) : listing.entries
+    entries = append ? entries + page : page
     nextOffset = listing.nextOffset
+    hasLoaded = true
   }
 
   private func fetch(_ entry: WorkspaceFileEntry, preview: Bool) async throws -> BrowserFile {

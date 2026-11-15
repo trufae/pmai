@@ -1,3 +1,4 @@
+import MaiACP
 import MaiStandardTools
 import QuickLook
 import SwiftUI
@@ -7,10 +8,13 @@ import UniformTypeIdentifiers
 struct FileBrowserView: View {
   @EnvironmentObject private var appStore: AppStore
   @State var location: FileBrowserLocation
+  var onSelectRemoteFolder: ((String) -> Void)? = nil
 
   var body: some View {
     NavigationStack {
-      FileBrowserDirectoryView(location: location, store: appStore) { url in
+      FileBrowserDirectoryView(
+        location: location, store: appStore, onSelectRemoteFolder: onSelectRemoteFolder
+      ) { url in
         location = .local(.custom(rootURL: url, displayName: url.lastPathComponent))
       }
       .id(location.id)
@@ -22,21 +26,27 @@ private struct FileBrowserDirectoryView: View {
   @EnvironmentObject private var appStore: AppStore
   @Environment(\.dismiss) private var dismiss
   @StateObject private var browser: WorkspaceFileBrowser
+  private let onSelectRemoteFolder: ((String) -> Void)?
   private let onChooseFolder: (URL) -> Void
   @State private var search = ""
   @State private var showingFolderPicker = false
   @State private var showingUploadPicker = false
   @State private var showingNewFolder = false
+  @State private var showingRemotePath = false
   @State private var showingReplace = false
   @State private var folderName = ""
+  @State private var remotePath = ""
   @State private var pendingUploads: [URL] = []
   @State private var pendingDownload: WorkspaceFileEntry?
 
-  init(location: FileBrowserLocation, store: AppStore, onChooseFolder: @escaping (URL) -> Void) {
+  init(location: FileBrowserLocation, store: AppStore, onSelectRemoteFolder: ((String) -> Void)?,
+    onChooseFolder: @escaping (URL) -> Void
+  ) {
     _browser = StateObject(
       wrappedValue: WorkspaceFileBrowser(
-        location: location,
+        location: location, browsingFolders: onSelectRemoteFolder != nil,
         isOffline: { store.settings.isOffline }))
+    self.onSelectRemoteFolder = onSelectRemoteFolder
     self.onChooseFolder = onChooseFolder
   }
 
@@ -55,7 +65,9 @@ private struct FileBrowserDirectoryView: View {
       VStack(alignment: .leading, spacing: 4) {
         HStack {
           Text(browser.location.title).font(.subheadline.weight(.semibold))
-          if !browser.writeEnabled { Text("Read Only").font(.caption).foregroundStyle(.secondary) }
+          if !browser.browsingFolders && !browser.writeEnabled {
+            Text("Read Only").font(.caption).foregroundStyle(.secondary)
+          }
         }
         Text(browser.path).font(.caption.monospaced()).foregroundStyle(.secondary)
           .textSelection(.enabled).lineLimit(3)
@@ -118,9 +130,12 @@ private struct FileBrowserDirectoryView: View {
           }
         }
         if browser.nextOffset != nil {
-          Button("Load More Files") { browser.browse(append: true) }.disabled(browser.isBusy)
+          Button(browser.browsingFolders ? "Load More Folders" : "Load More Files") {
+            browser.browse(append: true)
+          }.disabled(browser.isBusy)
         } else if browser.entries.isEmpty && !browser.isBusy && browser.error == nil {
-          ContentUnavailableView("Empty Folder", systemImage: "folder")
+          ContentUnavailableView(browser.browsingFolders ? "No Subfolders" : "Empty Folder",
+            systemImage: "folder")
         }
       }
       .listStyle(.plain)
@@ -130,20 +145,31 @@ private struct FileBrowserDirectoryView: View {
       }
       .gesture(FileBrowserParentSwipe(isEnabled: browser.canGoUp, onSwipe: browser.goUp))
     }
-    .navigationTitle("Files").navigationBarTitleDisplayMode(.inline)
-    .searchable(text: $search, prompt: "Filter files")
+    .navigationTitle(browser.browsingFolders ? "Choose Remote Folder" : "Files")
+    .navigationBarTitleDisplayMode(.inline)
+    .searchable(text: $search, prompt: browser.browsingFolders ? "Filter folders" : "Filter files")
     .toolbar {
-      ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } }
+      ToolbarItem(placement: .cancellationAction) {
+        Button(browser.browsingFolders ? "Cancel" : "Done") { dismiss() }
+      }
       ToolbarItem(placement: .topBarTrailing) {
-        Menu("File Actions", systemImage: "ellipsis.circle") {
+        Menu(browser.browsingFolders ? "Folder Actions" : "File Actions", systemImage: "ellipsis.circle") {
           Button("Copy Folder Path", systemImage: "doc.on.doc") {
             UIPasteboard.general.string = browser.path
           }
           Button("Refresh", systemImage: "arrow.clockwise") { browser.browse() }
-          Toggle("Show Hidden Files", isOn: $browser.showHidden)
+          Toggle(browser.browsingFolders ? "Show Hidden Folders" : "Show Hidden Files",
+            isOn: $browser.showHidden)
           Divider()
-          Button("Choose Local Folder…", systemImage: "folder.badge.gearshape") {
-            showingFolderPicker = true
+          if browser.browsingFolders {
+            Button("Go to Folder…", systemImage: "folder") {
+              remotePath = browser.path
+              showingRemotePath = true
+            }
+          } else {
+            Button("Choose Local Folder…", systemImage: "folder.badge.gearshape") {
+              showingFolderPicker = true
+            }
           }
         }
         .disabled(browser.isBusy)
@@ -153,16 +179,26 @@ private struct FileBrowserDirectoryView: View {
           .disabled(!browser.canGoUp)
       }
       ToolbarItem(placement: .bottomBar) { Spacer() }
-      ToolbarItem(placement: .bottomBar) {
-        Button("New Folder", systemImage: "folder.badge.plus") {
-          folderName = ""
-          showingNewFolder = true
+      if let onSelectRemoteFolder {
+        ToolbarItem(placement: .bottomBar) {
+          Button("Start Chat") {
+            onSelectRemoteFolder(browser.path)
+            dismiss()
+          }
+          .disabled(!browser.hasLoaded || browser.isBusy || appStore.settings.isOffline)
         }
-        .disabled(browser.isBusy || !browser.writeEnabled)
-      }
-      ToolbarItem(placement: .bottomBar) {
-        Button("Upload Files", systemImage: "arrow.up.doc") { showingUploadPicker = true }
+      } else {
+        ToolbarItem(placement: .bottomBar) {
+          Button("New Folder", systemImage: "folder.badge.plus") {
+            folderName = ""
+            showingNewFolder = true
+          }
           .disabled(browser.isBusy || !browser.writeEnabled)
+        }
+        ToolbarItem(placement: .bottomBar) {
+          Button("Upload Files", systemImage: "arrow.up.doc") { showingUploadPicker = true }
+            .disabled(browser.isBusy || !browser.writeEnabled)
+        }
       }
     }
   }
@@ -192,6 +228,13 @@ private struct FileBrowserDirectoryView: View {
         TextField("Folder name", text: $folderName)
         Button("Cancel", role: .cancel) {}
         Button("Create") { browser.createDirectory(folderName) }.disabled(folderName.isEmpty)
+      }
+      .alert("Go to Folder", isPresented: $showingRemotePath) {
+        TextField("Absolute path on the host", text: $remotePath)
+          .textInputAutocapitalization(.never).autocorrectionDisabled()
+        Button("Cancel", role: .cancel) {}
+        Button("Go") { browser.browse(remotePath) }
+          .disabled(!RemoteWorkspacePath.isAbsolute(remotePath))
       }
       .alert("Replace existing files?", isPresented: $showingReplace) {
         Button("Cancel", role: .cancel) { pendingUploads = [] }

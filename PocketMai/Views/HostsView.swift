@@ -117,6 +117,7 @@ struct RemoteFoldersView: View, Equatable {
   let isOffline: Bool
   let onShowHosts: () -> Void
   let onSelectFolder: (String) -> Void
+  let onChooseFolder: () -> Void
   var isVisible = true
   var onBrowseFiles: (String) -> Void = { _ in }
   var onOpenTerminal: (String) -> Void = { _ in }
@@ -204,12 +205,14 @@ struct RemoteFoldersView: View, Equatable {
           }
         }
         FloatingActionIcon(
-          systemImage: "arrow.clockwise", accessibilityLabel: "Refresh projects", compact: true
+          systemImage: "plus", accessibilityLabel: "Choose remote folder", compact: true
         ) {
-          hosts.refresh(isOffline: isOffline)
-        }.disabled(hosts.loading || isOffline)
+          filterFocused = false
+          onChooseFolder()
+        }.disabled(isOffline || hosts.selectedHost?.requiresApproval == true)
       }
     }
+    .refreshable { hosts.refresh(isOffline: isOffline) }
     .onChange(of: isVisible) { _, visible in if !visible { filterFocused = false } }
   }
 
@@ -256,7 +259,9 @@ struct RemoteConversationsView: View, Equatable {
 
   var body: some View {
     SidebarPanel(
-      title: hosts.folders.first { $0.cwd == hosts.selectedFolderID }?.name ?? "Conversations",
+      title: hosts.folders.first { $0.cwd == hosts.selectedFolderID }?.name
+        ?? hosts.selectedFolderID.flatMap(AgentProject.defaultName(forWorkingDirectory:))
+        ?? "Conversations",
       backTitle: "Folders", onBack: onShowFolders
     ) {
       conversationList

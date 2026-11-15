@@ -123,6 +123,42 @@ func openCodeWorkspaceFiles() async throws {
   await workspace.close()
 }
 
+@Test("OpenCode can pick a sibling directory before any project is selected")
+func openCodeFolderPicker() async throws {
+  let host = "folder-picker.opencode.test"
+  StubURLProtocol.install(forHost: host) { request in
+    let url = try #require(request.url)
+    #expect(url.path == "/api/fs/list")
+    #expect(request.httpMethod == "GET")
+    let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+    #expect(!query.contains { $0.name == "location[directory]" })
+    let path = query.first { $0.name == "path" }?.value
+    let entries: String
+    switch path {
+    case nil: entries = #"[{"path":"notes.txt","type":"file"}]"#
+    case "/work": entries = #"[{"path":"../new project/","type":"directory"}]"#
+    case "/work/new project": entries = "[]"
+    default: throw URLError(.unsupportedURL)
+    }
+    return try httpResponse(request, contentType: "application/json", body:
+      #"{"location":{"directory":"/work/current"},"data":\#(entries)}"#)
+  }
+  defer { StubURLProtocol.reset(host: host) }
+  let connection = RemoteHostConnection(try OpenCodeConnection(
+    url: #require(URL(string: "https://\(host)")), token: "test"))
+  let workspace = try connection.workspace(browsingFolders: true, configuration: openCodeTestConfiguration())
+  let start = try await workspace.listFolders(path: "", scope: "", offset: 0, showHidden: false)
+  #expect(start.path == "/work/current")
+  #expect(start.entries.isEmpty)
+  let parent = try #require(RemoteWorkspacePath.parent(of: start.path))
+  let siblings = try await workspace.listFolders(path: parent, scope: start.root, offset: 0, showHidden: false)
+  let picked = try #require(siblings.entries.first)
+  #expect(picked.path == "/work/new project")
+  let folder = try await workspace.listFolders(path: picked.path, scope: siblings.root, offset: 0, showHidden: false)
+  #expect(folder.path == picked.path)
+  await workspace.close()
+}
+
 @Test("OpenCode terminal returns all output pages and nonzero exits and removes its shell", arguments: [false, true])
 func openCodeWorkspaceShell(_ cancel: Bool) async throws {
   let host = "shell-\(cancel).opencode.test"

@@ -49,6 +49,28 @@ public enum WorkspaceConnection: Sendable {
     }
   }
 
+  /// The picker can change the browse scope. ACP still authorizes each scope on the host.
+  public func listFolders(path: String, scope: String, offset: Int, showHidden: Bool)
+    async throws -> WorkspaceFileListing
+  {
+    try Task.checkCancellation()
+    let request = WorkspaceFileRequest(.list, path: path, offset: offset, limit: 200,
+      showHidden: showHidden)
+    let response: WorkspaceFileResponse
+    switch self {
+    case .remote(let client, _):
+      let cwd = path == scope || path.hasPrefix(scope.hasSuffix("/") ? scope : scope + "/")
+        ? scope : path
+      response = try await client.files(cwd: cwd, request: request)
+    case .openCode(let workspace): response = try await workspace.listFolders(request)
+    case .local: response = try await self.request(request)
+    }
+    guard let listing = response.listing else {
+      throw WorkspaceFileError("The host returned an invalid directory listing.")
+    }
+    return listing
+  }
+
   public func run(_ command: String,
     onOutput: @escaping @Sendable (String) async -> Void = { _ in }
   ) async throws -> ToolResult {

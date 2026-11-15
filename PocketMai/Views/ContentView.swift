@@ -15,6 +15,7 @@ struct ContentView: View {
   @StateObject private var settingsStoreObservation = AppStoreViewObservation(scope: .settings)
   @State private var showingSettings = false
   @State private var fileBrowserLocation: FileBrowserLocation?
+  @State private var remoteFolderPickerHost: RemoteAgentBookmark?
   @State private var remoteTerminalLocation: RemoteTerminalLocation?
   @State private var showingHistory = false
   @State private var isHistoryPanelMounted = false
@@ -70,7 +71,8 @@ struct ContentView: View {
                     hosts.selectFolder(cwd)
                     hosts.resumeConnections(isOffline: store.settings.isOffline)
                   }
-                }, isVisible: foldersVisible && !showingHosts,
+                }, onChooseFolder: { remoteFolderPickerHost = hosts.selectedHost },
+                isVisible: foldersVisible && !showingHosts,
                 onBrowseFiles: { browseFiles(cwd: $0) },
                 onOpenTerminal: { showRemoteTerminal(cwd: $0) })
                 .equatable()
@@ -271,6 +273,11 @@ struct ContentView: View {
     }
     .sheet(item: $fileBrowserLocation) { location in
       FileBrowserView(location: location).environmentObject(store)
+    }
+    .sheet(item: $remoteFolderPickerHost) { host in
+      FileBrowserView(location: .remote(host, cwd: host.cwd), onSelectRemoteFolder: { cwd in
+        selectRemoteFolder(cwd, on: host)
+      }).environmentObject(store)
     }
     .fullScreenCover(item: $remoteTerminalLocation) { location in
       RemoteTerminalView(location: location).environmentObject(store)
@@ -474,6 +481,15 @@ struct ContentView: View {
 
   private func newRemoteConversation() {
     closeHistoryPanel { _ = hosts.newConversation() }
+  }
+
+  private func selectRemoteFolder(_ cwd: String, on host: RemoteAgentBookmark) {
+    closeHistoryPanel {
+      guard let selected = hosts.selectedHost, selected.id == host.id,
+        selected.revision == host.revision, selected.requiresApproval != true,
+        !store.settings.isOffline else { return }
+      hosts.selectFolder(cwd)
+    }
   }
 
   private func newLocalConversation() {

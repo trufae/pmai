@@ -304,10 +304,8 @@ final class HostNavigationStore {
         remotes.setConnectionFailed(!connected, for: host.id)
         supportsDiscovery = snapshot != nil
         if let snapshot { remotes.updateWorkspace(host.id, snapshot: snapshot, inBackground: true) }
-        if selectedConversation?.sessionID == nil,
-          selectedConversation?.messages.isEmpty != false,
-          !folders.contains(where: { $0.cwd == selectedFolderID }),
-          let cwd = folders.first?.cwd, cwd != selectedFolderID
+        // A selected folder can be valid before it appears in the project inventory.
+        if selectedFolderID?.isEmpty != false, let cwd = folders.first?.cwd
         {
           selectFolder(cwd, preservingDraft: true)
         }
