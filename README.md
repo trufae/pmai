@@ -289,7 +289,7 @@ tool group with `/tools`. The `remote_hosts`, `remote_files`, `remote_run`, and
 host access off prevents subsequent calls and closes its agent terminals;
 ordinary tool approvals and the remote host's permissions still apply.
 
-Forwiroh [0.1.5](https://github.com/trufae/forwiroh/releases/tag/v0.1.5) is supplied as a prebuilt SwiftPM dependency under `Vendor/Forwiroh`:
+Forwiroh [0.1.6](https://github.com/trufae/forwiroh/releases/tag/v0.1.6) is supplied as a prebuilt SwiftPM dependency under `Vendor/Forwiroh`:
 no Rust build or wrapper generation is needed. Its release binaries support
 macOS, iOS, Linux, Android and Windows (x64/ARM64). Linux glibc binaries require Ubuntu 24.04/glibc
 2.39 or newer; musl builds use the musl variants. The source package requires

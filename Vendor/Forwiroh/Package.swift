@@ -1,5 +1,5 @@
 // swift-tools-version: 6.2
-// pmai SDK pin: Forwiroh 0.1.5. Update with Artifacts/manifest.json to invalidate the manifest cache.
+// pmai SDK pin: Forwiroh 0.1.6. Update with Artifacts/manifest.json to invalidate the manifest cache.
 import PackageDescription
 import Foundation
 
