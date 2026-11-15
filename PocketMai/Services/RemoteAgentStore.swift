@@ -683,6 +683,7 @@ final class RemoteAgentChat {
   private var permissionReplies: [UUID: CheckedContinuation<ACPPermissionResponse?, Never>] = [:]
   private var generation = 0
   private var historyRewindSupported = false
+  private var messageEditingSupported = false
   private var deleted = false
   private var connectingHistory: [RemoteAgentMessage]?
   @ObservationIgnored private var loadingMessages: [RemoteAgentMessage]?
@@ -810,7 +811,7 @@ final class RemoteAgentChat {
 
   func canRetry(_ messageID: UUID) -> Bool {
     canSend && supportsHistoryRewind
-      && sourceMessage(messageID)?.remoteID != nil
+      && retrySourceMessage(messageID)?.remoteID != nil
   }
 
   func resubmit(_ messageID: UUID) {
@@ -840,51 +841,109 @@ final class RemoteAgentChat {
       messageID: messageID)
   }
 
-  func retry(_ messageID: UUID, restarting: Bool = false) {
-    guard canRetry(messageID), let message = sourceMessage(messageID) else { return }
-    submit(message.text, rewind: true, boundary: restarting ? nil : message.remoteID)
+  func retry(_ messageID: UUID) {
+    guard canSend, supportsHistoryRewind, let message = retrySourceMessage(messageID),
+      let remoteID = message.remoteID else { return }
+    submit(message.text, rewind: true, boundary: remoteID)
+  }
+
+  func canEdit(_ message: ChatMessage) -> Bool {
+    guard canSend, message.role == .user || message.role == .assistant else { return false }
+    if messageEditingSupported { return editableMessage(message.id) != nil }
+    return supportsHistoryRewind && message.role == .user
+      && sourceMessage(message.id)?.remoteID != nil
+  }
+
+  var editsMessagesInPlace: Bool { messageEditingSupported }
+
+  func edit(_ message: ChatMessage, text: String, inPlace: Bool) async throws {
+    guard canEdit(message), inPlace == editsMessagesInPlace else {
+      throw JSONRPCError.invalidParams("Connect to an idle session to edit this message.")
+    }
+    guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+      throw JSONRPCError.invalidParams("Enter nonempty replacement text.")
+    }
+    if inPlace, let remoteID = editableMessage(message.id)?.remoteID {
+      try await mutateHistory { try await $0.editMessage(remoteID, text: text) }
+    } else if let remoteID = sourceMessage(message.id)?.remoteID {
+      submit(text, rewind: true, boundary: remoteID, keepDraftOnRewindFailure: true)
+    }
   }
 
   func canDelete(_ messageID: UUID) -> Bool {
     if isUnsent(messageID) { return !isSendingUnsent(messageID) }
+    if messageEditingSupported, editableMessage(messageID) != nil { return canSend }
     return canSend && supportsHistoryRewind && messages.contains {
       $0.id == messageID && $0.remoteID != nil
     }
   }
 
-  /// Removes this remote message and everything after it. The pmai host owns
-  /// the transcript, so this never mutates PocketMai's unrelated local chats.
-  func delete(_ messageID: UUID) {
-    if isUnsent(messageID), canDelete(messageID) {
+  func deletesThroughEnd(_ messageID: UUID) -> Bool {
+    !isUnsent(messageID) && (!messageEditingSupported || editableMessage(messageID) == nil)
+  }
+
+  func delete(_ messageID: UUID, throughEnd: Bool) async throws {
+    guard canDelete(messageID), throughEnd == deletesThroughEnd(messageID) else {
+      throw JSONRPCError.invalidParams("This message can no longer be deleted with this action.")
+    }
+    if isUnsent(messageID) {
       conversation.unsentMessages?.removeAll { $0.id == messageID }
       persist()
       return
     }
-    guard canDelete(messageID), let message = messages.first(where: { $0.id == messageID }),
-      let remoteID = message.remoteID, let client
-    else { return }
-    busy = true
-    error = nil
-    status = "Deleting…"
-    let attempt = generation
-    operation = Task {
-      do {
-        try await client.rewind(to: remoteID)
-        guard generation == attempt else { return }
-        status = "Connected"
-      } catch {
-        guard generation == attempt else { return }
-        self.error = error is CancellationError ? nil : error.localizedDescription
-        status = "Connected"
-      }
-      guard generation == attempt else { return }
-      flushMessages()
-      busy = false
-      operation = nil
-      conversation.updatedAt = Date()
-      persist()
+    guard let message = messages.first(where: { $0.id == messageID }),
+      let remoteID = message.remoteID
+    else { throw JSONRPCError.invalidParams("This message is no longer in the conversation.") }
+    try await mutateHistory { client in
+      if throughEnd { try await client.rewind(to: remoteID) }
+      else { try await client.editMessage(remoteID, text: nil) }
     }
   }
+
+  private func mutateHistory(
+    _ mutation: (any RemoteSessionClient) async throws -> Void
+  ) async throws {
+    guard let client, connected, !isOffline() else {
+      throw JSONRPCError.invalidParams("Connect to the host to change its history.")
+    }
+    busy = true
+    error = nil
+    let attempt = generation
+    defer {
+      if generation == attempt {
+        flushMessages()
+        busy = false
+        status = "Connected"
+        persist()
+      }
+    }
+    try await mutation(client)
+    guard generation == attempt else { throw CancellationError() }
+    conversation.updatedAt = Date()
+  }
+
+  private func editableMessage(_ id: UUID) -> RemoteAgentMessage? {
+    messages.first {
+      $0.id == id && $0.remoteID != nil && ($0.role == "user" || $0.role == "assistant")
+    }
+  }
+
+  private func retrySourceMessage(_ id: UUID) -> RemoteAgentMessage? {
+    guard let index = messages.firstIndex(where: { $0.id == id }) else { return nil }
+    let message = messages[index]
+    switch message.role {
+    case "user":
+      return message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : message
+    case "assistant":
+      guard let prompt = messages[..<index].last(where: { $0.role == "user" }),
+        !prompt.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+      return prompt
+    default:
+      return nil
+    }
+  }
+
+  func originalPrompt(_ id: UUID) -> String? { sourceMessage(id)?.text }
 
   private func sourceMessage(_ id: UUID) -> RemoteAgentMessage? {
     messages.first {
@@ -1028,6 +1087,7 @@ final class RemoteAgentChat {
     isConnecting = true
     status = "Connecting…"
     historyRewindSupported = false
+    messageEditingSupported = false
     configurationLoaded = false
     catalogRequest?.cancel()
     catalogRequest = nil
@@ -1050,6 +1110,7 @@ final class RemoteAgentChat {
         connected = await client.isConnected
         guard generation == attempt else { return }
         historyRewindSupported = await client.historyRewindSupported()
+        messageEditingSupported = await client.messageEditingSupported()
         supportsInjection = await client.injectionSupported()
         guard generation == attempt, !Task.isCancelled else { return }
         let restored = loadingMessages ?? previous
@@ -1071,6 +1132,7 @@ final class RemoteAgentChat {
         loadingMessages = nil
         pendingPrompt = nil
         historyRewindSupported = false
+        messageEditingSupported = false
         self.error = error.localizedDescription
         connected = false
         isConnecting = false
@@ -1156,7 +1218,8 @@ final class RemoteAgentChat {
   }
 
   private func submit(_ text: String, rewind: Bool = false, boundary: String? = nil,
-    command: String? = nil, skillID: String? = nil, messageID: UUID = UUID()) {
+    command: String? = nil, skillID: String? = nil, messageID: UUID = UUID(),
+    keepDraftOnRewindFailure: Bool = false) {
     guard canSend, let client else { return }
     let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !text.isEmpty || command != nil || skillID != nil else { return }
@@ -1169,9 +1232,11 @@ final class RemoteAgentChat {
     }
     let attempt = generation
     operation = Task {
+      var rewound = false
       do {
         if rewind {
           try await client.rewind(to: boundary)
+          rewound = true
           guard generation == attempt else { return }
           try Task.checkCancellation()
           guard !isOffline(), connected else { throw CancellationError() }
@@ -1186,6 +1251,9 @@ final class RemoteAgentChat {
         let stillConnected = await client.isConnected
         guard generation == attempt else { return }
         self.error = error is CancellationError ? nil : error.localizedDescription
+        if keepDraftOnRewindFailure, !rewound, !(error is CancellationError) {
+          unsentPrompt = text
+        }
         connected = stillConnected
         if !connected, !(error is CancellationError) {
           store.setConnectionFailed(true, for: bookmark.id)
@@ -1240,6 +1308,7 @@ final class RemoteAgentChat {
     connected = false
     isConnecting = false
     historyRewindSupported = false
+    messageEditingSupported = false
     configurationOptions = []
     settingsLoading = false
     settingsError = nil
@@ -1286,6 +1355,7 @@ final class RemoteAgentChat {
     responding = false
     injecting = false
     historyRewindSupported = false
+    messageEditingSupported = false
     if let connectingHistory {
       if messages != connectingHistory { messages = connectingHistory }
       self.connectingHistory = nil

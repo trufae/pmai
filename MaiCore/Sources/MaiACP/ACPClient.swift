@@ -106,6 +106,7 @@ public actor ACPClient {
   private var supportsVoice = false
   private var supportsPromptImages = false
   private var supportsHistoryRewind = false
+  private var supportsMessageEditing = false
   private var busy = false
   private var internetAccess = InternetAccessPolicy()
   /// The delta sink for the prompt in flight; only one prompt runs at a time.
@@ -156,6 +157,7 @@ public actor ACPClient {
   public var currentSessionID: String? { sessionID }
 
   public func historyRewindSupported() async -> Bool { supportsHistoryRewind }
+  public func messageEditingSupported() async -> Bool { supportsMessageEditing }
 
   public func configurationOptions() async throws -> [RemoteSessionOption] {
     if !sessionLoaded { _ = try await connect() }
@@ -217,6 +219,18 @@ public actor ACPClient {
     var params: [String: JSONValue] = ["sessionId": .string(sessionID)]
     params["messageId"] = messageID.map(JSONValue.string) ?? .null
     _ = try await peer.request(ACP.Method.sessionRewind, params: .object(params), timeout: 60)
+  }
+
+  public func editMessage(_ messageID: String, text: String?) async throws {
+    guard !busy, sessionLoaded, supportsMessageEditing, let sessionID, let peer else {
+      throw JSONRPCError.invalidParams("Connect to an idle pmai session before editing messages.")
+    }
+    busy = true
+    defer { busy = false }
+    _ = try await peer.request(ACP.Method.sessionEditMessage, params: .object([
+      "sessionId": .string(sessionID), "messageId": .string(messageID),
+      "text": text.map(JSONValue.string) ?? .null,
+    ]), timeout: 60)
   }
 
   public func availableModels() async throws -> [ModelDescriptor] {
@@ -680,6 +694,7 @@ public actor ACPClient {
     supportsPermissionEditing = false
     supportsYolo = false
     supportsHistoryRewind = false
+    supportsMessageEditing = false
     supportsAgentProfiles = false
     supportsAgents = false
     supportsVoice = false
@@ -872,6 +887,7 @@ public actor ACPClient {
       supportsPermissionEditing = pmaiCapabilities?["permissionEditing"]?.intValue == 1
       supportsYolo = pmaiCapabilities?["yolo"]?.intValue == 1
       supportsHistoryRewind = pmaiCapabilities?["historyRewind"]?.intValue == 1
+      supportsMessageEditing = pmaiCapabilities?["messageEditing"]?.intValue == 1
       if configuration.systemPrompt != nil && !codexPrompt,
         initialized.objectValue?["agentCapabilities"]?.objectValue?["sessionCapabilities"]?
           .objectValue?["systemPrompt"]?.objectValue?["mode"]?.objectValue?["override"]?.objectValue

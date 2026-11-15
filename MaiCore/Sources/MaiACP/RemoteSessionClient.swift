@@ -39,6 +39,9 @@ public protocol RemoteSessionClient: AnyObject, Sendable {
   var supportsHistoryRewind: Bool { get }
   /// Some clients learn this capability during their connection handshake.
   func historyRewindSupported() async -> Bool
+  func messageEditingSupported() async -> Bool
+  /// Replaces a message's text. Nil removes the message.
+  func editMessage(_ messageID: String, text: String?) async throws
   func connect() async throws -> String
   /// Resume observing work already running on the host without resubmitting it.
   func resumeUpdates() async throws
@@ -95,6 +98,10 @@ extension RemoteSessionClient {
   public func cancel() async { await disconnect() }
 
   public func historyRewindSupported() async -> Bool { supportsHistoryRewind }
+  public func messageEditingSupported() async -> Bool { false }
+  public func editMessage(_ messageID: String, text: String?) async throws {
+    throw JSONRPCError.invalidParams("This host does not support editing individual messages.")
+  }
 
   public func rewind(to messageID: String?) async throws {
     throw JSONRPCError.invalidParams("This host does not support rewinding conversation history.")

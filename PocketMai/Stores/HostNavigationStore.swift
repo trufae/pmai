@@ -32,6 +32,7 @@ final class HostNavigationStore {
     didSet { preferences?.set(selectedConversationID?.uuidString, forKey: "remote.selectedConversation") }
   }
   private var draftConversation: RemoteAgentConversation?
+  private var initialPrompt: (conversationID: UUID, text: String)?
   private(set) var loading = false
   private(set) var waitingApproval = false
   private(set) var error: String?
@@ -255,8 +256,24 @@ final class HostNavigationStore {
     guard let host = selectedHost else { return nil }
     let chat = RemoteAgentConversation(cwd: selectedFolderID ?? host.cwd)
     draftConversation = chat
+    initialPrompt = nil
     selectedConversationID = chat.id
     return chat
+  }
+
+  func startConversation(from messageID: UUID, in source: RemoteAgentChat) {
+    guard source.bookmark.id == selectedHostID, source.conversation.id == selectedConversationID,
+      source.canResubmit(messageID), !source.busy, let prompt = source.originalPrompt(messageID)
+    else { return }
+    selectedFolderID = source.conversation.cwd
+    guard let draft = newConversation() else { return }
+    initialPrompt = (draft.id, prompt)
+  }
+
+  func takeInitialPrompt(for conversationID: UUID) -> String? {
+    guard let initialPrompt, initialPrompt.conversationID == conversationID else { return nil }
+    self.initialPrompt = nil
+    return initialPrompt.text
   }
 
   func refresh(isOffline: Bool) {

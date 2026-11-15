@@ -187,6 +187,8 @@ public actor ACPServer {
       return try await manageSession(params: params)
     case ACP.Method.sessionRewind:
       return try await rewindSession(params: params)
+    case ACP.Method.sessionEditMessage:
+      return try await editMessage(params: params)
     case ACP.Method.sessionRunTool:
       return try await runTool(params: params)
     case ACP.Method.workspaceFiles:
@@ -247,6 +249,7 @@ public actor ACPServer {
           "workspacePrompts": .integer(1),
           "workspaceTerminal": .integer(Self.hasPTY ? 1 : 0),
           "historyRewind": .integer(1), "injection": .integer(1), "agents": .integer(1),
+          "messageEditing": .integer(1),
           "voice": .integer(1),
           "agentProfiles": .integer(profileDocument == nil ? 0 : 1),
         ])]),
@@ -737,7 +740,8 @@ public actor ACPServer {
     guard let fields = params?.objectValue, let id = fields["sessionId"]?.stringValue,
       var saved = sessions[id]?.saved
     else { throw JSONRPCError.invalidParams("Unknown session") }
-    guard sessions[id]?.busy != true, !loadingSessions.contains(id) else {
+    guard sessions[id]?.busy != true, sessions[id]?.voiceBusy != true,
+      !loadingSessions.contains(id) else {
       throw JSONRPCError.invalidParams("A prompt is already running in this session")
     }
     let boundary = fields["messageId"]?.stringValue
@@ -757,8 +761,43 @@ public actor ACPServer {
     saved.transcript = Array(saved.transcript.prefix(end))
     saved.promptInFlight = false
     saved.updatedAt = Date()
-    sessions[id]?.saved = saved
+    sessions[id]?.busy = true
+    defer { sessions[id]?.busy = false }
     try await save(saved)
+    sessions[id]?.saved = saved
+    await messageSnapshot(session: id)
+    return .object([:])
+  }
+
+  private func editMessage(params: JSONValue?) async throws -> JSONValue {
+    guard let fields = params?.objectValue, let id = fields["sessionId"]?.stringValue,
+      let messageID = fields["messageId"]?.stringValue, let text = fields["text"],
+      text == .null || text.stringValue != nil, var saved = sessions[id]?.saved else {
+      throw JSONRPCError.invalidParams("Provide a session, message ID and replacement text or null")
+    }
+    guard sessions[id]?.busy != true, sessions[id]?.voiceBusy != true,
+      !loadingSessions.contains(id) else {
+      throw JSONRPCError.invalidParams("A prompt is already running in this session")
+    }
+    var transcript = AgentTranscript(messages: saved.transcript)
+    guard let index = transcript.index(ofMessageID: messageID),
+      transcript[index].role == .user || transcript[index].role == .assistant else {
+      throw JSONRPCError.invalidParams("This message is no longer editable")
+    }
+    if let replacement = text.stringValue {
+      guard !replacement.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        throw JSONRPCError.invalidParams("Enter nonempty replacement text")
+      }
+      try transcript.editMessage(at: index, text: replacement)
+    } else {
+      try transcript.removeMessage(at: index)
+    }
+    saved.transcript = transcript.messages
+    saved.updatedAt = Date()
+    sessions[id]?.busy = true
+    defer { sessions[id]?.busy = false }
+    try await save(saved)
+    sessions[id]?.saved = saved
     await messageSnapshot(session: id)
     return .object([:])
   }

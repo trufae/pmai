@@ -18,6 +18,7 @@ private struct MessageActionsMenu: ViewModifier {
 
   func body(content: Content) -> some View {
     content
+      .contentShape(.interaction, Rectangle())
       .background(MessageMenuAnchor(request: request, menu: menu))
       .gesture(MessageMenuLongPress { request = MessageMenuRequest(location: $0) })
       .accessibilityAction(named: "Message actions") { request = MessageMenuRequest() }

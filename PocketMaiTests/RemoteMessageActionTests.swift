@@ -210,7 +210,7 @@ final class RemoteMessageActionTests: XCTestCase {
     try await body(store)
   }
 
-  func testRetryRestartAndResubmitUseTheRemoteSessionAndPersistItsHistory() async throws {
+  func testRetryAndResubmitUseTheRemoteSessionAndPersistItsHistory() async throws {
     try await withChat { chat, store, fixture, setOffline in
       let selected = try XCTUnwrap(chat.messages.first { $0.text == "Second" })
       let originalIDs = chat.messages.map(\.id)
@@ -218,7 +218,7 @@ final class RemoteMessageActionTests: XCTestCase {
       XCTAssertTrue(chat.canResubmit(selected.id))
       let assistant = try XCTUnwrap(chat.messages.first { $0.role == "assistant" })
       XCTAssertFalse(chat.canResubmit(assistant.id))
-      XCTAssertFalse(chat.canRetry(assistant.id))
+      XCTAssertTrue(chat.canRetry(assistant.id))
       XCTAssertFalse(chat.canResubmit(UUID()))
 
       setOffline(true)
@@ -242,19 +242,19 @@ final class RemoteMessageActionTests: XCTestCase {
       XCTAssertEqual(chat.messages.first?.id, originalIDs.first)
       XCTAssertFalse(chat.canResubmit(selected.id))  // The removed message is stale.
 
-      let retry = try XCTUnwrap(chat.messages.first { $0.text == "Second" })
-      chat.retry(retry.id, restarting: true)
+      let reply = try XCTUnwrap(chat.messages.last)
+      chat.retry(reply.id)
       try await waitForIdle(chat)
       XCTAssertNil(chat.error)
-      XCTAssertEqual(fixture.boundaries, ["msg_second", "msg_first"])
-      XCTAssertEqual(chat.messages.map(\.text), ["Second", "New answer"])
+      XCTAssertEqual(fixture.boundaries.first, "msg_second")
+      XCTAssertEqual(chat.messages.map(\.text), ["First", "First answer", "Second", "New answer"])
 
-      let restartedIDs = chat.messages.map(\.id)
-      let restarted = try XCTUnwrap(chat.messages.first)
-      chat.resubmit(restarted.id)
+      let existingIDs = chat.messages.map(\.id)
+      let second = try XCTUnwrap(chat.messages.first { $0.text == "Second" })
+      chat.resubmit(second.id)
       try await waitForIdle(chat)
-      XCTAssertEqual(chat.messages.map(\.text), ["Second", "New answer", "Second", "New answer"])
-      XCTAssertEqual(Array(chat.messages.prefix(2).map(\.id)), restartedIDs)
+      XCTAssertEqual(chat.messages.suffix(4).map(\.text), ["Second", "New answer", "Second", "New answer"])
+      XCTAssertEqual(Array(chat.messages.prefix(4).map(\.id)), existingIDs)
       XCTAssertEqual(fixture.boundaries.count, 2)
       XCTAssertEqual(fixture.prompts, ["Second", "Second", "Second"])
       let saved = try XCTUnwrap(store.host(chat.bookmark.id)?.conversations?.first)
@@ -262,10 +262,49 @@ final class RemoteMessageActionTests: XCTestCase {
       XCTAssertEqual(saved.messages.map(\.text), chat.messages.map(\.text))
 
       chat.disconnect()
-      XCTAssertTrue(chat.canResubmit(restarted.id))
-      chat.resubmit(restarted.id)
+      XCTAssertTrue(chat.canResubmit(second.id))
+      chat.resubmit(second.id)
       try await waitForIdle(chat)
       XCTAssertEqual(fixture.prompts, ["Second", "Second", "Second", "Second"])
+    }
+  }
+
+  func testEditingAnOpenCodePromptResendsItFromTheSamePoint() async throws {
+    try await withChat { chat, _, fixture, _ in
+      let prompt = try XCTUnwrap(chat.presentation.messages.first { $0.text == "Second" })
+      XCTAssertTrue(chat.canEdit(prompt))
+      XCTAssertFalse(chat.editsMessagesInPlace)
+
+      try await chat.edit(prompt, text: "Updated prompt", inPlace: false)
+      try await waitForIdle(chat)
+
+      XCTAssertEqual(fixture.boundaries, ["msg_second"])
+      XCTAssertEqual(fixture.prompts, ["Updated prompt"])
+      XCTAssertEqual(chat.messages.map(\.text), ["First", "First answer", "Updated prompt", "New answer"])
+    }
+  }
+
+  func testStartingFromARemotePromptSelectsAFreshChatInTheSameFolder() async throws {
+    try await withChat { chat, store, fixture, _ in
+      let configuration = URLSessionConfiguration.ephemeral
+      configuration.protocolClasses = [RemoteActionURLProtocol.self]
+      let navigation = HostNavigationStore(remotes: store, httpConfiguration: configuration)
+      defer { navigation.suspendConnections() }
+      navigation.selectHost(chat.bookmark.id, isOffline: false)
+      navigation.selectConversation(chat.conversation.id)
+      let prompt = try XCTUnwrap(chat.messages.first { $0.text == "Second" })
+
+      navigation.startConversation(from: prompt.id, in: chat)
+
+      let draft = try XCTUnwrap(navigation.selectedConversation)
+      XCTAssertNotEqual(draft.id, chat.conversation.id)
+      XCTAssertEqual(draft.cwd, chat.conversation.cwd)
+      XCTAssertNil(draft.sessionID)
+      XCTAssertNil(navigation.takeInitialPrompt(for: chat.conversation.id))
+      XCTAssertEqual(navigation.takeInitialPrompt(for: draft.id), "Second")
+      XCTAssertNil(navigation.takeInitialPrompt(for: draft.id))
+      XCTAssertEqual(chat.messages.map(\.text), ["First", "First answer", "Second", "Old answer"])
+      XCTAssertTrue(fixture.mutations.isEmpty)
     }
   }
 
@@ -285,13 +324,19 @@ final class RemoteMessageActionTests: XCTestCase {
     }
   }
 
-  func testDeletingAnArbitraryRemoteMessageRewindsTheHostHistory() async throws {
+  func testDeletingFromHereRequiresConfirmingTheFullOpenCodeHistoryChange() async throws {
     try await withChat { chat, _, fixture, _ in
       let selected = try XCTUnwrap(chat.messages.first { $0.text == "First answer" })
       XCTAssertTrue(chat.canDelete(selected.id))
 
-      chat.delete(selected.id)
-      try await waitForIdle(chat)
+      XCTAssertTrue(chat.deletesThroughEnd(selected.id))
+      do {
+        try await chat.delete(selected.id, throughEnd: false)
+        XCTFail("The single-message confirmation must not delete later messages")
+      } catch {}
+      XCTAssertFalse(chat.busy)
+      XCTAssertTrue(fixture.mutations.isEmpty)
+      try await chat.delete(selected.id, throughEnd: true)
 
       XCTAssertNil(chat.error)
       XCTAssertEqual(fixture.boundaries, ["msg_answer"])

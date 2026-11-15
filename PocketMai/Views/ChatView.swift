@@ -36,6 +36,11 @@ struct ChatView: View {
     var isResponding: Bool
   }
 
+  private struct PendingMessageDeletion {
+    let message: ChatMessage
+    let throughEnd: Bool
+  }
+
   private struct UserMessageNavigationState: Equatable {
     var isAtBottom = true
     var hasScrollableContent = false
@@ -79,7 +84,8 @@ struct ChatView: View {
   @EnvironmentObject private var ttsPlayer: TTSPlayer
   @State private var showingRenameAlert = false
   @State private var showingProviderModelSheet = false
-  @State private var messagePendingDeletion: ChatMessage?
+  @State private var messagePendingDeletion: PendingMessageDeletion?
+  @State private var remoteDeleteError: String?
   @State private var messageBatchPendingDeletion: PendingMessageBatchDeletion?
   @State private var messagePendingTrimAndResubmit: ChatMessage?
   @State private var messagePendingRestartFresh: ChatMessage?
@@ -145,8 +151,16 @@ struct ChatView: View {
         .interactiveDismissDisabled()
       }
       .task {
-        if let remoteChat { onRemoteChatReady(remoteChat) }
-        reconnectRemoteChat()
+        if let remoteChat {
+          onRemoteChatReady(remoteChat)
+          if let prompt = remoteHosts?.takeInitialPrompt(for: remoteChat.conversation.id) {
+            if !remoteChat.send(prompt) {
+              store.replaceComposerDraft(with: prompt, in: remoteChat.conversation.id)
+            }
+          } else {
+            reconnectRemoteChat()
+          }
+        }
       }
       .task(id: remoteChat?.connected) {
         await remoteChat?.refreshConfiguration()
@@ -240,24 +254,31 @@ struct ChatView: View {
         updateKeyboardOverlap(from: $0)
       }
       .alert(
-        "Delete this message?",
+        messagePendingDeletion?.throughEnd == true ? "Delete from here?" : "Delete this message?",
         isPresented: confirmationBinding($messagePendingDeletion),
         presenting: messagePendingDeletion
-      ) { message in
+      ) { deletion in
         Button("Cancel", role: .cancel) {
           messagePendingDeletion = nil
         }
-        Button("Delete Message", role: .destructive) {
+        Button(deletion.throughEnd ? "Delete From Here" : "Delete Message", role: .destructive) {
           if let remoteChat {
-            remoteChat.delete(message.id)
+            Task {
+              do { try await remoteChat.delete(deletion.message.id, throughEnd: deletion.throughEnd) }
+              catch is CancellationError {}
+              catch { remoteDeleteError = error.localizedDescription }
+            }
           } else {
-            store.deleteMessage(message)
+            store.deleteMessage(deletion.message)
           }
           messagePendingDeletion = nil
         }
-      } message: { _ in
-        Text("This message will be removed from the chat. This cannot be undone.")
+      } message: { deletion in
+        Text(deletion.throughEnd
+          ? "This message and all later messages will be removed from the remote chat."
+          : "This message will be removed from the chat. This cannot be undone.")
       }
+      .errorAlert("Could Not Delete Message", message: $remoteDeleteError)
       .alert(
         messageBatchPendingDeletion?.title ?? "Delete selected messages?",
         isPresented: confirmationBinding($messageBatchPendingDeletion),
@@ -273,14 +294,14 @@ struct ChatView: View {
         Text(deletion.message)
       }
       .alert(
-        "Rewind?",
+        messagePendingTrimAndResubmit?.role == .assistant ? "Retry this response?" : "Rewind?",
         isPresented: confirmationBinding($messagePendingTrimAndResubmit),
         presenting: messagePendingTrimAndResubmit
       ) { message in
         Button("Cancel", role: .cancel) {
           messagePendingTrimAndResubmit = nil
         }
-        Button("Rewind", role: .destructive) {
+        Button(message.role == .assistant ? "Retry Response" : "Rewind", role: .destructive) {
           if let remoteChat {
             remoteChat.retry(message.id)
           } else {
@@ -288,8 +309,10 @@ struct ChatView: View {
           }
           messagePendingTrimAndResubmit = nil
         }
-      } message: { _ in
-        Text("Messages after this point will be removed before the response is regenerated.")
+      } message: { message in
+        Text(message.role == .assistant
+          ? "The preceding prompt will be resent. Its response and any later messages will be removed."
+          : "Messages after this point will be removed before the response is regenerated.")
       }
       .alert(
         "Restart from here?",
@@ -300,11 +323,7 @@ struct ChatView: View {
           messagePendingRestartFresh = nil
         }
         Button("Restart From Here", role: .destructive) {
-          if let remoteChat {
-            remoteChat.retry(message.id, restarting: true)
-          } else {
-            Task { await store.restartFromScratch(with: message) }
-          }
+          Task { await store.restartFromScratch(with: message) }
           messagePendingRestartFresh = nil
         }
       } message: { _ in
@@ -912,6 +931,66 @@ struct ChatView: View {
     return store.btwQuestions.filter { $0.conversationID == currentConversationID }
   }
 
+  private func messageActions(for message: ChatMessage, in conversation: Conversation?)
+    -> MessageBubbleActions
+  {
+    var actions = MessageBubbleActions(
+      onToggleBookmark: conversation.map { conversation in
+        { store.toggleMessageBookmark(message, in: conversation.id) }
+      },
+      onBeginSelection: { beginMessageSelection(with: message.id) },
+      onSpeakFromHere: { speakFromHere(message, language: $0) },
+      onReply: { sendReply($0) })
+    if let remoteChat {
+      let throughEnd = remoteChat.deletesThroughEnd(message.id)
+      actions.allowsConversationMutation = remoteChat.canDelete(message.id)
+      actions.canReply = remoteChat.canSubmit
+      actions.onDelete = {
+        messagePendingDeletion = PendingMessageDeletion(message: message, throughEnd: throughEnd)
+      }
+      actions.deletesThroughEnd = throughEnd
+      if remoteChat.isUnsent(message.id) {
+        actions.canResubmit = remoteChat.canSubmit && !remoteChat.busy
+        actions.onRetryUnsent = { remoteChat.retryUnsent(message.id) }
+        return actions
+      }
+      if remoteChat.canEdit(message) {
+        let inPlace = remoteChat.editsMessagesInPlace
+        actions.onEditRemote = { try await remoteChat.edit(message, text: $0, inPlace: inPlace) }
+        if !inPlace {
+          actions.editConfirmation = "Replace this prompt and discard the messages after it?"
+        }
+      }
+      if remoteChat.supportsHistoryRewind, message.role == .user || message.role == .assistant {
+        actions.canRetry = remoteChat.canRetry(message.id)
+        actions.onTrimFromHere = { messagePendingTrimAndResubmit = message }
+      }
+      if message.role == .user {
+        actions.canResubmit = remoteChat.canResubmit(message.id)
+        actions.onResubmit = { remoteChat.resubmit(message.id) }
+        if actions.canResubmit, !remoteChat.busy, let remoteHosts {
+          actions.onStartNewChat = {
+            remoteHosts.startConversation(from: message.id, in: remoteChat)
+          }
+        }
+      }
+    } else {
+      actions.onDelete = {
+        messagePendingDeletion = PendingMessageDeletion(message: message, throughEnd: false)
+      }
+      actions.onTogglePin = conversation.map { conversation in
+        { store.setMessagePinned(!message.isPinned, messageID: message.id, in: conversation.id) }
+      }
+      actions.onEdit = { editMessage(message, text: $0) }
+      actions.onEditAttachment = { editTextAttachment(message, attachmentID: $0, text: $1) }
+      if message.role != .assistant {
+        actions.onTrimFromHere = { messagePendingTrimAndResubmit = message }
+        actions.onRestartFresh = { messagePendingRestartFresh = message }
+      }
+    }
+    return actions
+  }
+
   private var messages: some View {
     GeometryReader { scrollGeometry in
       ScrollViewReader { proxy in
@@ -977,31 +1056,7 @@ struct ChatView: View {
                           renderMarkdown: store.settings.renderMarkdownInChat,
                           renderImages: store.settings.renderMarkdownImagesInChat,
                           searchHighlight: searchHighlight,
-                          actions: MessageBubbleActions(
-                            allowsConversationMutation: remoteChat?.canDelete(message.id) ?? true,
-                            canReply: remoteChat?.canSubmit ?? true,
-                            canRetry: remoteChat?.canRetry(message.id) ?? true,
-                            canResubmit: remoteChat?.canResubmit(message.id) ?? true,
-                            onDelete: { messagePendingDeletion = message },
-                            onToggleBookmark: conversation.map { conversation in
-                              { store.toggleMessageBookmark(message, in: conversation.id) }
-                            },
-                            onTogglePin: remoteChat == nil ? conversation.map { conversation in
-                              { store.setMessagePinned(!message.isPinned, messageID: message.id, in: conversation.id) }
-                            } : nil,
-                            onBeginSelection: { beginMessageSelection(with: message.id) },
-                            onEdit: remoteChat == nil ? { editMessage(message, text: $0) } : nil,
-                            onEditAttachment: remoteChat == nil
-                              ? { attachmentID, editedText in
-                                editTextAttachment(message, attachmentID: attachmentID, text: editedText)
-                              } : nil,
-                            onTrimFromHere: remoteChat == nil || remoteChat?.supportsHistoryRewind == true
-                              ? { messagePendingTrimAndResubmit = message } : nil,
-                            onRestartFresh: remoteChat == nil || remoteChat?.supportsHistoryRewind == true
-                              ? { messagePendingRestartFresh = message } : nil,
-                            onResubmit: remoteChat.map { chat in { chat.resubmit(message.id) } },
-                            onSpeakFromHere: { speakFromHere(message, language: $0) },
-                            onReply: { reply in sendReply(reply) }),
+                          actions: messageActions(for: message, in: conversation),
                           isBookmarked: conversation.map {
                             store.isMessageBookmarked(message.id, in: $0.id)
                           } ?? false,
