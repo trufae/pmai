@@ -226,15 +226,50 @@ final class RemoteAgentStore {
   }
 
   func token(for id: UUID) throws -> String {
+    guard let token = try savedToken(for: id) else {
+      throw JSONRPCError.invalidParams("Reimport this connection's gateway token")
+    }
+    return token
+  }
+
+  private func savedToken(for id: UUID) throws -> String? {
     var query = keychainQuery(id)
     query[kSecReturnData] = true
     query[kSecMatchLimit] = kSecMatchLimitOne
     var result: CFTypeRef?
-    try check(SecItemCopyMatching(query as CFDictionary, &result))
-    guard let data = result as? Data, let token = String(data: data, encoding: .utf8) else {
-      throw JSONRPCError.invalidParams("Reimport this connection's gateway token")
+    let status = SecItemCopyMatching(query as CFDictionary, &result)
+    if status == errSecItemNotFound { return nil }
+    try check(status)
+    return (result as? Data).flatMap { String(data: $0, encoding: .utf8) }
+  }
+
+  func authorizeForwirohRepair(
+    _ profile: ACPRemoteConnection, for host: RemoteAgentBookmark, clientName: String
+  ) async throws -> ACPRemoteConnection {
+    let previousToken = host.requiresApproval == true ? nil : try savedToken(for: host.id)
+    var approved = profile
+    approved.requiresApproval = false
+    approved.forwirohInvitation = nil
+    if let previousToken {
+      let client = ACPClient(configuration: .init(
+        command: host.name, webSocketURL: host.url, bearerToken: previousToken))
+      do {
+        _ = try await client.workspace()
+        await client.disconnect()
+        approved.token = previousToken
+        return approved
+      } catch {
+        await client.disconnect()
+        if (error as? ACPClientError) != .gatewayUnauthorized { throw error }
+      }
     }
-    return token
+    guard profile.requiresApproval == true else { return approved }
+    try Task.checkCancellation()
+    let client = ACPClient(configuration: .init(
+      command: host.name, webSocketURL: host.url, bearerToken: profile.token))
+    approved.token = try await client.requestPairing(
+      clientID: host.id.uuidString.lowercased(), name: clientName)
+    return approved
   }
 
   func acceptPairing(_ id: UUID, token: String) throws {

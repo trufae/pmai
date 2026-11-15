@@ -129,6 +129,8 @@ struct RemoteAgentConnectionView: View {
   @State private var deleting = false
   @State private var agentAccess = false
   @State private var advertisedIP: (url: URL, address: String)?
+  @State private var repairHostID: UUID?
+  @State private var repairDevicePaired = false
 
   private enum HostType: String, CaseIterable { case pocketMai = "PocketMai", webSocketACP = "WebSocketACP", openCode = "OpenCode" }
   private var hostType: HostType {
@@ -167,12 +169,14 @@ struct RemoteAgentConnectionView: View {
             Text(hostType == .pocketMai ? "In the pmai REPL, run:" : "On your computer, run:")
             Text(hostType == .openCode ? "opencode pair --remote" : hostType == .webSocketACP
               ? "pmai acp-gateway --host 0.0.0.0 --cwd \"$PWD\" --url ws://HOST_IP:19283/acp -- pmai --acp --acp-root \"$PWD\""
-              : "/remote serve")
+              : initialHost?.url.scheme == "forwiroh" ? "/remote qr" : "/remote serve")
               .font(.system(.footnote, design: .monospaced)).textSelection(.enabled)
             Text(
               hostType == .openCode ? "Scan the QR, choose a name, then tap Add."
                 : hostType == .webSocketACP
                 ? "Replace HOST_IP with your computer’s LAN address, run this command in the project folder, then scan its QR. Other ACP agents can also be exposed through the gateway."
+                : initialHost?.url.scheme == "forwiroh"
+                ? "Scan a fresh QR to repair this connection. Save, then approve any requests with /remote accept on your computer."
                 : "Scan the QR and add the host. Approve the device and chat requests with /remote accept on your computer."
             )
           }
@@ -181,7 +185,9 @@ struct RemoteAgentConnectionView: View {
             Text("QR scanning is unavailable on this device. Paste a connection in Advanced.")
               .font(.footnote).foregroundStyle(.secondary)
           }
-          if importing { ProgressView("Pairing with OpenCode…") }
+          if importing {
+            ProgressView(backend == .openCode ? "Pairing with OpenCode…" : "Approve this repair with /remote accept…")
+          }
         }
         Section {
           TextField("Host name", text: $name)
@@ -212,13 +218,14 @@ struct RemoteAgentConnectionView: View {
           }
         }
         Section {
-          Toggle("Allow Remote Tool", isOn: $agentAccess)
+          Toggle("Allow Remote Tool", isOn: $agentAccess).disabled(importing)
         } footer: {
           Text("Permit the native remote tool in local conversations to access this host’s files and run programs. Tool approvals still apply.")
         }
         if initialHost != nil {
           Section {
             Button("Delete Host", systemImage: "trash", role: .destructive) { deleting = true }
+              .disabled(importing)
           }
         }
         if let error { Text(error).foregroundStyle(.red) }
@@ -435,6 +442,7 @@ struct RemoteAgentConnectionView: View {
             token = profile.token
             cwd = initialHost?.cwd ?? profile.cwd
             requiresApproval = false
+            repairHostID = nil
             uri = ""
           } catch {
             if !Task.isCancelled { self.error = error.localizedDescription }
@@ -445,11 +453,23 @@ struct RemoteAgentConnectionView: View {
     }
     do {
       let profile = try ACPRemoteConnection.parse(text)
+      let existing = initialHost ?? RemoteAgentStore.shared.connections.first { $0.url == profile.url }
+      let repair = profile.connectionProtocol == .forwiroh && profile.forwirohInvitation != nil
+      if repair, let initialHost, initialHost.url.scheme == "forwiroh", initialHost.url != profile.url {
+        throw JSONRPCError.invalidParams("This QR belongs to a different Forwiroh host. Add it as a new host.")
+      }
+      let savedHost = repair && existing?.url == profile.url ? existing : nil
+      repairHostID = savedHost?.id
+      repairDevicePaired = false
       backend = .acp
-      name = initialHost?.name ?? profile.name
+      name = initialHost?.name ?? savedHost?.name ?? profile.name
       address = profile.url.absoluteString
       token = profile.token
-      cwd = profile.cwd
+      cwd = savedHost?.cwd ?? profile.cwd
+      if initialHost == nil, let savedHost {
+        accentColor = savedHost.accentColor ?? accentColor
+        agentAccess = savedHost.agentAccess == true
+      }
       requiresApproval = profile.requiresApproval
       forwirohInvitation = profile.forwirohInvitation
       connectionProtocol =
@@ -482,12 +502,49 @@ struct RemoteAgentConnectionView: View {
         connectionProtocol: connectionProtocol)
       profile.requiresApproval = requiresApproval
       profile.forwirohInvitation = connectionProtocol == .forwiroh ? forwirohInvitation : nil
-      let id = try RemoteAgentStore.shared.add(
-        profile, replacing: initialHost?.id, accentColor: accentColor)
-      try RemoteAgentStore.shared.setAgentAccess(agentAccess, for: id)
-      dismiss()
-      onAdded?(id)
+      if profile.forwirohInvitation != nil,
+        let host = RemoteAgentStore.shared.host(repairHostID), host.url == url
+      {
+        try repair(profile, host: host)
+      } else {
+        try save(profile, replacing: initialHost?.id)
+      }
     } catch { self.error = error.localizedDescription }
+  }
+
+  private func repair(_ profile: ACPRemoteConnection, host: RemoteAgentBookmark) throws {
+    guard !appStore.settings.isOffline else { throw InternetAccessError.offline }
+    importing = true
+    error = nil
+    importTask = Task {
+      defer {
+        importing = false
+        importTask = nil
+      }
+      do {
+        let store = RemoteAgentStore.shared
+        if !repairDevicePaired {
+          try await ForwirohRemote.shared.pair(url: host.url, invitation: profile.forwirohInvitation)
+          repairDevicePaired = true
+        }
+        let repaired = try await store.authorizeForwirohRepair(
+          profile, for: host, clientName: UIDevice.current.name + " · PocketMai")
+        try Task.checkCancellation()
+        guard let current = store.host(host.id), current.url == host.url, current.revision == host.revision
+        else { throw JSONRPCError.invalidParams("This host changed while repairing. Open it and try again.") }
+        try save(repaired, replacing: host.id)
+      } catch {
+        if !Task.isCancelled { self.error = error.localizedDescription }
+      }
+    }
+  }
+
+  private func save(_ profile: ACPRemoteConnection, replacing id: UUID?) throws {
+    let store = RemoteAgentStore.shared
+    let savedID = try store.add(profile, replacing: id, accentColor: accentColor)
+    try store.setAgentAccess(agentAccess, for: savedID)
+    dismiss()
+    onAdded?(savedID)
   }
 }
 
