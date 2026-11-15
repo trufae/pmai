@@ -330,6 +330,7 @@ extension MaiCLI {
     /providers             List registered providers
     /ps [-a] [-p]          Show shell processes and command history; -k PID kills one
     /queue                 Manage messages waiting for an agent
+    /reminders             Manage reminders and due alerts
     /remote                Serve, pair, or connect to remote hosts
     /reply [WIDTH]         Reply in $EDITOR with the last reply quoted
     /reset [SETTING]       Restore one default, or all defaults after confirmation
@@ -341,7 +342,6 @@ extension MaiCLI {
     /theme                 List, apply, or customize terminal themes
     /then [LINE]           Queue a prompt or command until all tasks finish; no args lists it
     /todo                  Show or edit the project's todo list
-    /reminders             Manage reminders and due alerts
     /tools                 List tool groups for this agent; /tools full includes tools
     /unalias NAME          Unregister a global alias (/help alias for details)
     /unthen                Clear all pending /then actions
