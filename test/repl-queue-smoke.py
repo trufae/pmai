@@ -2,7 +2,7 @@
 """Exercise queue choices, cancellation and approval shutdown in a real REPL PTY."""
 import fcntl
 import json
-from smoke import project_storage, expect_pty, read_chat
+from smoke import project_storage, expect_pty, read_chat, run_repl
 import os
 from pathlib import Path
 import pty
@@ -37,7 +37,19 @@ class Provider(BaseHTTPRequestHandler):
         if slow:
             release.wait(30)
         message = {'role': 'assistant', 'content': 'answer'}
-        if texts in (['subagent'], ['background'], ['shell-child']) and not any(m['role'] == 'tool' for m in request['messages']):
+        if texts[-1:] in (['limit'], ['limit followup']):
+            message['content'] = texts[-1] + ' finished'
+            last_user = max(i for i, m in enumerate(request['messages']) if m['role'] == 'user')
+            calls = sum(m['role'] == 'tool' for m in request['messages'][last_user + 1:])
+            if calls < 4:
+                message = {'role': 'assistant', 'content': None, 'tool_calls': [{
+                    'id': f'limit-{len(texts)}-{calls}', 'type': 'function', 'function': {
+                        'name': 'files_write',
+                        'arguments': json.dumps({'path': f'limit-{calls}.txt', 'content': texts[-1],
+                                                 'mode': 'overwrite'}),
+                    },
+                }]}
+        elif texts in (['subagent'], ['background'], ['shell-child']) and not any(m['role'] == 'tool' for m in request['messages']):
             message = {'role': 'assistant', 'content': None, 'tool_calls': [{
                 'id': 'start-1', 'type': 'function', 'function': {
                     'name': 'agent_start',
@@ -96,7 +108,7 @@ def main():
     server = ThreadingHTTPServer(('127.0.0.1', 0), Provider)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
-        for choice in sys.argv[2:] or ('continue', 'submit', 'ignore', 'clear', 'stop',
+        for choice in sys.argv[2:] or ('continue', 'submit', 'ignore', 'clear', 'stop', 'limit-extend',
                        'hey', 'hey-empty', 'hey-idle', 'hey-approval', 'hey-shell', 'hey-all', 'hey-target', 'hey-child', 'hey-background',
                        'approval-eof', 'edit-eof', 'approval-exit', 'edit-exit',
                        'approval-quit', 'edit-quit', 'approval-interrupt', 'edit-interrupt',
@@ -135,7 +147,7 @@ def main():
                 env.update(TERM='xterm-256color', NO_PROXY='127.0.0.1,localhost')
                 process = subprocess.Popen(
                     [binary, '--config', str(config), '--home', str(root / 'home'),
-                     '--no-stream', '--no-markdown'] + (['--tool-approval', 'yolo'] if choice.startswith('shell-') or choice == 'hey-shell' else []), cwd=root, env=env,
+                     '--no-stream', '--no-markdown'] + (['--tool-approval', 'yolo'] if choice.startswith('shell-') or choice in ('hey-shell', 'limit-extend') else []), cwd=root, env=env,
                     stdin=slave, stdout=slave, stderr=slave, start_new_session=True)
                 os.close(slave)
                 output = bytearray()
@@ -201,6 +213,52 @@ def main():
 
                 try:
                     wait_for('> ')
+                    if choice == 'limit-extend':
+                        # Extending must increase the usable allowance and save it,
+                        # otherwise later prompts and resumed chats hit the old cap.
+                        send('/set limits.maxToolCalls\n')
+                        wait_for('limits.maxToolCalls = 100')
+                        send('/set limits.maxToolCalls 1\n')
+                        wait_for('Set limits.maxToolCalls = 1')
+                        send('limit\n')
+                        wait_for('tool call limit (1) reached')
+                        wait_for('limit [extend/stop/answer]> ')
+                        assert (root / 'limit-0.txt').read_text() == 'limit'
+                        send('extend\n')
+                        wait_for('Set limits.maxToolCalls = 2')
+                        wait_for('tool call limit (2) reached')
+                        wait_for('limit [extend/stop/answer]> ')
+                        assert (root / 'limit-2.txt').read_text() == 'limit'
+                        assert json.loads(config.read_text())['agents'][0]['limits']['maxToolCalls'] == 2
+                        send('extend 5\n')
+                        wait_for('Set limits.maxToolCalls = 5')
+                        wait_for('limit finished')
+                        wait_for('✓ took')
+                        assert (root / 'limit-3.txt').read_text() == 'limit'
+                        send('/set limits.maxToolCalls\n')
+                        wait_for('limits.maxToolCalls = 5')
+                        send('limit followup\n')
+                        wait_for('limit followup finished')
+                        wait_for('✓ took')
+                        for i in range(4):
+                            contents = (root / f'limit-{i}.txt').read_text()
+                            assert contents == 'limit followup', (i, contents)
+                        send('/exit\n')
+                        wait_for_exit()
+                        assert process.returncode == 0, process.returncode
+                        while not requests.empty():
+                            requests.get_nowait()
+                        chat_path, = (project_storage(root / 'home', root) / 'chats').glob('*.json')
+                        chat = read_chat(chat_path)
+                        assert chat['primaryAgent']['limits']['maxToolCalls'] == 5, chat
+                        assert json.loads(config.read_text())['agents'][0]['limits']['maxToolCalls'] == 5
+                        resumed = run_repl(
+                            [binary, '--config', str(config), '--home', str(root / 'home'),
+                             '--resume', chat['id'], '--no-stream', '--no-markdown'],
+                            ['/set limits.maxToolCalls'], cwd=root, env=env)
+                        assert 'limits.maxToolCalls = 5' in resumed, resumed
+                        print('PASS limit-extend: doubled and explicit limits, followup and saved resume', flush=True)
+                        continue
                     if choice == 'hey-idle':
                         # Idle /hey must send the new text, preserving completed
                         # exchanges instead of replaying or amending them.

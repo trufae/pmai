@@ -185,8 +185,8 @@
       "useToolProxy": true,
       "toolPolicy": {"automatic": true, "groups": {}, "tools": {}},
       "limits": {
-        "maxModelTurns": 310,
-        "maxToolCalls": 300,
+        "maxModelTurns": 110,
+        "maxToolCalls": 100,
         "maxSubagents": 5,
         "maxSubagentDepth": 5
       },

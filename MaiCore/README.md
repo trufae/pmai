@@ -991,8 +991,8 @@ shows the per-prompt limits of the current
 chat's agent; `/set limits.maxToolCalls N` and `/set limits.maxModelTurns N`
 change them and persist the change into that agent's configuration. The
 `--max-tool-calls N` and `--max-turns N` flags override both for one launch.
-`limits.maxToolCalls` defaults to 300 per prompt, not per conversation; each
-new prompt gets a fresh allowance. `limits.maxModelTurns` defaults to 310.
+`limits.maxToolCalls` defaults to 100 per prompt, not per conversation; each
+new prompt gets a fresh allowance. `limits.maxModelTurns` defaults to 110.
 `limits.maxTotalTokens` defaults to `off` (no token cap per run).
 `/set limits.runTimeoutSeconds 5m` sets the default timeout for each captured
 `run_shell` call (1–600 seconds). Use `default` to inherit the tool-source
@@ -1003,10 +1003,11 @@ Reaching a limit no longer ends a task with an error. A run that spends
 120k`), or `limits.maxSeconds` (`/set limits.maxSeconds 10m`; a long model call
 is cut short at the deadline) pauses at a turn boundary: everything it did is
 kept in the chat, the REPL prints `⏸ took 4m2s · model turn limit (50) reached`,
-and asks what to do next. `extend` resumes with a fresh run budget;
-`extend N` uses N as the reached limit for that continuation only (seconds for
-a time limit). `stop` keeps the work so far; `answer` continues with no more
-tool calls. The tool-call limit offers the same choice before asking the
+and asks what to do next. `extend` doubles the reached limit, saves it to the
+chat and its configured agent, and resumes with a fresh run budget.
+`extend N` saves N as that limit (seconds for a time limit). Later prompts
+and resumed chats use the saved limit. `stop` keeps the work so far; `answer`
+continues with no more tool calls. The tool-call limit offers the same choice before asking the
 model for a final answer. Ctrl+C or `/stop` dismisses the choice, and
 `/continue` can resume the saved work later. Slash commands remain available
 at the decision prompt. A cancelled or failed turn is kept the same way, with

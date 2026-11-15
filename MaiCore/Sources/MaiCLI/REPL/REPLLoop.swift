@@ -2561,21 +2561,26 @@ extension MaiCLI {
           let fields = text.lowercased().split(whereSeparator: \.isWhitespace)
           switch fields.first {
           case "extend", "e", "continue", "/continue":
-            var limits = session.profile.limits
+            let value: Int
             if fields.count > 1 {
-              guard fields.count == 2, let value = Int(fields[1]), value > 0 else {
+              guard fields.count == 2, let explicit = Int(fields[1]), explicit > 0 else {
                 await terminal.line("Use extend or extend N, with a positive limit.")
                 await releaseIfIdle(workspace: workspace)
                 return false
               }
+              value = explicit
+            } else {
               switch reason {
-              case .modelTurns: limits.maxModelTurns = value
-              case .toolCalls: limits.maxToolCalls = value
-              case .totalTokens: limits.maxTotalTokens = value
-              case .time: limits.maxSeconds = value
+              case .modelTurns(let limit), .toolCalls(let limit), .totalTokens(let limit),
+                .time(let limit):
+                value = limit > Int.max / 2 ? Int.max : limit * 2
               }
             }
-            await continueTurn(limits: limits)
+            await setLimit(
+              reason.settingKey, parts: [reason.settingKey, String(value)], session: &session,
+              configuration: &configuration, configurationPath: services.configurationPath,
+              terminal: terminal)
+            await continueTurn(limits: session.profile.limits)
           case "answer", "a":
             await continueTurn(withoutTools: true)
           case "stop", "s":

@@ -68,7 +68,7 @@ enum REPLModalPrompt {
     case .queue:
       return "Submit queued messages before this message, ignore them for this turn, or clear them?\nsubmit · ignore · clear"
     case .limit(let reason, _):
-      return "\(reason.summary). What should happen next?\nextend [N] renews the run budget (optionally with a new \(reason.settingKey)) · stop keeps the work so far · answer continues without tools"
+      return "\(reason.summary). What should happen next?\nextend doubles and saves \(reason.settingKey); extend N saves N, then resumes · stop keeps the work so far · answer continues without tools"
     case .chop, .rewind:
       return nil
     case .reset:
