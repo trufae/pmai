@@ -74,6 +74,8 @@ extension MaiCLI {
       "/memory scope project", "/memory scope all", "/edit memory", "/edit memory-prompt",
       "/help todo", "/todo", "/todo add ", "/todo done ", "/todo edit", "/todo sweep",
       "/todo del ", "/todo clear", "/todo path",
+      "/help reminders", "/reminders", "/reminders add ", "/reminders alarm ", "/reminders at ",
+      "/reminders done ", "/reminders reopen ", "/reminders remove ", "/reminders alerts ",
       "/help vdb", "/vdb", "/vdb index ", "/vdb query ", "/vdb status", "/vdb del ", "/vdb clear",
       "/set limits.", "/set limits.maxToolCalls ", "/set limits.maxModelTurns ",
       "/set limits.maxSubagents ", "/set limits.maxSeconds ", "/set limits.maxTotalTokens ",

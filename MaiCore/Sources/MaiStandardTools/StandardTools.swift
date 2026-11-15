@@ -28,9 +28,11 @@ public struct MaiStandardToolFactory: ConfiguredToolFactory {
   public typealias FileConfiguration =
     @Sendable (MaiFileWorkspaceConfiguration) async -> MaiFileWorkspaceConfiguration
   private let configureFiles: FileConfiguration?
+  private let reminders: ReminderStore?
 
-  public init(configureFiles: FileConfiguration? = nil) {
+  public init(configureFiles: FileConfiguration? = nil, reminders: ReminderStore? = nil) {
     self.configureFiles = configureFiles
+    self.reminders = reminders
   }
 
   /// The Files tools can retain the workspace while a host adds explicitly
@@ -80,6 +82,9 @@ public struct MaiStandardToolFactory: ConfiguredToolFactory {
       options: context.options, environment: context.environment)
     let tools: [any AgentTool] =
       MaiPmaiCommands.makeTools(policy: pmaiPolicy)
+      + ReminderTools.makeTools(
+        store: reminders ?? ReminderStore(directory: AgentHome.resolve(environment: context.environment).rootURL),
+        writeEnabled: context.options[ReminderTools.writeOption]?.boolValue ?? true)
       + [
         MaiCurrentTimeTool(),
         MaiCalculatorTool(),
@@ -128,6 +133,7 @@ public struct MaiStandardToolFactory: ConfiguredToolFactory {
       ? [MaiWebSearchTool.name]
       : [MaiWebSearchTool.name, MaiWebFetchTool.name]
     return [
+      ReminderTools.group,
       ToolGroupDefinition(
         id: "datetime",
         displayName: "Date & Time",

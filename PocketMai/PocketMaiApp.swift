@@ -60,6 +60,9 @@ private struct PocketMaiRootView: View {
         }
         .onChange(of: keepAwake, initial: true) { _, _ in updateAwake() }
         .onChange(of: scenePhase) { _, _ in updateAwake() }
+        .task(id: scenePhase) {
+          if scenePhase == .active { await PocketMaiReminders.notifications.monitor() }
+        }
         .onDisappear { try? AwakeController.shared.setEnabled(false) }
   }
 

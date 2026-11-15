@@ -1,3 +1,4 @@
+import MaiCore
 import UIKit
 import UserNotifications
 
@@ -102,9 +103,9 @@ final class ResponseNotificationService: NSObject, UNUserNotificationCenterDeleg
     withCompletionHandler completionHandler:
       @escaping @Sendable (UNNotificationPresentationOptions) -> Void
   ) {
-    // Delivery raced with the app coming back to the foreground; the chat is visible.
+    let isReminder = AppleReminderNotifications.owns(notification.request.identifier)
     Task { @MainActor in
-      completionHandler([])
+      completionHandler(isReminder ? [.banner, .list, .sound] : [])
     }
   }
 

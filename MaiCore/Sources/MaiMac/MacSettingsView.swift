@@ -1,6 +1,8 @@
 import AppKit
 import MaiACP
 import MaiCore
+import MaiStandardTools
+import MaiUI
 import SwiftUI
 
 private enum MacSettingsEditor: Identifiable {
@@ -47,6 +49,7 @@ struct MacSettingsView: View {
         providers.tabItem { Label("Providers", systemImage: "cpu") }.tag("providers")
         mcps.tabItem { Label("MCP Servers", systemImage: "puzzlepiece.extension") }.tag("mcps")
         prompts.tabItem { Label("Prompts", systemImage: "text.bubble") }.tag("prompts")
+        reminders.tabItem { Label("Reminders", systemImage: "bell") }.tag("reminders")
         skills.tabItem { Label("Skills", systemImage: "sparkles") }.tag("skills")
       }
       if let error = store.error {
@@ -121,6 +124,43 @@ struct MacSettingsView: View {
         LabeledContent("Stop response", value: "⌘.")
       }
     }.formStyle(.grouped)
+  }
+
+  private var reminders: some View {
+    Form {
+      Section("Assistant tools") {
+        Picker("Configuration", selection: Binding(get: { store.scopeID }, set: {
+          store.scopeID = $0
+          store.reload()
+        })) {
+          ForEach(store.scopes) { scope in
+            Text(scope.cwd == nil ? scope.name : "Workspace: " + scope.name).tag(scope.id)
+          }
+        }
+        Toggle("Allow the assistant to change reminders", isOn: Binding(get: {
+          store.configuration.toolSources.filter { $0.kind == MaiStandardToolsPlugin.factoryKind }
+            .allSatisfy { $0.options[ReminderTools.writeOption]?.boolValue != false }
+        }, set: { enabled in
+          store.perform {
+            try store.save { configuration in
+              let kind = MaiStandardToolsPlugin.factoryKind
+              if !configuration.toolSources.contains(where: { $0.kind == kind }) {
+                configuration.toolSources.append(.init(id: kind, kind: kind))
+              }
+              for index in configuration.toolSources.indices where configuration.toolSources[index].kind == kind {
+                configuration.toolSources[index].options[ReminderTools.writeOption] = .bool(enabled)
+              }
+            }
+          }
+        }))
+        .disabled(store.document == nil)
+        if let notice = store.notice { Text(notice).font(.caption).foregroundStyle(.secondary) }
+      }
+      Section("Local reminders") {
+        ReminderSettings(notifications: workspace.backend.reminders)
+      }
+    }
+    .formStyle(.grouped)
   }
 
   private var hosts: some View {

@@ -15,6 +15,11 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 
 class MainActivity : ComponentActivity() {
     private var invitation by mutableStateOf("")
+    override fun onResume() {
+        super.onResume()
+        ReminderNotifications.refresh(applicationContext)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()

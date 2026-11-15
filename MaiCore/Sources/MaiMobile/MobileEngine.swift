@@ -193,6 +193,12 @@ import Observation
         }
         try awake.setEnabled(value("enabled") == "true")
         preferences.set(awake.isEnabled, forKey: AwakeController.preferenceKey)
+      case "remindersAlerts", "reminders_add", "reminders_update", "reminders_remove":
+        Task { await tools.manageReminder(command) }
+      case "remindersWriteEnabled":
+        guard !chat.isGenerating else { throw PortableChatError.busy }
+        try tools.configure(command)
+        Task { await tools.loadCatalog() }
       case "toolsEnabled", "toolEnabled", "groupEnabled", "saveMcp", "mcpEnabled", "removeMcp", "saveSkill", "removeSkill":
         guard !chat.isGenerating else { throw PortableChatError.busy }
         try tools.configure(command)

@@ -67,6 +67,9 @@ extension MaiCLI {
     services: REPLServices
   ) async throws -> String {
     let command = line.split(maxSplits: 1, whereSeparator: \Character.isWhitespace).map(String.init)
+    if command.first == "/reminders" {
+      return "Use the Reminders tool group to manage reminders from an agent."
+    }
     if command.first == "/box" {
       return "Only the person at the REPL can manage project boxes."
     }
@@ -220,6 +223,8 @@ extension MaiCLI {
         await terminal.line(themeHelp)
       case "memory", "/memory":
         await terminal.line(memoryHelp)
+      case "reminders", "/reminders":
+        await terminal.line(remindersHelp)
       case "todo", "/todo":
         await terminal.line(todoHelp)
       case "vdb", "/vdb":
@@ -398,6 +403,9 @@ extension MaiCLI {
       await terminal.line(voiceHelp)
     case "/btw":
       await handleBTWCommand(argument, session: session, runtime: runtime, terminal: terminal)
+    case "/reminders":
+      await handleRemindersCommand(argument, store: ReminderStore(directory: services.home.rootURL),
+        terminal: terminal)
     case "/todo":
       await handleTodoCommand(argument, todo: services.todo, terminal: terminal)
     case "/vdb":

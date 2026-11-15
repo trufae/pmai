@@ -580,6 +580,7 @@ enum BuiltInToolID: String, Codable, CaseIterable, Identifiable, Sendable {
   case calendar
   case clipboard
   case alarms
+  case reminders
   case webxdc
   case github
   case mastodon
@@ -601,7 +602,7 @@ enum BuiltInToolID: String, Codable, CaseIterable, Identifiable, Sendable {
     case .datetime, .language, .location, .memory:
       return true
     case .weather, .webSearch, .todo, .calculator, .textToSpeech, .files, .calendar, .clipboard,
-      .alarms, .webxdc, .github, .mastodon, .browser, .vdb, .context, .remote, .prompts:
+      .alarms, .reminders, .webxdc, .github, .mastodon, .browser, .vdb, .context, .remote, .prompts:
       return false
     }
   }
@@ -609,7 +610,7 @@ enum BuiltInToolID: String, Codable, CaseIterable, Identifiable, Sendable {
   var isCallableTool: Bool {
     switch self {
     case .weather, .webSearch, .todo, .calculator, .textToSpeech, .files, .calendar, .clipboard,
-      .alarms, .webxdc, .github, .mastodon, .browser, .vdb, .context, .remote, .prompts:
+      .alarms, .reminders, .webxdc, .github, .mastodon, .browser, .vdb, .context, .remote, .prompts:
       return true
     case .datetime, .language, .location, .memory:
       return false
@@ -632,6 +633,7 @@ enum BuiltInToolID: String, Codable, CaseIterable, Identifiable, Sendable {
     case .calendar: "Calendar"
     case .clipboard: "Clipboard"
     case .alarms: "Alarms"
+    case .reminders: "Reminders"
     case .webxdc: "WebXDC Apps"
     case .github: "GitHub"
     case .mastodon: "Mastodon"
@@ -658,6 +660,7 @@ enum BuiltInToolID: String, Codable, CaseIterable, Identifiable, Sendable {
     case .calendar: "calendar"
     case .clipboard: "doc.on.clipboard"
     case .alarms: "alarm"
+    case .reminders: "bell"
     case .webxdc: "square.grid.2x2"
     case .github: "arrow.triangle.branch"
     case .mastodon: "bubble.left.and.bubble.right"
@@ -3022,6 +3025,8 @@ struct NativeToolSettings: Codable, Equatable, Sendable {
   var webSearchSearXNGPassword: String = ""
   var webSearchFetchingEnabled: Bool = false
   var calendarEventCreationEnabled: Bool = false
+  var remindersWriteEnabled = true
+  var remindersAppleEnabled = false
   var todos: [TodoItem] = []
   var files: [ToolFile] = []
   var filesWorkspaceAccessEnabled: Bool = false
@@ -3060,6 +3065,7 @@ struct NativeToolSettings: Codable, Equatable, Sendable {
     case preciseLocation, manualLocation, weatherLocation, webSearchProvider
     case webSearchSearXNGURL, webSearchSearXNGUsername, webSearchSearXNGPassword
     case webSearchFetchingEnabled, calendarEventCreationEnabled, todos, files
+    case remindersWriteEnabled, remindersAppleEnabled
     case filesWorkspaceAccessEnabled, filesAdvancedToolsEnabled
     case webxdcAllowInternet, webxdcChatInteractionEnabled, webxdcAllowProviderAPIs
     case webxdcAllowGPSLocation, webxdcAllowMotionSensors, webxdcAllowWASM
@@ -3114,6 +3120,8 @@ struct NativeToolSettings: Codable, Equatable, Sendable {
     calendarEventCreationEnabled =
       (try? c.decode(Bool.self, forKey: .calendarEventCreationEnabled))
       ?? defaults.calendarEventCreationEnabled
+    remindersWriteEnabled = (try? c.decode(Bool.self, forKey: .remindersWriteEnabled)) ?? defaults.remindersWriteEnabled
+    remindersAppleEnabled = (try? c.decode(Bool.self, forKey: .remindersAppleEnabled)) ?? defaults.remindersAppleEnabled
     todos = (try? c.decode([TodoItem].self, forKey: .todos)) ?? defaults.todos
     files = (try? c.decode([ToolFile].self, forKey: .files)) ?? defaults.files
     filesWorkspaceAccessEnabled =
@@ -3215,6 +3223,8 @@ struct NativeToolSettings: Codable, Equatable, Sendable {
     try c.encode(webSearchSearXNGPassword, forKey: .webSearchSearXNGPassword)
     try c.encode(webSearchFetchingEnabled, forKey: .webSearchFetchingEnabled)
     try c.encode(calendarEventCreationEnabled, forKey: .calendarEventCreationEnabled)
+    try c.encode(remindersWriteEnabled, forKey: .remindersWriteEnabled)
+    try c.encode(remindersAppleEnabled, forKey: .remindersAppleEnabled)
     try c.encode(todos, forKey: .todos)
     try c.encode(files, forKey: .files)
     try c.encode(filesWorkspaceAccessEnabled, forKey: .filesWorkspaceAccessEnabled)

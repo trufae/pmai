@@ -109,6 +109,20 @@ enum BuiltInToolCatalog {
       return ClipboardTool.getText()
     case ClipboardTool.setName:
       return ClipboardTool.setText(arguments: call.argumentValues)
+    case let name where ReminderTools.Operation(rawValue: name) != nil:
+      guard let operation = ReminderTools.Operation(rawValue: name) else { return nil }
+      let apple = call.argumentValues["apple"]?.boolValue == true
+      let live = store.settings.toolSettings
+      guard operation == .list || (settings.toolSettings.remindersWriteEnabled && live.remindersWriteEnabled)
+      else { return "Error: reminder changes are disabled in Settings." }
+      guard !apple || (settings.toolSettings.remindersAppleEnabled && live.remindersAppleEnabled)
+      else { return "Error: enable Apple Reminders in the Reminders tool settings." }
+      let backend: any ReminderBackend = apple ? PocketMaiReminders.apple : PocketMaiReminders.store
+      do {
+        let result = try await ReminderTools.execute(operation, arguments: call.argumentValues, backend: backend)
+        if !apple && operation != .list { await PocketMaiReminders.notifications.refresh() }
+        return result.text
+      } catch { return "Error: \(error.localizedDescription)" }
     case AlarmTool.setName:
       return await AlarmTool.set(arguments: call.argumentValues)
     case AlarmTool.listName:
@@ -218,6 +232,9 @@ enum BuiltInToolCatalog {
       return CalendarTool.definitions(settings: toolSettings)
     case .clipboard:
       return ClipboardTool.definitions
+    case .reminders:
+      return ReminderTools.operations(writeEnabled: includeUnavailable || settings.toolSettings.remindersWriteEnabled)
+        .map { $0.definition(appleAvailable: settings.toolSettings.remindersAppleEnabled) }
     case .alarms:
       return AlarmTool.definitions
     case .webxdc:
@@ -365,9 +382,7 @@ enum ToolAgentRegistry {
         for: id, conversation: conversation, settings: settings).map(\.name))
       append(
         tools,
-        group: ToolGroupDefinition(
-          id: id.rawValue, sourceID: "native", displayName: id.displayName,
-          toolNames: Set(tools.map(\.name))),
+        group: nativeGroup(id, tools: tools),
         enabled: conversation.enabledTools.contains(id) ? Set(tools.map(\.name)) : [],
         availableNames: availableNames)
     }
@@ -440,6 +455,16 @@ enum ToolAgentRegistry {
     snapshots.append(CatalogSnapshot(conversation: metadata, settings: settings,
       tools: mcpTools, resources: mcpResources, statuses: mcpStatuses, catalog: catalog))
     return catalog
+  }
+
+  private static func nativeGroup(_ id: BuiltInToolID, tools: [ToolDefinition]) -> ToolGroupDefinition {
+    if id == .reminders {
+      var group = ReminderTools.group
+      group.sourceID = "native"
+      return group
+    }
+    return ToolGroupDefinition(id: id.rawValue, sourceID: "native", displayName: id.displayName,
+      toolNames: Set(tools.map(\.name)))
   }
 
   private static func cleanedToolDescription(_ text: String, fallback: String) -> String {

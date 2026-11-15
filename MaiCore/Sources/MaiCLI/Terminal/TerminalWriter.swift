@@ -628,6 +628,11 @@ actor TerminalWriter {
     status(value, color: color)
   }
 
+  func reminderAlert(_ title: String, audible: Bool) {
+    line("Reminder: \(title)", to: .standardError)
+    if audible, screen != nil, !capturesOutput { FileHandle.standardOutput.write(Data([7])) }
+  }
+
   func line(_ value: String = "", to handle: FileHandle = .standardOutput) {
     finishIconLine()
     if capturesOutput {

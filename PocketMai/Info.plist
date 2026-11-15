@@ -69,6 +69,8 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>PocketMai manages reminders in its own list in the Reminders app when you enable this integration.</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>
 	<string>PocketMai can read your calendar events only when the Calendar tool is enabled and called in chat.</string>
 	<key>NSCalendarsUsageDescription</key>

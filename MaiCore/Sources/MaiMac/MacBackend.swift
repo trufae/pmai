@@ -8,6 +8,7 @@ import Observation
 final class MacBackend {
   let home: AgentHome
   let servers: MacServerStore
+  let reminders: AppleReminderNotifications
   var hosts: [ACPRemoteHost] = []
   var boxes: [ProjectBox] = []
   private var boxSessions: [UUID: [ACPSessionInfo]] = [:]
@@ -20,6 +21,7 @@ final class MacBackend {
     let home = AgentHome.resolve()
     self.home = home
     servers = MacServerStore(home: home)
+    reminders = AppleReminderNotifications(store: ReminderStore(directory: home.rootURL))
   }
 
   var hostStore: ACPRemoteHostStore { .init(directory: home.rootURL.appendingPathComponent("remotes")) }
