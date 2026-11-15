@@ -28,7 +28,7 @@ enum FileBrowserLocation: Identifiable {
   }
   var isRemote: Bool { if case .remote = self { true } else { false } }
 
-  @MainActor func connection(browsingFolders: Bool = false) throws -> FileBrowserConnection {
+  @MainActor func connection(browsingFolders: Bool = false) async throws -> FileBrowserConnection {
     switch self {
     case .local(let context):
       return .local(
@@ -38,7 +38,7 @@ enum FileBrowserLocation: Identifiable {
             isSecurityScoped: context.isSecurityScoped,
             hiddenRootEntryNames: context.hidesModelsFolder ? ["Models"] : [])))
     case .remote(let host, let cwd):
-      return try host.workspaceConnection(cwd: cwd, browsingFolders: browsingFolders)
+      return try await host.workspaceConnection(cwd: cwd, browsingFolders: browsingFolders)
     }
   }
 }
@@ -68,6 +68,17 @@ struct BrowserFile: Identifiable {
 @MainActor
 final class WorkspaceFileBrowser: ObservableObject {
   static let previewLimit = 16 * 1024 * 1024
+  nonisolated private static let transferQueue = DispatchQueue(
+    label: "io.github.trufae.mai.file-transfers", qos: .utility)
+
+  nonisolated private static func disk<T: Sendable>(
+    _ operation: @escaping @Sendable () throws -> T
+  ) async throws -> T {
+    try Task.checkCancellation()
+    return try await withCheckedThrowingContinuation { continuation in
+      transferQueue.async { continuation.resume(with: Result(catching: operation)) }
+    }
+  }
   let location: FileBrowserLocation
   let browsingFolders: Bool
   private let isOffline: () -> Bool
@@ -164,7 +175,9 @@ final class WorkspaceFileBrowser: ObservableObject {
     isBusy = true
     status = "Saving \(file.url.lastPathComponent)…"
     let task = Task {
-      try Data(text.utf8).write(to: file.url, options: .atomic)
+      let url = file.url
+      try await Self.disk { try Data(text.utf8).write(to: url, options: .atomic) }
+      try Task.checkCancellation()
       try await self.uploadFile(file.url, destination: file.originalPath, overwrite: true)
       try? await self.load(self.path)
     }
@@ -229,13 +242,14 @@ final class WorkspaceFileBrowser: ObservableObject {
     }
   }
 
-  private func activeConnection() throws -> FileBrowserConnection {
+  private func activeConnection() async throws -> FileBrowserConnection {
     try Task.checkCancellation()
     guard !location.isRemote || !isOffline() else {
       throw WorkspaceFileError("Turn off Airplane Mode to access remote files.")
     }
     if let connection { return connection }
-    let connection = try location.connection(browsingFolders: browsingFolders)
+    let connection = try await location.connection(browsingFolders: browsingFolders)
+    try Task.checkCancellation()
     self.connection = connection
     return connection
   }
@@ -278,7 +292,9 @@ final class WorkspaceFileBrowser: ObservableObject {
     }
     let folder = FileManager.default.temporaryDirectory.appendingPathComponent(
       "pmai-file-\(UUID())")
-    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
+    try await Self.disk {
+      try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
+    }
     temporaryFolders.append(folder)
     var completed = false
     defer {
@@ -288,10 +304,12 @@ final class WorkspaceFileBrowser: ObservableObject {
       }
     }
     let destination = folder.appendingPathComponent(entry.name)
-    guard FileManager.default.createFile(atPath: destination.path, contents: nil) else {
-      throw WorkspaceFileError("Could not create the downloaded file.")
+    let handle = try await Self.disk {
+      guard FileManager.default.createFile(atPath: destination.path, contents: nil) else {
+        throw WorkspaceFileError("Could not create the downloaded file.")
+      }
+      return try FileHandle(forWritingTo: destination)
     }
-    let handle = try FileHandle(forWritingTo: destination)
     defer { try? handle.close() }
     var offset = 0
     var version: String?
@@ -305,7 +323,8 @@ final class WorkspaceFileBrowser: ObservableObject {
       else { throw WorkspaceFileError("The file changed or the download was interrupted.") }
       version = chunk.version
       size = chunk.size
-      try handle.write(contentsOf: chunk.data)
+      try await Self.disk { try handle.write(contentsOf: chunk.data) }
+      try Task.checkCancellation()
       offset += chunk.data.count
       progress = size == 0 ? 1 : Double(offset) / Double(size)
       if preview && size > Self.previewLimit { break }
@@ -318,11 +337,13 @@ final class WorkspaceFileBrowser: ObservableObject {
   private func uploadFile(_ url: URL, destination: String? = nil, overwrite: Bool) async throws {
     let access = url.startAccessingSecurityScopedResource()
     defer { if access { url.stopAccessingSecurityScopedResource() } }
-    let info = try url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
-    guard info.isRegularFile == true else {
-      throw WorkspaceFileError("Select regular files to upload.")
+    let (handle, size) = try await Self.disk {
+      let info = try url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+      guard info.isRegularFile == true else {
+        throw WorkspaceFileError("Select regular files to upload.")
+      }
+      return (try FileHandle(forReadingFrom: url), info.fileSize)
     }
-    let handle = try FileHandle(forReadingFrom: url)
     defer { try? handle.close() }
     let destination =
       destination ?? URL(fileURLWithPath: path).appendingPathComponent(url.lastPathComponent).path
@@ -332,14 +353,14 @@ final class WorkspaceFileBrowser: ObservableObject {
     }
     var offset = 0
     do {
-      while let data = try handle.read(upToCount: WorkspaceFileRequest.chunkSize), !data.isEmpty {
+      while let data = try await Self.disk({ try handle.read(upToCount: WorkspaceFileRequest.chunkSize) }), !data.isEmpty {
         let response = try await request(
           .init(.uploadChunk, offset: offset, transferID: id, data: data))
         offset += data.count
         guard response.bytes == offset else {
           throw WorkspaceFileError("The host did not accept the complete upload chunk.")
         }
-        progress = Double(offset) / Double(max(info.fileSize ?? 1, 1))
+        progress = Double(offset) / Double(max(size ?? 1, 1))
       }
       _ = try await request(.init(.uploadFinish, offset: offset, transferID: id))
     } catch {

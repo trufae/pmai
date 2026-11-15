@@ -1415,16 +1415,26 @@ struct ConversationSummary: Identifiable, Codable, Equatable, Sendable {
   var previewMessages: [ConversationPreviewMessage]
 
   init(conversation: Conversation) {
-    id = conversation.id
-    title = conversation.title
-    createdAt = conversation.createdAt
-    updatedAt = conversation.updatedAt
+    self.init(id: conversation.id, title: conversation.title,
+      createdAt: conversation.createdAt, updatedAt: conversation.updatedAt,
+      messages: conversation.messages)
     isPinned = conversation.isPinned
     isUnread = conversation.isUnread
     folderID = conversation.folderID
-    hasMessages = !conversation.messages.isEmpty
-    preview = Self.previewText(from: conversation.messages)
-    previewMessages = Self.previewMessages(from: conversation.messages)
+  }
+
+  init(id: UUID, title: String, createdAt: Date, updatedAt: Date,
+    messages: some BidirectionalCollection<ChatMessage>) {
+    self.id = id
+    self.title = title
+    self.createdAt = createdAt
+    self.updatedAt = updatedAt
+    isPinned = false
+    isUnread = false
+    folderID = ConversationFolder.defaultID
+    hasMessages = !messages.isEmpty
+    preview = Self.previewText(from: messages)
+    previewMessages = Self.previewMessages(from: messages)
   }
 
   var isArchived: Bool {
@@ -1442,8 +1452,8 @@ struct ConversationSummary: Identifiable, Codable, Equatable, Sendable {
     return plainText.isEmpty ? "No messages" : plainText
   }
 
-  private static func previewText(from messages: [ChatMessage]) -> String {
-    messages.reversed().compactMap(previewText(from:)).first ?? ""
+  private static func previewText(from messages: some BidirectionalCollection<ChatMessage>) -> String {
+    messages.reversed().lazy.compactMap(previewText(from:)).first ?? ""
   }
 
   private static func previewText(from message: ChatMessage) -> String? {
@@ -1453,12 +1463,12 @@ struct ConversationSummary: Identifiable, Codable, Equatable, Sendable {
     return text
   }
 
-  private static func previewMessages(from messages: [ChatMessage])
+  private static func previewMessages(from messages: some BidirectionalCollection<ChatMessage>)
     -> [ConversationPreviewMessage]
   {
-    messages
+    messages.reversed().lazy
       .filter { $0.role == .user || $0.role == .assistant }
-      .suffix(6)
+      .prefix(6).reversed()
       .map(ConversationPreviewMessage.init(message:))
   }
 

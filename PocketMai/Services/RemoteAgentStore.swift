@@ -53,9 +53,10 @@ struct RemoteAgentBookmark: Codable, Identifiable, Sendable {
   }
 
   @MainActor func workspaceConnection(cwd: String, resumeID: String? = nil,
-    browsingFolders: Bool = false) throws -> WorkspaceConnection
+    browsingFolders: Bool = false) async throws -> WorkspaceConnection
   {
-    try connection(token: RemoteAgentStore.shared.token(for: id), cwd: cwd)
+    let token = try await RemoteAgentStore.shared.connectionToken(for: id)
+    return try connection(token: token, cwd: cwd)
       .workspace(resumeID: resumeID, browsingFolders: browsingFolders)
   }
 
@@ -75,7 +76,7 @@ struct RemoteAgentBookmark: Codable, Identifiable, Sendable {
   }
 }
 
-struct RemoteAgentConversation: Codable, Identifiable, Sendable {
+struct RemoteAgentConversation: Codable, Identifiable, Equatable, Sendable {
   var id = UUID()
   var cwd: String
   var sessionID: String?
@@ -86,41 +87,59 @@ struct RemoteAgentConversation: Codable, Identifiable, Sendable {
   var systemPrompt: SystemPrompt?
   var unsentMessages: [RemoteUnsentMessage]?
 
+  private var displayMessages: some BidirectionalCollection<ChatMessage> {
+    let createdAt = createdAt ?? updatedAt
+    let pending = (unsentMessages ?? []).map(\.displayMessage)
+    let source = pending.isEmpty ? messages : messages + pending
+    return source.lazy.map {
+      $0.presentation(createdAt: createdAt)
+    }
+  }
+
+  var summary: ConversationSummary {
+    .init(id: id, title: title, createdAt: createdAt ?? updatedAt, updatedAt: updatedAt,
+      messages: displayMessages)
+  }
+
   var presentation: Conversation {
     var result = Conversation()
     result.id = self.id
     result.title = self.title
     result.createdAt = self.createdAt ?? self.updatedAt
     result.updatedAt = self.updatedAt
-    result.messages = (messages + (unsentMessages ?? []).map(\.displayMessage)).map { message in
-      var text = message.text
-      if message.role == "thought" { text = "<think>\n\(text)\n</think>" }
-      if message.role == "tool" || message.role == "plan" {
-        if let name = message.toolName {
-          if text == name {
-            text = ""
-          } else if text.hasPrefix(name + "\n") {
-            text = String(text.dropFirst(name.count + 1))
-          }
-        }
-        let failed = message.status == "error" || message.status == "failed"
-        text = AgentTooling.makeRunBlock(
-          toolName: message.toolName ?? (message.role == "plan" ? "Plan" : "Remote"),
-          argumentsJSON: message.toolInput?.compactJSONString ?? "",
-          result: failed ? "Error: \(text)"
-            : [message.status, text].compactMap { $0 }.joined(separator: "\n"))
-      }
-      return ChatMessage(
-        id: message.id, role: ChatRole(rawValue: message.role) ?? .assistant, text: text,
-        createdAt: message.createdAt ?? result.createdAt)
-    }
+    result.messages = Array(displayMessages)
     return result
+  }
+}
+
+private extension ACPConversationMessage {
+  func presentation(createdAt fallback: Date) -> ChatMessage {
+    var text = text
+    if role == "thought" { text = "<think>\n\(text)\n</think>" }
+    if role == "tool" || role == "plan" {
+      if let name = toolName {
+        if text == name {
+          text = ""
+        } else if text.hasPrefix(name + "\n") {
+          text = String(text.dropFirst(name.count + 1))
+        }
+      }
+      let failed = status == "error" || status == "failed"
+      text = AgentTooling.makeRunBlock(
+        toolName: toolName ?? (role == "plan" ? "Plan" : "Remote"),
+        argumentsJSON: toolInput?.compactJSONString ?? "",
+        result: failed ? "Error: \(text)"
+          : [status, text].compactMap { $0 }.joined(separator: "\n"))
+    }
+    return ChatMessage(
+      id: id, role: ChatRole(rawValue: role) ?? .assistant, text: text,
+      createdAt: createdAt ?? fallback)
   }
 }
 
 typealias RemoteAgentMessage = ACPConversationMessage
 
-struct RemoteUnsentMessage: Codable, Identifiable, Sendable {
+struct RemoteUnsentMessage: Codable, Identifiable, Equatable, Sendable {
   var message: RemoteAgentMessage
   var command: String?
   var skillID: String?
@@ -143,7 +162,7 @@ final class RemoteAgentStore {
   var error: String?
   private let file: URL
   private let persistenceQueue = DispatchQueue(label: "io.github.trufae.mai.remote-cache", qos: .utility)
-  private let keychainService = "io.github.trufae.mai.acp-gateway"
+  nonisolated private static let keychainService = "io.github.trufae.mai.acp-gateway"
 
   init(file: URL? = nil) {
     let directory =
@@ -201,16 +220,16 @@ final class RemoteAgentStore {
       throw JSONRPCError.invalidParams("A host with this gateway URL already exists.")
     }
     let id = existing.map { connections[$0].id } ?? UUID()
-    let query = keychainQuery(id)
+    let query = Self.keychainQuery(id)
     let data = Data(token.utf8)
     let updated = SecItemUpdate(query as CFDictionary, [kSecValueData: data] as CFDictionary)
     if updated == errSecItemNotFound {
       var item = query
       item[kSecValueData] = data
       item[kSecAttrAccessible] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-      try check(SecItemAdd(item as CFDictionary, nil))
+      try Self.check(SecItemAdd(item as CFDictionary, nil))
     } else {
-      try check(updated)
+      try Self.check(updated)
     }
     if let existing {
       connections[existing].name = name
@@ -237,13 +256,31 @@ final class RemoteAgentStore {
   }
 
   func token(for id: UUID) throws -> String {
-    guard let token = try savedToken(for: id) else {
+    guard let token = try Self.savedToken(for: id) else {
       throw JSONRPCError.invalidParams("Reimport this connection's gateway token")
     }
     return token
   }
 
-  private func savedToken(for id: UUID) throws -> String? {
+  /// Keychain IPC may wait on the security daemon; reconnects must not wait on the UI thread.
+  func connectionToken(for id: UUID) async throws -> String {
+    let token = try await Self.loadToken(for: id)
+    try Task.checkCancellation()
+    guard let token else {
+      throw JSONRPCError.invalidParams("Reimport this connection's gateway token")
+    }
+    return token
+  }
+
+  nonisolated private static func loadToken(for id: UUID) async throws -> String? {
+    try await withCheckedThrowingContinuation { continuation in
+      DispatchQueue.global(qos: .userInitiated).async {
+        continuation.resume(with: Result { try savedToken(for: id) })
+      }
+    }
+  }
+
+  nonisolated private static func savedToken(for id: UUID) throws -> String? {
     var query = keychainQuery(id)
     query[kSecReturnData] = true
     query[kSecMatchLimit] = kSecMatchLimitOne
@@ -257,7 +294,8 @@ final class RemoteAgentStore {
   func authorizeForwirohRepair(
     _ profile: ACPRemoteConnection, for host: RemoteAgentBookmark, clientName: String
   ) async throws -> ACPRemoteConnection {
-    let previousToken = host.requiresApproval == true ? nil : try savedToken(for: host.id)
+    let previousToken = host.requiresApproval == true ? nil : try await Self.loadToken(for: host.id)
+    try Task.checkCancellation()
     var approved = profile
     approved.requiresApproval = false
     approved.forwirohInvitation = nil
@@ -285,9 +323,9 @@ final class RemoteAgentStore {
 
   func acceptPairing(_ id: UUID, token: String) throws {
     guard let index = connections.firstIndex(where: { $0.id == id }) else { return }
-    try check(
+    try Self.check(
       SecItemUpdate(
-        keychainQuery(id) as CFDictionary,
+        Self.keychainQuery(id) as CFDictionary,
         [kSecValueData: Data(token.utf8)] as CFDictionary))
     connections[index].requiresApproval = false
     connections[index].forwirohInvitation = nil
@@ -298,6 +336,7 @@ final class RemoteAgentStore {
     guard let index = connections.firstIndex(where: { $0.id == hostID }) else { return }
     var chats = connections[index].conversations ?? []
     if let chatIndex = chats.firstIndex(where: { $0.id == conversation.id }) {
+      guard chats[chatIndex] != conversation else { return }
       chats[chatIndex] = conversation
     } else {
       chats.append(conversation)
@@ -312,31 +351,42 @@ final class RemoteAgentStore {
 
   func updateWorkspace(_ hostID: UUID, snapshot: ACPWorkspaceSnapshot, inBackground: Bool = false) {
     guard let index = connections.firstIndex(where: { $0.id == hostID }) else { return }
-    connections[index].workspace = snapshot
-    connections[index].addedFolderPaths?.removeAll { cwd in
-      snapshot.folders.contains { $0.cwd == cwd }
+    var host = connections[index]
+    var changed = host.workspace != snapshot
+    host.workspace = snapshot
+    let discoveredPaths = Set(snapshot.folders.map(\.cwd))
+    let added = host.addedFolderPaths?.filter { !discoveredPaths.contains($0) }
+    if added != host.addedFolderPaths {
+      host.addedFolderPaths = added?.isEmpty == true ? nil : added
+      changed = true
     }
-    if connections[index].addedFolderPaths?.isEmpty == true {
-      connections[index].addedFolderPaths = nil
-    }
-    var chats = connections[index].conversations ?? []
+    var chats = host.conversations ?? []
+    var sessionIndices = Dictionary(chats.enumerated().compactMap { index, chat in
+      chat.sessionID.map { ($0, index) }
+    }, uniquingKeysWith: { first, _ in first })
     for session in snapshot.sessions {
-      if let chatIndex = chats.firstIndex(where: { $0.sessionID == session.sessionID }) {
-        if chats[chatIndex].messages.isEmpty
+      if let chatIndex = sessionIndices[session.sessionID] {
+        if (chats[chatIndex].messages.isEmpty
           || (session.updatedAt ?? .distantPast) >= chats[chatIndex].updatedAt
-        {
+        ), chats[chatIndex].title != session.title
+          || (session.updatedAt != nil && chats[chatIndex].updatedAt != session.updatedAt) {
           chats[chatIndex].title = session.title
           chats[chatIndex].updatedAt = session.updatedAt ?? chats[chatIndex].updatedAt
+          changed = true
         }
       } else {
+        sessionIndices[session.sessionID] = chats.count
         chats.append(
           .init(
             id: UUID(uuidString: session.sessionID) ?? UUID(), cwd: session.cwd,
             sessionID: session.sessionID, title: session.title,
             updatedAt: session.updatedAt ?? .distantPast))
+        changed = true
       }
     }
-    connections[index].conversations = chats
+    guard changed else { return }
+    host.conversations = chats
+    connections[index] = host
     if inBackground {
       saveInBackground()
     } else {
@@ -371,6 +421,7 @@ final class RemoteAgentStore {
   }
 
   func setConnectionFailed(_ failed: Bool, for id: UUID) {
+    guard failedHostIDs.contains(id) != failed else { return }
     if failed {
       failedHostIDs.insert(id)
     } else {
@@ -382,7 +433,7 @@ final class RemoteAgentStore {
     guard let index = connections.firstIndex(where: { $0.id == id }) else { return }
     setConnectionFailed(false, for: id)
     connections[index].revision = UUID()
-    do { try save() } catch { self.error = error.localizedDescription }
+    saveInBackground()
   }
 
   func rename(_ id: UUID, to name: String) throws {
@@ -517,7 +568,7 @@ final class RemoteAgentStore {
 
   func remove(_ id: UUID) {
     Task { await PocketMaiRemoteTools.shared.revoke(host: id.uuidString.lowercased()) }
-    SecItemDelete(keychainQuery(id) as CFDictionary)
+    SecItemDelete(Self.keychainQuery(id) as CFDictionary)
     connections.removeAll { $0.id == id }
     failedHostIDs.remove(id)
     do { try save() } catch { self.error = error.localizedDescription }
@@ -559,14 +610,14 @@ final class RemoteAgentStore {
     try url.setResourceValues(values)
   }
 
-  private func keychainQuery(_ id: UUID) -> [CFString: Any] {
+  nonisolated private static func keychainQuery(_ id: UUID) -> [CFString: Any] {
     [
       kSecClass: kSecClassGenericPassword, kSecAttrService: keychainService,
       kSecAttrAccount: id.uuidString,
     ]
   }
 
-  private func check(_ status: OSStatus) throws {
+  nonisolated private static func check(_ status: OSStatus) throws {
     guard status == errSecSuccess else {
       throw JSONRPCError.internalError(
         SecCopyErrorMessageString(status, nil) as String? ?? "Keychain error \(status)")
@@ -677,11 +728,15 @@ final class RemoteAgentChat {
     if let catalogRequest {
       request = catalogRequest
     } else {
-      request = Task { [bookmark, store, httpConfiguration, cwd = conversation.cwd, client] in
-        let temporary = client == nil
-        let client = try client ?? bookmark.makeClient(
-          token: store.token(for: bookmark.id), cwd: cwd,
-          resumeID: UUID().uuidString, httpConfiguration: httpConfiguration)
+      request = Task { [bookmark, store, httpConfiguration, cwd = conversation.cwd, existingClient = client] in
+        let temporary = existingClient == nil
+        let client: any RemoteSessionClient
+        if let existingClient { client = existingClient }
+        else {
+          let token = try await store.connectionToken(for: bookmark.id)
+          client = try bookmark.makeClient(token: token, cwd: cwd,
+            resumeID: UUID().uuidString, httpConfiguration: httpConfiguration)
+        }
         defer { if temporary { Task { await client.disconnect() } } }
         return try await client.promptCatalog()
       }
@@ -895,7 +950,9 @@ final class RemoteAgentChat {
     if let sessionID {
       guard !isOffline() else { throw InternetAccessError.offline }
       let temporary = client == nil
-      let managementClient = try client ?? makeClient()
+      let managementClient: any RemoteSessionClient
+      if let client { managementClient = client }
+      else { managementClient = try await makeClient() }
       if temporary { client = managementClient }
       do {
         try await managementClient.manageSession(sessionID, cwd: conversation.cwd, title: title)
@@ -923,10 +980,11 @@ final class RemoteAgentChat {
     }
   }
 
-  private func makeClient() throws -> any RemoteSessionClient {
+  private func makeClient() async throws -> any RemoteSessionClient {
     guard !isOffline() else { throw InternetAccessError.offline }
     let generation = generation
-    let token = try store.token(for: bookmark.id)
+    let token = try await store.connectionToken(for: bookmark.id)
+    guard self.generation == generation, !isOffline() else { throw CancellationError() }
     return try bookmark.makeClient(
       token: token, cwd: conversation.cwd, sessionID: sessionID, resumeID: conversation.id.uuidString,
       httpConfiguration: httpConfiguration,
@@ -972,7 +1030,7 @@ final class RemoteAgentChat {
       do {
         await client?.disconnect()
         guard generation == attempt, !Task.isCancelled else { return }
-        let client = try makeClient()
+        let client = try await makeClient()
         self.client = client
         connectingHistory = previous
         loadingMessages = bookmark.backend == .openCode ? previous : []
@@ -985,7 +1043,8 @@ final class RemoteAgentChat {
         historyRewindSupported = await client.historyRewindSupported()
         supportsInjection = await client.injectionSupported()
         guard generation == attempt, !Task.isCancelled else { return }
-        messages = loadingMessages ?? previous
+        let restored = loadingMessages ?? previous
+        if messages != restored { messages = restored }
         loadingMessages = nil
         if connected { reconnectDelay = 1 }
         store.setConnectionFailed(!connected, for: bookmark.id)
@@ -997,7 +1056,7 @@ final class RemoteAgentChat {
         persist()
       } catch {
         guard generation == attempt else { return }
-        messages = previous
+        if messages != previous { messages = previous }
         connectingHistory = nil
         loadingMessages = nil
         pendingPrompt = nil
@@ -1178,7 +1237,7 @@ final class RemoteAgentChat {
     supportsInjection = false
     status = "Disconnected"
     if let connectingHistory {
-      messages = connectingHistory
+      if messages != connectingHistory { messages = connectingHistory }
       self.connectingHistory = nil
     }
     persist()
@@ -1215,7 +1274,7 @@ final class RemoteAgentChat {
     injecting = false
     historyRewindSupported = false
     if let connectingHistory {
-      messages = connectingHistory
+      if messages != connectingHistory { messages = connectingHistory }
       self.connectingHistory = nil
     }
     store.setConnectionFailed(true, for: bookmark.id)
@@ -1272,7 +1331,7 @@ final class RemoteAgentChat {
     }
   }
 
-  private func receive(_ update: JSONValue, generation: Int) {
+  private func receive(_ update: JSONValue, generation: Int) async {
     guard self.generation == generation, let object = update.objectValue,
       let kind = object["sessionUpdate"]?.stringValue
     else { return }
@@ -1289,11 +1348,29 @@ final class RemoteAgentChat {
       catalogTask = Task { [weak self] in await self?.refreshPromptCatalog() }
     } else {
       guard kind == "_pmai/message_snapshot" || ACP.Update(rawValue: kind) != nil else { return }
+      var snapshot: [RemoteAgentMessage]?
+      if kind == "_pmai/message_snapshot" {
+        // Reconnect snapshots can contain the entire chat. Keep both their reduction
+        // and ID reconciliation off the UI executor, including the previous cache's IDs.
+        let current = loadingMessages ?? pendingMessages ?? messages
+        let previous = object["preserveHistory"]?.boolValue == true
+          ? current : (connectingHistory ?? []) + current
+        snapshot = await Task.detached(priority: .userInitiated) {
+          var messages = previous
+          ACPConversationTranscript.apply(update, to: &messages)
+          return messages
+        }.value
+        guard self.generation == generation, !Task.isCancelled else { return }
+      }
       if loadingMessages != nil {
-        ACPConversationTranscript.apply(update, to: &loadingMessages!)
+        if let snapshot { loadingMessages = snapshot }
+        else { ACPConversationTranscript.apply(update, to: &loadingMessages!) }
       } else {
-        if pendingMessages == nil { pendingMessages = messages }
-        ACPConversationTranscript.apply(update, to: &pendingMessages!)
+        if let snapshot { pendingMessages = snapshot }
+        else {
+          if pendingMessages == nil { pendingMessages = messages }
+          ACPConversationTranscript.apply(update, to: &pendingMessages!)
+        }
         guard messagePublishTask == nil else { return }
         messagePublishTask = Task { [weak self] in
           do { try await Task.sleep(for: .seconds(1)) } catch { return }
@@ -1313,8 +1390,8 @@ final class RemoteAgentChat {
 
   private func persist() {
     guard !deleted else { return }
-    conversation.sessionID = sessionID
-    conversation.messages = messages
+    if conversation.sessionID != sessionID { conversation.sessionID = sessionID }
+    if conversation.messages != messages { conversation.messages = messages }
     store.update(bookmark.id, conversation: conversation, inBackground: true)
   }
 }

@@ -218,10 +218,10 @@ final class RemoteHostTests: XCTestCase {
     }
   }
 
-  func testRemoteConversationPinsSurviveDiscoveryReconnectAndActiveChatUpdates() throws {
+  func testRemoteConversationPinsSurviveDiscoveryReconnectAndActiveChatUpdates() async throws {
     let original = RemoteAgentBookmark(
       name: "Worker", url: try XCTUnwrap(URL(string: "wss://worker.example/acp")), cwd: "/work")
-    try withStore([original]) { store, file in
+    try await withStore([original]) { store, file in
       let session = ACPSessionInfo(
         sessionID: "opaque-session", cwd: "/work", title: "Original",
         updatedAt: Date(timeIntervalSince1970: 100))
@@ -234,6 +234,7 @@ final class RemoteHostTests: XCTestCase {
       refreshed.updatedAt = Date(timeIntervalSince1970: 200)
       store.updateWorkspace(original.id, snapshot: .init(sessions: [refreshed]))
       store.reconnect(original.id)
+      await store.flushPersistence()
       XCTAssertEqual(store.host(original.id)?.conversations?.first?.id, activeSnapshot.id)
       XCTAssertEqual(store.host(original.id)?.conversations?.first?.title, "Renamed")
       activeSnapshot.messages = [.init(role: "assistant", text: "Streaming response")]
@@ -447,11 +448,11 @@ final class RemoteHostTests: XCTestCase {
     }
   }
 
-  func testRemoteFolderPinsKeepTheirOrderAcrossDiscoveryAndReconnect() throws {
+  func testRemoteFolderPinsKeepTheirOrderAcrossDiscoveryAndReconnect() async throws {
     let original = RemoteAgentBookmark(
       name: "Worker", url: try XCTUnwrap(URL(string: "wss://worker.example/acp")), cwd: "/one",
       workspace: .init(folders: [.init(cwd: "/one", name: "One"), .init(cwd: "/two", name: "Two")]))
-    try withStore([original]) { store, file in
+    try await withStore([original]) { store, file in
       store.toggleFolderPin(hostID: original.id, cwd: "/two")
       store.toggleFolderPin(hostID: original.id, cwd: "/one")
       let renamed = ACPWorkspaceFolder(cwd: "/two", name: "Renamed", icon: "star", tint: "green")
@@ -461,6 +462,7 @@ final class RemoteHostTests: XCTestCase {
           .init(cwd: "/three", name: "Three"), .init(cwd: "/one", name: "One"), renamed,
         ]))
       store.reconnect(original.id)
+      await store.flushPersistence()
       let restored = RemoteAgentStore(file: file)
       let host = try XCTUnwrap(restored.host(original.id))
       XCTAssertEqual(restored.folders(for: host).map(\.cwd), ["/two", "/one", "/three"])
@@ -499,6 +501,25 @@ final class RemoteHostTests: XCTestCase {
     let plan = try XCTUnwrap(
       MessageContentFilter.render(presentation.messages[3].text).hiddenSections.first)
     XCTAssertEqual(ToolCallParser.parse(plan.content).first?.body, "Next step")
+    XCTAssertEqual(conversation.summary, ConversationSummary(conversation: presentation))
+  }
+
+  func testRemoteSummaryPreservesRecentMessagesHiddenContentAndUnsentDrafts() {
+    var chat = RemoteAgentConversation(cwd: "/work", createdAt: nil,
+      messages: (1...8).map { .init(role: "assistant", text: "Answer \($0)") })
+    for message in [RemoteAgentMessage(role: "thought", text: "Private reasoning"),
+      .init(role: "tool", text: "Result", toolName: "read",
+        toolInput: .object(["path": .string("README.md")])),
+      .init(role: "assistant", text: "")]
+    {
+      chat.messages.append(message)
+      XCTAssertEqual(chat.summary, ConversationSummary(conversation: chat.presentation))
+    }
+    XCTAssertEqual(chat.summary.preview, "Answer 8")
+    chat.unsentMessages = [.init(message: .init(role: "user", text: "diff"), command: "review")]
+    XCTAssertEqual(chat.summary, ConversationSummary(conversation: chat.presentation))
+    XCTAssertEqual(chat.summary.preview, "/review diff")
+    XCTAssertEqual(chat.summary.previewMessages.count, 6)
   }
   func testOpenCodeToolDetailsSurviveCachingAndUseTheLocalToolRows() throws {
     let conversation = RemoteAgentConversation(cwd: "/work", messages: [
@@ -536,6 +557,25 @@ final class RemoteHostTests: XCTestCase {
     let file = directory.appendingPathComponent("connections.json")
     try JSONEncoder().encode(bookmarks).write(to: file)
     try body(RemoteAgentStore(file: file), file)
+  }
+
+  private func withStore(
+    _ bookmarks: [RemoteAgentBookmark],
+    body: (RemoteAgentStore, URL) async throws -> Void
+  ) async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("remote-host-\(UUID())")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let file = directory.appendingPathComponent("connections.json")
+    try JSONEncoder().encode(bookmarks).write(to: file)
+    let store = RemoteAgentStore(file: file)
+    do {
+      try await body(store, file)
+    } catch {
+      await store.flushPersistence()
+      throw error
+    }
+    await store.flushPersistence()
   }
 
   func testLegacyWorkspaceConnectionsBecomeOneHostWithoutLosingChats() throws {
@@ -599,13 +639,14 @@ final class RemoteHostTests: XCTestCase {
     }
   }
 
-  func testHostColorApprovalStateAndReconnectRevisionPersist() throws {
+  func testHostColorApprovalStateAndReconnectRevisionPersist() async throws {
     let original = RemoteAgentBookmark(
       name: "Workstation",
       url: try XCTUnwrap(URL(string: "ws://192.168.1.5:19283/acp")), cwd: "/work",
       accentColor: "custom:#22AA55", requiresApproval: true)
-    try withStore([original]) { store, file in
+    try await withStore([original]) { store, file in
       store.reconnect(original.id)
+      await store.flushPersistence()
       let updated = try XCTUnwrap(store.host(original.id))
       XCTAssertNotNil(updated.revision)
       let reloaded = try XCTUnwrap(RemoteAgentStore(file: file).host(original.id))

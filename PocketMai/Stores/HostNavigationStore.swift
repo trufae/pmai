@@ -274,7 +274,8 @@ final class HostNavigationStore {
     operation = Task { [weak self] in
       guard let self else { return }
       do {
-        var token = try remotes.token(for: host.id)
+        var token = try await remotes.connectionToken(for: host.id)
+        guard generation == attempt, !Task.isCancelled else { return }
         if host.requiresApproval == true {
           waitingApproval = true
           let pairingClient = ACPClient(

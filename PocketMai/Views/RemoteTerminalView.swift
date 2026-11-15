@@ -18,7 +18,8 @@ private final class RemoteTerminalController: ObservableObject {
   private var offset = 0
   private var transcript = Data()
   private var location: RemoteTerminalLocation?
-  private struct Archive: Codable {
+  private let persistenceQueue = DispatchQueue(label: "io.github.trufae.mai.terminal-cache", qos: .utility)
+  private struct Archive: Codable, Sendable {
     var remoteID: String?
     var offset: Int
     var transcript: Data
@@ -35,10 +36,18 @@ private final class RemoteTerminalController: ObservableObject {
   }
 
   func replay() { view?.feed(byteArray: Array(transcript)[...]) }
-  private func persist() throws {
-    try FileManager.default.createDirectory(at: archiveURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-    try JSONEncoder().encode(Archive(remoteID: remoteID, offset: offset, transcript: transcript))
-      .write(to: archiveURL, options: .atomic)
+  private func persist() async throws {
+    let archive = Archive(remoteID: remoteID, offset: offset, transcript: transcript)
+    let url = archiveURL
+    // Save bytes and their acknowledged offset together before requesting more output.
+    try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+      persistenceQueue.async {
+        continuation.resume(with: Result {
+          try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+          try JSONEncoder().encode(archive).write(to: url, options: .atomic)
+        })
+      }
+    }
   }
 
   @Published var status = "Connecting…"
@@ -66,7 +75,8 @@ private final class RemoteTerminalController: ObservableObject {
       defer { reader = nil }
       do {
         guard !offline else { throw InternetAccessError.offline }
-        let workspace = try location.host.workspaceConnection(cwd: location.cwd, resumeID: id.uuidString)
+        let workspace = try await location.host.workspaceConnection(cwd: location.cwd, resumeID: id.uuidString)
+        try Task.checkCancellation()
         self.workspace = workspace
         if try await workspace.supportsInteractiveTerminal() {
           var attached: RemoteTerminalSession?
@@ -82,7 +92,7 @@ private final class RemoteTerminalController: ObservableObject {
           }
           let shell = attached!
           self.shell = shell
-          try persist()
+          try await persist()
           try Task.checkCancellation()
           status = "Connected"
           if resumed { try await shell.resize(columns: size.columns == 1000 ? 999 : size.columns + 1, rows: size.rows) }
@@ -99,13 +109,14 @@ private final class RemoteTerminalController: ObservableObject {
               if let newline = transcript.firstIndex(of: 10) { transcript.removeSubrange(...newline) }
             }
             offset = chunk.offset ?? offset + chunk.data.count
-            try persist()
+            try await persist()
+            try Task.checkCancellation()
             if let code = chunk.exitCode {
               status = "Exited (\(code))"
               await shell.close()
               self.shell = nil
               remoteID = nil
-              try persist()
+              try await persist()
               break
             }
           }
@@ -278,14 +289,14 @@ private final class RemoteTerminalController: ObservableObject {
     await reader?.value
     await writer?.value
     do {
-      let connection = try location.host.workspaceConnection(cwd: location.cwd, resumeID: id.uuidString)
+      let connection = try await location.host.workspaceConnection(cwd: location.cwd, resumeID: id.uuidString)
       // Each tab owns a resumable worker. Closing all also covers a lost open reply.
       if case .remote(let client, _) = connection, try await client.terminalSupported() {
         _ = try await client.terminal(["action": .string("close_all")])
       }
       await connection.close()
       remoteID = nil
-      try persist()
+      try await persist()
       closed = false
       close()
       return true

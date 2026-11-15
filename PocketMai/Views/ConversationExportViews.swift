@@ -138,6 +138,7 @@ struct ConversationShareButton: View {
 
   let conversationID: UUID?
   var conversation: Conversation? = nil
+  var conversationProvider: (() -> Conversation)? = nil
   @ObservedObject var coordinator: ConversationExportCoordinator
 
   var body: some View {
@@ -145,7 +146,8 @@ struct ConversationShareButton: View {
       guard let conversationID else { return }
       Task {
         await coordinator.share(
-          format: .json, conversationID: conversationID, store: store, conversation: conversation)
+          format: .json, conversationID: conversationID, store: store,
+          conversation: conversationProvider?() ?? conversation)
       }
     } label: {
       Label("Share...", systemImage: "square.and.arrow.up")
@@ -159,17 +161,20 @@ struct ConversationExportMenu: View {
 
   let conversationID: UUID?
   var conversation: Conversation? = nil
+  var conversationProvider: (() -> Conversation)? = nil
   @ObservedObject var coordinator: ConversationExportCoordinator
   let title: String
 
   init(
     conversationID: UUID?,
     conversation: Conversation? = nil,
+    conversationProvider: (() -> Conversation)? = nil,
     coordinator: ConversationExportCoordinator,
     title: String = "Export..."
   ) {
     self.conversationID = conversationID
     self.conversation = conversation
+    self.conversationProvider = conversationProvider
     self.coordinator = coordinator
     self.title = title
   }
@@ -178,6 +183,7 @@ struct ConversationExportMenu: View {
     Menu {
       ConversationExportMenuItems(isExporting: coordinator.isExporting) { format in
         guard let conversationID else { return }
+        let conversation = conversationProvider?() ?? conversation
         if format == .html || format == .epub || format == .docx {
           coordinator.shareDocument(
             format: format, conversationID: conversationID, store: store, conversation: conversation

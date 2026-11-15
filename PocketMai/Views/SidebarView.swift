@@ -739,7 +739,7 @@ struct ConversationSummaryActionsModifier: ViewModifier {
   var onSelectForBatch: (() -> Void)?
   var onAfterClone: () -> Void = {}
   var allowsLocalActions = true
-  var exportConversation: Conversation? = nil
+  var exportConversation: (() -> Conversation)? = nil
   var canManage = true
   var onRename: ((String) async -> Void)? = nil
   var onDelete: ((Set<UUID>) -> Void)? = nil
@@ -813,10 +813,10 @@ struct ConversationSummaryActionsModifier: ViewModifier {
       .disabled(!allowsLocalActions)
       ConversationShareButton(
         conversationID: allowsLocalActions || exportConversation != nil ? conversation.id : nil,
-        conversation: exportConversation, coordinator: exportCoordinator)
+        conversationProvider: exportConversation, coordinator: exportCoordinator)
       ConversationExportMenu(
         conversationID: allowsLocalActions || exportConversation != nil ? conversation.id : nil,
-        conversation: exportConversation, coordinator: exportCoordinator)
+        conversationProvider: exportConversation, coordinator: exportCoordinator)
       Divider()
       Button("Delete...", systemImage: "trash", role: .destructive) {
         pendingDeletion = .single(conversation)

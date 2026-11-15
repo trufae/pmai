@@ -251,7 +251,7 @@ struct RemoteConversationsView: View, Equatable {
   }
 
   private func summary(for chat: RemoteAgentConversation) -> ConversationSummary {
-    var summary = ConversationSummary(conversation: chat.presentation)
+    var summary = chat.summary
     summary.isPinned = hosts.isConversationPinned(chat.id)
     return summary
   }
@@ -298,8 +298,9 @@ struct RemoteConversationsView: View, Equatable {
             conversation: summary,
             isEnabled: true, exportCoordinator: exportCoordinator,
             onSelectForBatch: nil, allowsLocalActions: false,
-            exportConversation: selected
-              ? hosts.activeChat?.presentation ?? chat.presentation : chat.presentation,
+            exportConversation: {
+              selected ? hosts.activeChat?.presentation ?? chat.presentation : chat.presentation
+            },
             canManage: hosts.selectedHost?.requiresApproval != true
               && (chat.sessionID == nil
                 || (!appStore.settings.isOffline
