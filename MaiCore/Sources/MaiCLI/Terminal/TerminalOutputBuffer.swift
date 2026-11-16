@@ -811,13 +811,13 @@ struct TerminalOutputBuffer {
   private mutating func userMessageRows(_ index: Int, width: Int) -> [Row] {
     // Reserve a tail, two sides and right padding, plus room for a wide grapheme.
     let message = userBlocks[index]!
-    // Commands stay flat: no fill, no edges, no trailing spacer row.
+    // Commands keep the bubble fill but drop the edges, corner and spacer row,
+    // so they read as plain transcript lines on the same background.
     let decorated = width >= 6 && !message.command
     var theme = colors
     if let colors, !colors.bubbleForeground.isEmpty { theme?.foreground = colors.bubbleForeground }
-    let fill = message.command ? nil
-      : colors.flatMap { $0.bubbleBackground.isEmpty ? nil : $0.bubbleBackground }
-    if decorated, let fill { theme?.background = fill }
+    let fill = colors.flatMap { $0.bubbleBackground.isEmpty ? nil : $0.bubbleBackground }
+    if let fill { theme?.background = fill }
     var output = TerminalOutputBuffer()
     output.configureColors(theme)
     output.configureHighlight(highlight)

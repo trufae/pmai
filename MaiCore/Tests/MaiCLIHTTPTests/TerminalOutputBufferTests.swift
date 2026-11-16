@@ -101,7 +101,7 @@ func terminalBufferUserMessageReflow() {
   #expect(buffer.visibleRows(width: 40, height: 10) == ["cleared"])
 }
 
-@Test("Slash commands print flat, without a bubble or a trailing spacer row")
+@Test("Slash commands keep the bubble fill but drop the edges and spacer row")
 func terminalBufferCommandUserMessage() {
   func plain(_ text: String) -> String {
     text.replacingOccurrences(of: "\u{1B}\\[[0-?]*[ -/]*[@-~]", with: "", options: .regularExpression)
@@ -111,9 +111,14 @@ func terminalBufferCommandUserMessage() {
   buffer.append("prior\n")
   buffer.appendUserMessage("/help me")
   buffer.append("after")
-  let rows = buffer.visibleRows(width: 40, height: 100).map(plain)
+  let raw = buffer.visibleRows(width: 40, height: 100)
+  let rows = raw.map(plain)
   #expect(rows == ["prior", "/help me", "after"])
   #expect(rows.allSatisfy { !$0.contains("◢") && !$0.contains("▂") && !$0.contains("█") })
+  // The command row keeps the bubble background, just without the ornament.
+  let fill = TerminalLineEditor.backgroundColorCode(
+    TerminalTheme.builtins["sand"]!.bubbleBackground)!
+  #expect(!fill.isEmpty && raw[1].contains(fill))
 
   // Regular messages keep the bubble and its spacer row.
   var chat = TerminalOutputBuffer()
