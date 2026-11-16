@@ -3,8 +3,7 @@ import Foundation
 import FoundationNetworking
 #endif
 
-/// Windows FoundationNetworking can stop uploading when a socket's send buffer
-/// fills (swift-corelibs-foundation#5532). WinHTTP and curl bypass that event loop.
+/// WinHTTP and curl bypass FoundationNetworking's socket event loop.
 public enum ProviderHTTPTransport: String, Sendable {
   case automatic = "auto"
   case urlSession = "urlsession"
@@ -15,6 +14,10 @@ public enum ProviderHTTPTransport: String, Sendable {
     guard self == .automatic else { return self }
     #if os(Windows)
     return .winHTTP
+    #elseif os(Linux)
+    // FoundationNetworking keeps watching writable sockets while waiting for reads.
+    return FileManager.default.isExecutableFile(atPath: CurlHTTPProtocol.curlURL.path)
+      ? .curl : .urlSession
     #else
     return .urlSession
     #endif
@@ -223,7 +226,7 @@ final class CurlHTTPProtocol: URLProtocol {
     return nil
   }
 
-  private static var curlURL: URL {
+  fileprivate static var curlURL: URL {
     #if os(Windows)
     let root = ProcessInfo.processInfo.environment.first { $0.key.lowercased() == "systemroot" }?.value ?? "C:\\Windows"
     return URL(fileURLWithPath: root).appendingPathComponent("System32/curl.exe")

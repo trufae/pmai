@@ -21,11 +21,15 @@ public final class ChatGPTProvider: ChatProvider, @unchecked Sendable {
   public init(
     id: ProviderID, displayName: String = "ChatGPT subscription",
     store: ChatGPTCredentialStore, auth: ChatGPTAuth = .shared,
-    session: URLSession = .shared, timeout: TimeInterval = 600
+    session: URLSession? = nil, timeout: TimeInterval = 600
   ) {
     self.store = store
     self.auth = auth
-    self.session = session
+    #if os(Linux)
+    self.session = session ?? ProviderHTTPTransport.automatic.makeSession()
+    #else
+    self.session = session ?? .shared
+    #endif
     self.timeout = timeout
     descriptor = .init(
       id: id, displayName: displayName,
