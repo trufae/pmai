@@ -2,8 +2,8 @@ import SwiftUI
 import UIKit
 
 extension View {
-  func messageActionsMenu(showsButton: Bool, _ menu: @escaping () -> UIMenu) -> some View {
-    modifier(MessageActionsMenu(showsButton: showsButton, menu: menu))
+  func messageActionsMenu(_ menu: @escaping () -> UIMenu) -> some View {
+    modifier(MessageActionsMenu(menu: menu))
   }
 }
 
@@ -13,30 +13,15 @@ private struct MessageMenuRequest {
 }
 
 private struct MessageActionsMenu: ViewModifier {
-  let showsButton: Bool
   let menu: () -> UIMenu
   @State private var request: MessageMenuRequest?
 
   func body(content: Content) -> some View {
     content
-      .frame(minHeight: showsButton ? 44 : nil, alignment: .top)
-      .padding(.trailing, showsButton ? 44 : 0)
       .contentShape(.interaction, Rectangle())
-      .background(MessageMenuAnchor(request: request, showsButton: showsButton, menu: menu))
+      .background(MessageMenuAnchor(request: request, menu: menu))
       .gesture(MessageMenuLongPress { request = MessageMenuRequest(windowLocation: $0) })
       .accessibilityAction(named: "Message actions") { request = MessageMenuRequest() }
-      .overlay(alignment: .topTrailing) {
-        if showsButton {
-          Button { request = MessageMenuRequest() } label: {
-            Image(systemName: "ellipsis")
-              .foregroundStyle(.secondary)
-              .frame(width: 44, height: 44)
-              .contentShape(Rectangle())
-          }
-          .buttonStyle(.plain)
-          .accessibilityLabel("Message actions")
-        }
-      }
   }
 }
 
@@ -58,7 +43,6 @@ private struct MessageMenuLongPress: UIGestureRecognizerRepresentable {
 
 private struct MessageMenuAnchor: UIViewRepresentable {
   let request: MessageMenuRequest?
-  let showsButton: Bool
   let menu: () -> UIMenu
 
   func makeUIView(context: Context) -> AnchorView { AnchorView() }
@@ -66,9 +50,8 @@ private struct MessageMenuAnchor: UIViewRepresentable {
   func updateUIView(_ view: AnchorView, context: Context) {
     guard let request, request.id != view.lastRequestID else { return }
     view.lastRequestID = request.id
-    let point = request.windowLocation.map { view.convert($0, from: nil) } ?? (showsButton
-      ? CGPoint(x: view.bounds.maxX - 22, y: view.bounds.minY + 22)
-      : CGPoint(x: view.bounds.midX, y: view.bounds.midY))
+    let point = request.windowLocation.map { view.convert($0, from: nil) }
+      ?? CGPoint(x: view.bounds.midX, y: view.bounds.midY)
     view.button.center = point
     view.button.menu = menu()
     view.button.performPrimaryAction()
@@ -92,12 +75,123 @@ private struct MessageMenuAnchor: UIViewRepresentable {
 
     // Links, attachments, and scrolling continue to receive their normal taps.
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? { nil }
+
+    override func layoutSubviews() {
+      super.layoutSubviews()
+      button.backdrop?.setNeedsLayout()
+    }
   }
 
   final class MenuButton: UIButton {
+    var backdrop: MessageMenuBackdrop?
+
     override func menuAttachmentPoint(for configuration: UIContextMenuConfiguration) -> CGPoint {
       CGPoint(x: bounds.midX, y: bounds.midY)
     }
+
+    override func contextMenuInteraction(
+      _ interaction: UIContextMenuInteraction,
+      willDisplayMenuFor configuration: UIContextMenuConfiguration,
+      animator: (any UIContextMenuInteractionAnimating)?
+    ) {
+      super.contextMenuInteraction(interaction, willDisplayMenuFor: configuration, animator: animator)
+      guard let messageView = superview, let window else { return }
+      backdrop?.removeFromSuperview()
+      let backdrop = MessageMenuBackdrop(messageView: messageView, frame: window.bounds)
+      self.backdrop = backdrop
+      // Stay above the app content but below UIKit's menu presentation.
+      var contentRoot = messageView
+      while let parent = contentRoot.superview, parent !== window { contentRoot = parent }
+      window.insertSubview(backdrop, aboveSubview: contentRoot)
+      backdrop.layoutIfNeeded()
+      if let animator {
+        backdrop.alpha = 0
+        animator.addAnimations { backdrop.alpha = 1 }
+      }
+    }
+
+    override func contextMenuInteraction(
+      _ interaction: UIContextMenuInteraction,
+      willEndFor configuration: UIContextMenuConfiguration,
+      animator: (any UIContextMenuInteractionAnimating)?
+    ) {
+      super.contextMenuInteraction(interaction, willEndFor: configuration, animator: animator)
+      guard let backdrop else { return }
+      self.backdrop = nil
+      if let animator {
+        animator.addAnimations { backdrop.alpha = 0 }
+        animator.addCompletion { backdrop.removeFromSuperview() }
+      } else {
+        backdrop.removeFromSuperview()
+      }
+    }
+
+    override func didMoveToWindow() {
+      super.didMoveToWindow()
+      if window == nil {
+        backdrop?.removeFromSuperview()
+        backdrop = nil
+      }
+    }
+  }
+}
+
+private final class MessageMenuBackdrop: UIVisualEffectView {
+  private weak var messageView: UIView?
+  private let cutout = UIView()
+  private let shape = CAShapeLayer()
+  private var blurAnimator: UIViewPropertyAnimator?
+
+  init(messageView: UIView, frame: CGRect) {
+    self.messageView = messageView
+    super.init(effect: nil)
+    self.frame = frame
+    autoresizingMask = [.flexibleWidth, .flexibleHeight]
+    isUserInteractionEnabled = false
+    accessibilityElementsHidden = true
+    shape.fillRule = .evenOdd
+    cutout.layer.addSublayer(shape)
+    mask = cutout
+  }
+
+  required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+  override func didMoveToWindow() {
+    super.didMoveToWindow()
+    blurAnimator?.stopAnimation(true)
+    blurAnimator = nil
+    guard window != nil else { return }
+    effect = nil
+    // A partially applied material softly blurs the surroundings without
+    // obscuring them. The original message stays live through the mask.
+    let animator = UIViewPropertyAnimator(duration: 1, curve: .linear) { [weak self] in
+      self?.effect = UIBlurEffect(style: .systemUltraThinMaterial)
+    }
+    animator.startAnimation()
+    animator.pauseAnimation()
+    animator.fractionComplete = 0.08
+    blurAnimator = animator
+  }
+
+  override func layoutSubviews() {
+    super.layoutSubviews()
+    cutout.frame = bounds
+    shape.frame = bounds
+    let path = UIBezierPath(rect: bounds)
+    if let messageView {
+      var visibleRect = messageView.convert(messageView.bounds, to: self).intersection(bounds)
+      var ancestor = messageView.superview
+      while let view = ancestor {
+        if view.clipsToBounds {
+          visibleRect = visibleRect.intersection(view.convert(view.bounds, to: self))
+        }
+        ancestor = view.superview
+      }
+      if !visibleRect.isNull && !visibleRect.isEmpty {
+        path.append(UIBezierPath(rect: visibleRect))
+      }
+    }
+    shape.path = path.cgPath
   }
 }
 

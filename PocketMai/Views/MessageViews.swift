@@ -64,7 +64,6 @@ struct ResponseScrollTargetsKey: PreferenceKey {
 }
 
 struct MessageBubbleActions {
-  var showsMenuButton = false
   var allowsConversationMutation = true
   var canReply = true
   var canRetry = true
@@ -230,7 +229,6 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
       && lhs.renderImages == rhs.renderImages
       && lhs.searchHighlight == rhs.searchHighlight
       && lhs.actions.allowsConversationMutation == rhs.actions.allowsConversationMutation
-      && lhs.actions.showsMenuButton == rhs.actions.showsMenuButton
       && lhs.actions.canReply == rhs.actions.canReply
       && lhs.actions.canRetry == rhs.actions.canRetry
       && lhs.actions.canResubmit == rhs.actions.canResubmit
@@ -322,7 +320,7 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
       }
     }
     .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
-    .messageActionsMenu(showsButton: actions.showsMenuButton && !isFullChatScreenshotRendering) {
+    .messageActionsMenu {
       messageContextMenu(visibleText: prepared.visibleText)
     }
     .sheet(item: $textDraft) { draft in
