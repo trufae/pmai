@@ -254,13 +254,14 @@ public struct MarkdownStreamLayout: Equatable, Sendable {
       var columns = 0
       for char in language {
         let cells = MarkdownDisplayWidth.width(of: char)
-        guard columns + cells <= width - 4 else { break }
+        guard columns + cells <= width - 5 else { break }
         label.append(char)
         columns += cells
       }
       if !label.isEmpty { text += " " + label + " " }
     }
-    text += String(repeating: horizontal, count: width - MarkdownDisplayWidth.width(of: text))
+    text += String(repeating: horizontal, count: width - MarkdownDisplayWidth.width(of: text) - 1)
+    text += options.unicode ? (opening ? "┐" : "┘") : "+"
     return MarkdownSpan(text, role: .fence)
   }
 

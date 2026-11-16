@@ -213,7 +213,7 @@ func partialEmission() {
   #expect(code.hasPrefix("┌─ py "))
   #expect(code.hasSuffix("\nprint(1"))
   #expect(renderer.feed(")\n``") == ")\n")
-  #expect(stripANSI(renderer.feed("`\ntail")) == "└" + String(repeating: "─", count: 39) + "\n")
+  #expect(stripANSI(renderer.feed("`\ntail")) == "└" + String(repeating: "─", count: 38) + "┘\n")
   #expect(renderer.flush() == "tail")
 }
 
@@ -383,12 +383,12 @@ func blockRendering() {
   #expect(colored.contains("\u{1B}[93m􀟈  \u{1B}[0mtodo\n"))
   #expect(colored.contains("\u{1B}[93m  1. \u{1B}[0msub\n"))
   #expect(colored.contains("\u{1B}[90m────────────────────\u{1B}[0m\n"))
-  #expect(stripANSI(colored).contains("┌───────────────────\ncode\n└───────────────────"))
+  #expect(stripANSI(colored).contains("┌──────────────────┐\ncode\n└──────────────────┘"))
 
   let ascii = stripANSI(
     MarkdownTerminalRenderer.render(
       source, theme: .plain, options: MarkdownLayoutOptions(width: 20, unicode: false)))
-  #expect(ascii.contains("| quote\n[ ] todo\n  1. sub\n--------------------\n+-------------------\ncode\n+-------------------"))
+  #expect(ascii.contains("| quote\n[ ] todo\n  1. sub\n--------------------\n+------------------+\ncode\n+------------------+"))
 }
 
 @Test("Terminal palettes replace Markdown colors without changing text or emphasis")
