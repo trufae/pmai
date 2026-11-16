@@ -246,7 +246,7 @@ public actor AgentRuntime {
           for: concreteDefinitions,
           exposing: exposedTools(in: concreteDefinitions, request: state.request),
           hiding: hiddenTools(for: state.request))
-        if state.modelTurns >= state.request.limits.maxModelTurns {
+        if !state.request.limits.allowsModelTurn(used: state.modelTurns) {
           return await finishRun(
             state, interruption: .modelTurns(limit: state.request.limits.maxModelTurns))
         }
@@ -296,7 +296,7 @@ public actor AgentRuntime {
         }
         // Queued input and background children give an answer one more turn,
         // unless its allowance is spent; then their messages stay for the host.
-        if state.modelTurns < state.request.limits.maxModelTurns,
+        if state.request.limits.allowsModelTurn(used: state.modelTurns),
           await budget.exhausted() == nil,
           try await AgentProcessTools.awaitChildren(
             of: pid, supervisor: supervisor, excluding: state.request.ignoredQueuedMessageIDs)

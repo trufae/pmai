@@ -2566,9 +2566,11 @@ extension MaiCLI {
         if !heredoc, case .limit(let reason, _)? = loop.modalPrompt(for: session.id) {
           let fields = text.lowercased().split(whereSeparator: \.isWhitespace)
           switch fields.first {
-          case "extend", "e", "continue", "/continue":
+          case "extend", "e", "continue", "/continue", "yolo":
             let value: Int
-            if fields.count > 1 {
+            if fields.first == "yolo" {
+              value = 0
+            } else if fields.count > 1 {
               guard fields.count == 2, let explicit = Int(fields[1]), explicit > 0 else {
                 await terminal.line("Use extend or extend N, with a positive limit.")
                 await releaseIfIdle(workspace: workspace)
@@ -2590,11 +2592,11 @@ extension MaiCLI {
             await terminal.note("Stopped here. The work is saved; /continue resumes it.")
           default:
             if text.hasPrefix("/") { break }
-            await terminal.line("Choose extend [N], stop, or answer (continue without tools). Slash commands remain available.")
+            await terminal.line("Choose extend [N], yolo (disable this limit), stop, or answer (continue without tools). Slash commands remain available.")
             await releaseIfIdle(workspace: workspace)
             return false
           }
-          if ["extend", "e", "continue", "/continue", "answer", "a", "stop", "s"].contains(fields.first ?? "") {
+          if ["extend", "e", "continue", "/continue", "yolo", "answer", "a", "stop", "s"].contains(fields.first ?? "") {
             await refreshStatus()
             await releaseIfIdle(workspace: workspace)
             return false

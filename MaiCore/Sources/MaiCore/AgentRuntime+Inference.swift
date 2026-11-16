@@ -271,7 +271,7 @@ extension AgentRuntime {
       contextSize: state.contextSize)
     let repairsEmptyReply =
       (state.toolCalls > 0 || (!turn.definitions.isEmpty && !turn.toolBudgetExhausted))
-      && state.modelTurns < state.request.limits.maxModelTurns
+      && state.request.limits.allowsModelTurn(used: state.modelTurns)
     let request = state.request
     let budget = state.budget
     let pid = state.pid

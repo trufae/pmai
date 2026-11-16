@@ -761,11 +761,17 @@ func mcpServerExposesAgent() async throws {
 }
 
 @Test("ACP asks how to continue after a run limit and keeps completed work",
-  arguments: [ACP.RunLimitChoice.extend, .answer, .stop], [true, false])
+  arguments: ACP.RunLimitChoice.allCases, [true, false])
 func acpRunLimitChoice(choice: ACP.RunLimitChoice, toolLimit: Bool) async throws {
   let call = ToolCall(id: "first", name: "echo", arguments: .object([:]))
-  let provider = ACPScriptedProvider(responses: [
-    .init(message: .init(role: .assistant, content: [.toolCall(call)]), stopReason: .toolCall),
+  let toolReply = ProviderResponse(
+    message: .init(role: .assistant, content: [.toolCall(call)]), stopReason: .toolCall)
+  // Yolo must finish past even a doubled allowance without another decision.
+  let moreTools: [ProviderResponse] = choice == .yolo ? (2...3).map { index in
+    let next = ToolCall(id: "call-\(index)", name: "echo", arguments: .object(["text": .string("\(index)")]))
+    return .init(message: .init(role: .assistant, content: [.toolCall(next)]), stopReason: .toolCall)
+  } : []
+  let provider = ACPScriptedProvider(responses: [toolReply] + moreTools + [
     .init(message: .assistant("finished")),
   ])
   let runtime = AgentRuntime()
@@ -787,6 +793,9 @@ func acpRunLimitChoice(choice: ACP.RunLimitChoice, toolLimit: Bool) async throws
   let client = JSONRPCPeer(transport: clientTransport, onRequest: { method, params in
     #expect(method == ACP.Method.requestPermission)
     #expect(ACP.RunLimitChoice.summary(from: params) == expected)
+    #expect(params?.objectValue?["options"]?.arrayValue?.contains {
+      $0.objectValue?["optionId"]?.stringValue == choice.rawValue
+    } == true)
     await received.append(expected)
     #expect(await provider.requests.count == 1)
     return .object(["outcome": .object([
@@ -807,10 +816,11 @@ func acpRunLimitChoice(choice: ACP.RunLimitChoice, toolLimit: Bool) async throws
   if choice == .stop {
     #expect(requests.count == 1)
   } else {
-    try #require(requests.count == 2)
+    try #require(requests.count == (choice == .yolo ? 4 : 2))
     #expect(requests[1].messages.filter { $0.role == .user }.map(\.text) == ["start"])
     #expect(requests[1].messages.flatMap(\.toolResults).map(\.text) == ["tool evidence"])
-    #expect(requests[1].tools.contains { $0.name == "echo" } == (choice == .extend))
+    #expect(requests[1].tools.contains { $0.name == "echo" } == (choice != .answer))
+    #expect(requests.last?.messages.flatMap(\.toolResults).count == (choice == .yolo ? 3 : 1))
   }
 }
 

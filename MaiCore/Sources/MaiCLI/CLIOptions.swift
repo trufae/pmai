@@ -242,7 +242,7 @@ struct CLIOptions {
   /// Applies command-line run limits on top of a configured agent.
   func applyLimitOverrides(to limits: inout AgentRunLimits) {
     if let maxToolCalls { limits.maxToolCalls = max(0, maxToolCalls) }
-    if let maxModelTurns { limits.maxModelTurns = max(1, maxModelTurns) }
+    if let maxModelTurns { limits.maxModelTurns = max(0, maxModelTurns) }
     if let maxSubagents { limits.maxSubagents = max(0, maxSubagents) }
   }
 

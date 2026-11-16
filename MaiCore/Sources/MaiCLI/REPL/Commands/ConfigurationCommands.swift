@@ -714,7 +714,7 @@ extension MaiCLI {
       case "limits.maxToolCalls": limits.maxToolCalls = value
       case "limits.maxSubagents": limits.maxSubagents = value
       case "limits.maxSubagentDepth": limits.maxSubagentDepth = value
-      default: limits.maxModelTurns = max(1, value)
+      default: limits.maxModelTurns = value
       }
     }
     session.profile.limits = limits

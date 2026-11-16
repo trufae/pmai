@@ -846,6 +846,7 @@ public struct AgentRunLimits: Codable, Equatable, Sendable {
   public static let defaultMaxToolCalls = 0
   public static let defaultMaxModelTurns = 110
 
+  /// Model turns allowed per run. Zero leaves the turn count unlimited.
   public var maxModelTurns: Int
   /// Tool calls allowed per prompt. Zero leaves the tool count unlimited.
   public var maxToolCalls: Int
@@ -869,7 +870,7 @@ public struct AgentRunLimits: Codable, Equatable, Sendable {
     maxSeconds: Int? = nil,
     runTimeoutSeconds: Int? = nil
   ) {
-    self.maxModelTurns = max(1, maxModelTurns)
+    self.maxModelTurns = max(0, maxModelTurns)
     self.maxToolCalls = max(0, maxToolCalls)
     self.maxSubagents = max(0, maxSubagents)
     self.maxSubagentDepth = max(0, maxSubagentDepth)
@@ -880,6 +881,10 @@ public struct AgentRunLimits: Codable, Equatable, Sendable {
 
   public func remainingToolCalls(used: Int) -> Int {
     maxToolCalls == 0 ? Int.max : max(0, maxToolCalls - used)
+  }
+
+  func allowsModelTurn(used: Int) -> Bool {
+    maxModelTurns == 0 || used < maxModelTurns
   }
 
   private enum CodingKeys: String, CodingKey {
@@ -1019,6 +1024,15 @@ public enum AgentRunInterruption: Equatable, Sendable {
     case .toolCalls: limits.maxToolCalls = doubledLimit
     case .totalTokens: limits.maxTotalTokens = doubledLimit
     case .time: limits.maxSeconds = doubledLimit
+    }
+  }
+
+  public func disable(_ limits: inout AgentRunLimits) {
+    switch self {
+    case .modelTurns: limits.maxModelTurns = 0
+    case .toolCalls: limits.maxToolCalls = 0
+    case .totalTokens: limits.maxTotalTokens = nil
+    case .time: limits.maxSeconds = nil
     }
   }
 

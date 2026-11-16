@@ -51,7 +51,7 @@ actor RunBudget {
     if let maximum = limits.maxTotalTokens, tokens >= maximum {
       return .totalTokens(limit: maximum)
     }
-    if modelTurns >= limits.maxModelTurns { return .modelTurns(limit: limits.maxModelTurns) }
+    if !limits.allowsModelTurn(used: modelTurns) { return .modelTurns(limit: limits.maxModelTurns) }
     return nil
   }
 

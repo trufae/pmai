@@ -37,7 +37,7 @@ public enum ACP {
   }
 
   public enum RunLimitChoice: String, CaseIterable, Sendable {
-    case extend, answer, stop
+    case extend, yolo, answer, stop
 
     public static func summary(from params: JSONValue?) -> String? {
       params?.objectValue?["_meta"]?.objectValue?["pmai"]?.objectValue?["runLimit"]?.stringValue
@@ -47,6 +47,7 @@ public enum ACP {
       let name: String
       switch self {
       case .extend: name = "Double limit & continue"
+      case .yolo: name = "Yolo: disable this limit & continue"
       case .answer: name = "Answer without tools"
       case .stop: name = "Stop"
       }

@@ -1408,6 +1408,8 @@ public actor ACPServer {
       switch choice {
       case .extend:
         limit.extend(&request.limits)
+      case .yolo:
+        limit.disable(&request.limits)
       case .answer:
         request.disableTools()
       case .stop:

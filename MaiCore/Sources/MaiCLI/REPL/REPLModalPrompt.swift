@@ -23,7 +23,7 @@ enum REPLModalPrompt {
   case reset(id: UUID)
   case rewind(id: UUID, hasPins: Bool)
 
-  static let remoteRunLimitHelp = "extend doubles the limit for this prompt · answer continues without tools · stop keeps the work so far"
+  static let remoteRunLimitHelp = "extend doubles the limit for this prompt · yolo disables this limit for this prompt · answer continues without tools · stop keeps the work so far"
 
   static func approvalHelp(_ request: ApprovalRequest) -> String {
     request.tool.name == "files_path_access"
@@ -36,7 +36,7 @@ enum REPLModalPrompt {
     case .approval(let request, let id, let editing):
       if request.runLimitSummary != nil {
         let choices = ACP.RunLimitChoice.allCases.map(\.rawValue)
-        return TerminalPrompt(text: "limit [extend/answer/stop]> ", id: "approval-\(id)", choices: choices)
+        return TerminalPrompt(text: "limit [\(choices.joined(separator: "/"))]> ", id: "approval-\(id)", choices: choices)
       }
       if editing {
         return TerminalPrompt(text: "json> ", id: "edit-\(id)")
@@ -49,7 +49,7 @@ enum REPLModalPrompt {
     case .queue:
       return TerminalPrompt(text: "queue [submit/ignore/clear]> ", id: "queue", choices: ["submit", "ignore", "clear"])
     case .limit(_, let id):
-      return TerminalPrompt(text: "limit [extend/stop/answer]> ", id: "limit-\(id)", choices: ["extend", "stop", "answer"])
+      return TerminalPrompt(text: "limit [extend/yolo/stop/answer]> ", id: "limit-\(id)", choices: ["extend", "yolo", "stop", "answer"])
     case .chop(let id):
       return TerminalPrompt(text: "chop [n/b/p/e/d/x/q]> ", id: "chop-\(id)", choices: ["n", "b", "p", "e", "d", "x", "q"])
     case .reset(let id):
@@ -78,7 +78,7 @@ enum REPLModalPrompt {
     case .queue:
       return "Submit queued messages before this message, ignore them for this turn, or clear them?\nsubmit · ignore · clear"
     case .limit(let reason, _):
-      return "\(reason.summary). What should happen next?\nextend doubles and saves \(reason.settingKey); extend N saves N, then resumes · stop keeps the work so far · answer continues without tools"
+      return "\(reason.summary). What should happen next?\nextend doubles and saves \(reason.settingKey); extend N saves N, then resumes · yolo disables and saves this limit, then resumes · stop keeps the work so far · answer continues without tools"
     case .chop, .rewind:
       return nil
     case .reset:

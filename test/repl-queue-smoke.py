@@ -108,7 +108,8 @@ def main():
     server = ThreadingHTTPServer(('127.0.0.1', 0), Provider)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
-        for choice in sys.argv[2:] or ('continue', 'submit', 'ignore', 'clear', 'stop', 'limit-extend',
+        for choice in sys.argv[2:] or ('continue', 'submit', 'ignore', 'clear', 'stop',
+                       'limit-extend', 'limit-yolo-tools', 'limit-yolo-turns',
                        'hey', 'hey-empty', 'hey-idle', 'hey-approval', 'hey-shell', 'hey-all', 'hey-target', 'hey-child', 'hey-background',
                        'approval-eof', 'edit-eof', 'approval-exit', 'edit-exit',
                        'approval-quit', 'edit-quit', 'approval-interrupt', 'edit-interrupt',
@@ -147,7 +148,7 @@ def main():
                 env.update(TERM='xterm-256color', NO_PROXY='127.0.0.1,localhost')
                 process = subprocess.Popen(
                     [binary, '--config', str(config), '--home', str(root / 'home'),
-                     '--no-stream', '--no-markdown'] + (['--tool-approval', 'yolo'] if choice.startswith('shell-') or choice in ('hey-shell', 'limit-extend') else []), cwd=root, env=env,
+                     '--no-stream', '--no-markdown'] + (['--tool-approval', 'yolo'] if choice.startswith(('shell-', 'limit-')) or choice == 'hey-shell' else []), cwd=root, env=env,
                     stdin=slave, stdout=slave, stderr=slave, start_new_session=True)
                 os.close(slave)
                 output = bytearray()
@@ -213,30 +214,34 @@ def main():
 
                 try:
                     wait_for('> ')
-                    if choice == 'limit-extend':
-                        # Extending must increase the usable allowance and save it,
-                        # otherwise later prompts and resumed chats hit the old cap.
-                        send('/set limits.maxToolCalls\n')
-                        wait_for('limits.maxToolCalls = 0')
-                        send('/set limits.maxToolCalls 1\n')
-                        wait_for('Set limits.maxToolCalls = 1')
+                    if choice.startswith('limit-'):
+                        # Resuming must use and save the new allowance, so this
+                        # run, later prompts and resumed chats don't hit the old cap.
+                        setting = 'maxModelTurns' if choice == 'limit-yolo-turns' else 'maxToolCalls'
+                        summary = 'model turn' if choice == 'limit-yolo-turns' else 'tool call'
+                        saved_limit = 5 if choice == 'limit-extend' else 0
+                        send(f'/set limits.{setting} 1\n')
+                        wait_for(f'Set limits.{setting} = 1')
                         send('limit\n')
-                        wait_for('tool call limit (1) reached')
-                        wait_for('limit [extend/stop/answer]> ')
+                        wait_for(f'{summary} limit (1) reached')
+                        wait_for('limit [extend/yolo/stop/answer]> ')
                         assert (root / 'limit-0.txt').read_text() == 'limit'
-                        send('extend\n')
-                        wait_for('Set limits.maxToolCalls = 2')
-                        wait_for('tool call limit (2) reached')
-                        wait_for('limit [extend/stop/answer]> ')
-                        assert (root / 'limit-2.txt').read_text() == 'limit'
-                        assert json.loads(config.read_text())['agents'][0]['limits']['maxToolCalls'] == 2
-                        send('extend 5\n')
-                        wait_for('Set limits.maxToolCalls = 5')
+                        if choice == 'limit-extend':
+                            send('extend\n')
+                            wait_for('Set limits.maxToolCalls = 2')
+                            wait_for('tool call limit (2) reached')
+                            wait_for('limit [extend/yolo/stop/answer]> ')
+                            assert (root / 'limit-2.txt').read_text() == 'limit'
+                            assert json.loads(config.read_text())['agents'][0]['limits']['maxToolCalls'] == 2
+                            send('extend 5\n')
+                        else:
+                            send('yolo\n')
+                        wait_for(f'Set limits.{setting} = {saved_limit}')
                         wait_for('limit finished')
                         wait_for('✓ took')
                         assert (root / 'limit-3.txt').read_text() == 'limit'
-                        send('/set limits.maxToolCalls\n')
-                        wait_for('limits.maxToolCalls = 5')
+                        send(f'/set limits.{setting}\n')
+                        wait_for(f'limits.{setting} = {saved_limit}')
                         send('limit followup\n')
                         wait_for('limit followup finished')
                         wait_for('✓ took')
@@ -250,14 +255,14 @@ def main():
                             requests.get_nowait()
                         chat_path, = (project_storage(root / 'home', root) / 'chats').glob('*.json')
                         chat = read_chat(chat_path)
-                        assert chat['primaryAgent']['limits']['maxToolCalls'] == 5, chat
-                        assert json.loads(config.read_text())['agents'][0]['limits']['maxToolCalls'] == 5
+                        assert chat['primaryAgent']['limits'][setting] == saved_limit, chat
+                        assert json.loads(config.read_text())['agents'][0]['limits'][setting] == saved_limit
                         resumed = run_repl(
                             [binary, '--config', str(config), '--home', str(root / 'home'),
                              '--resume', chat['id'], '--no-stream', '--no-markdown'],
-                            ['/set limits.maxToolCalls'], cwd=root, env=env)
-                        assert 'limits.maxToolCalls = 5' in resumed, resumed
-                        print('PASS limit-extend: doubled and explicit limits, followup and saved resume', flush=True)
+                            [f'/set limits.{setting}'], cwd=root, env=env)
+                        assert f'limits.{setting} = {saved_limit}' in resumed, resumed
+                        print(f'PASS {choice}: allowance, followup and saved resume', flush=True)
                         continue
                     if choice == 'hey-idle':
                         # Idle /hey must send the new text, preserving completed
