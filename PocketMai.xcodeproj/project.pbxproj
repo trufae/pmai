@@ -671,7 +671,7 @@
 					"-framework",
 					AppIntents,
 				);
-				POCKETMAI_ENTITLEMENTS = PocketMai/PocketMai.entitlements;
+				POCKETMAI_ENTITLEMENTS = PocketMai/PocketMaiCarPlay.entitlements;
 				PRODUCT_BUNDLE_IDENTIFIER = io.github.trufae.mai;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -706,7 +706,7 @@
 					"-framework",
 					AppIntents,
 				);
-				POCKETMAI_ENTITLEMENTS = PocketMai/PocketMai.entitlements;
+				POCKETMAI_ENTITLEMENTS = PocketMai/PocketMaiCarPlay.entitlements;
 				PRODUCT_BUNDLE_IDENTIFIER = io.github.trufae.mai;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";

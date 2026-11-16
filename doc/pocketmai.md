@@ -112,6 +112,8 @@ still uses that chat's selected model provider.
 
 ## CarPlay
 
+See [CarPlay setup and usage](carplay.md) for the full checklist, build/signing details, and troubleshooting.
+
 On iOS 26.4 or later, PocketMai can start or resume a spoken chat from the car
 and run favorite user prompts with one tap. Mark favorites and grant microphone
 access under Settings > CarPlay on the iPhone. If the selected transcription
@@ -120,17 +122,21 @@ backend needs Speech Recognition permission, grant it there as well.
 Device builds require the
 [CarPlay voice-based conversation entitlement](https://developer.apple.com/documentation/carplay/requesting-carplay-entitlements)
 from Apple for `io.github.trufae.mai`. Once it is enabled, regenerate the app's
-provisioning profile and build with the following Xcode setting for the PocketMai
-app target:
+provisioning profile so it includes that capability. The PocketMai app target now
+signs with `PocketMai/PocketMaiCarPlay.entitlements` by default, which includes
+`com.apple.developer.carplay-voice-based-conversation`.
+
+To build without CarPlay (for example, before the entitlement is approved for the
+App ID/profile you are using), override the Xcode setting:
 
 ```text
-POCKETMAI_ENTITLEMENTS = PocketMai/PocketMaiCarPlay.entitlements
+POCKETMAI_ENTITLEMENTS = PocketMai/PocketMai.entitlements
 ```
 
-For example, append
-`POCKETMAI_ENTITLEMENTS=PocketMai/PocketMaiCarPlay.entitlements` to an
-`xcodebuild -project PocketMai.xcodeproj -scheme PocketMai` device build.
-The default signing configuration uses the regular entitlement file.
+For example, append `POCKETMAI_ENTITLEMENTS=PocketMai/PocketMai.entitlements` to an
+`xcodebuild -project PocketMai.xcodeproj -scheme PocketMai` build. If you archive
+with the CarPlay entitlements but your provisioning profile does not include the
+CarPlay entitlement, signing/export will fail until the profile is regenerated.
 
 Test with CarPlay Simulator and a supported iPhone, then in a parked vehicle.
 With the iPhone locked, open PocketMai on CarPlay, ask two questions, end the

@@ -10,6 +10,7 @@
 - [Remote hosts](remote-hosts.md): share a workstation, pair devices, transfer files, and use remote terminals.
 - [Project boxes](boxes.md): Docker/Podman workspaces, shared or private settings, and reviewing changes.
 - [PocketMai on iOS](pocketmai.md): sharing conversations, location, voice setup and privacy, and CarPlay.
+- [PocketMai CarPlay](carplay.md): setup, entitlements, signing, testing, and usage.
 
 ## Models, agents, and context
 
