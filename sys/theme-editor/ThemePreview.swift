@@ -194,6 +194,12 @@ struct ThemePreview {
 
   mutating func bubble(_ text: String) {
     line("")
+    // Slash commands are printed flat, without fill, edges or a spacer row.
+    if text.trimmingCharacters(in: .whitespaces).hasPrefix("/") {
+      wrapped([PreviewSpan(text: text, foreground: "bubbleForeground", flag: "bold")],
+        fill: PreviewSpan(text: ""))
+      return
+    }
     // Small previews use the border and padding cells for the message itself.
     if compact || width < 5 {
       let prefix = compact && width >= 3 ? "◢ " : ""

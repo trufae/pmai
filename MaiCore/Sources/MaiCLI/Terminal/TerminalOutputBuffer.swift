@@ -201,7 +201,7 @@ struct TerminalOutputBuffer {
   private var activeThinking: Set<Int> = []
   private var thinkingDisplay: ThinkingDisplay = .full
   private var replyBlocks: [Int: ReplyBlock] = [:]
-  private var userBlocks: [Int: (prompt: String, text: String)] = [:]
+  private var userBlocks: [Int: (prompt: String, text: String, command: Bool)] = [:]
   private var retainedBlocks: [Int: TerminalOutputBuffer] = [:]
   private var toolBlocks: [Int: TerminalToolBlock] = [:]
   private var toolGroupStarts: [Int: Int] = [:]
@@ -471,11 +471,17 @@ struct TerminalOutputBuffer {
     return index
   }
 
+  /// Slash commands keep the chat bubble but drop its fill and ornament, so
+  /// they read as plain, unadorned transcript lines.
+  static func isCommand(_ text: String) -> Bool {
+    text.trimmingCharacters(in: .whitespaces).hasPrefix("/")
+  }
+
   @discardableResult
   mutating func appendUserMessage(_ text: String, prompt: String = "") -> Int {
     if !lines[lines.count - 1].glyphs.isEmpty { append("\n") }
     let index = lines.count - 1
-    userBlocks[index] = (prompt, text)
+    userBlocks[index] = (prompt, text, Self.isCommand(text))
     lines.append(Line())
     cursor = 0
     invalidateLine(index)
@@ -804,12 +810,14 @@ struct TerminalOutputBuffer {
 
   private mutating func userMessageRows(_ index: Int, width: Int) -> [Row] {
     // Reserve a tail, two sides and right padding, plus room for a wide grapheme.
-    let decorated = width >= 6
+    let message = userBlocks[index]!
+    // Commands stay flat: no fill, no edges, no trailing spacer row.
+    let decorated = width >= 6 && !message.command
     var theme = colors
     if let colors, !colors.bubbleForeground.isEmpty { theme?.foreground = colors.bubbleForeground }
-    let fill = colors.flatMap { $0.bubbleBackground.isEmpty ? nil : $0.bubbleBackground }
+    let fill = message.command ? nil
+      : colors.flatMap { $0.bubbleBackground.isEmpty ? nil : $0.bubbleBackground }
     if decorated, let fill { theme?.background = fill }
-    let message = userBlocks[index]!
     var output = TerminalOutputBuffer()
     output.configureColors(theme)
     output.configureHighlight(highlight)

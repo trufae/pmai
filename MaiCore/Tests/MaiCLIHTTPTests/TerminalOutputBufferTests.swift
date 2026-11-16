@@ -101,6 +101,33 @@ func terminalBufferUserMessageReflow() {
   #expect(buffer.visibleRows(width: 40, height: 10) == ["cleared"])
 }
 
+@Test("Slash commands print flat, without a bubble or a trailing spacer row")
+func terminalBufferCommandUserMessage() {
+  func plain(_ text: String) -> String {
+    text.replacingOccurrences(of: "\u{1B}\\[[0-?]*[ -/]*[@-~]", with: "", options: .regularExpression)
+  }
+  var buffer = TerminalOutputBuffer()
+  buffer.configureColors(TerminalTheme.builtins["sand"])
+  buffer.append("prior\n")
+  buffer.appendUserMessage("/help me")
+  buffer.append("after")
+  let rows = buffer.visibleRows(width: 40, height: 100).map(plain)
+  #expect(rows == ["prior", "/help me", "after"])
+  #expect(rows.allSatisfy { !$0.contains("◢") && !$0.contains("▂") && !$0.contains("█") })
+
+  // Regular messages keep the bubble and its spacer row.
+  var chat = TerminalOutputBuffer()
+  chat.configureColors(TerminalTheme.builtins["sand"])
+  chat.append("prior\n")
+  chat.appendUserMessage("hello there")
+  chat.append("after")
+  let bubbleRows = chat.visibleRows(width: 40, height: 100).map(plain)
+  #expect(bubbleRows.count == 7)
+  #expect(bubbleRows.contains { $0.contains("◢") })
+  #expect(bubbleRows.first == "prior")
+  #expect(bubbleRows.last == "after")
+}
+
 @Test("Terminal buffer handles progress lines and strips cursor and title controls")
 func terminalBufferControls() {
   var buffer = TerminalOutputBuffer()
