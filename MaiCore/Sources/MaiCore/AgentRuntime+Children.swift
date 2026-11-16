@@ -38,7 +38,8 @@ extension AgentRuntime {
       // A parent that narrowed the child's tools and left the agent family
       // out said what the child may use: that child is a leaf and pays for
       // no agent schemas. Otherwise the worker is a peer.
-      let delegates = start.tools.map { $0.contains(where: AgentProcessTools.isAgentTool) } ?? true
+      let delegates = request.goal?.isActive == true ? false
+        : start.tools.map { $0.contains(where: AgentProcessTools.isAgentTool) } ?? true
       definition = derivedWorker(
         for: request, toolNames: start.narrowed(request.toolNames), delegates: delegates)
       derived = parent.pid.map { DerivedRun(parent: $0, tools: start.tools, delegates: delegates) }
@@ -70,6 +71,9 @@ extension AgentRuntime {
     // per-session header carries the same value for the whole tree.
     var scopedChildRequest = self.request(
       for: definition, messages: [.user(prompt)], sessionID: request.sessionID)
+    if request.goal?.isActive == true {
+      scopedChildRequest.isGoalWorker = true
+    }
     scopedChildRequest.restrictedToolNames = start.tools
     if start.agent == nil, let inherited = request.restrictedToolNames {
       scopedChildRequest.restrictedToolNames =

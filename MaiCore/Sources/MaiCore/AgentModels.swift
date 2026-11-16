@@ -1197,6 +1197,11 @@ public struct AgentDefinition: Codable, Equatable, Identifiable, Sendable {
 }
 
 public struct AgentRequest: Codable, Equatable, Sendable {
+  /// Only the coordinator carries this; delegated tasks have their own brief.
+  public var goal: AgentGoal? = nil
+  /// Role guidance follows the worker's current inference effort, including
+  /// live model changes and task-model routing. Nil preserves older requests.
+  var isGoalWorker: Bool? = nil
   /// A child's explicit narrowing caps every group and policy override.
   var restrictedToolNames: Set<String>? = nil
   /// Inbox entries held for a later run. New messages still steer this run.
@@ -1285,6 +1290,7 @@ public struct AgentRequest: Codable, Equatable, Sendable {
 }
 
 public struct AgentResult: Equatable, Sendable {
+  public var goal: AgentGoal? = nil
   public var runID: UUID
   public var agentID: String
   public var provider: ProviderID

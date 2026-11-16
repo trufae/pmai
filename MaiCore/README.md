@@ -1717,6 +1717,14 @@ delete it. Created and imported skills are enabled automatically.
 
 ### Agents and subagents
 
+`/goal TASK` runs a bounded plan, execute and review loop in the current chat.
+The coordinator can delegate focused work, verifies results and records each
+decision with evidence. `/goal --iterations N TASK` changes the default eight
+review allowance; `/goal` shows state, `/goal resume` continues saved work and
+`/goal clear` removes it. `/stop` and normal run limits remain available.
+Coordinator and worker guidance follows each agent's reasoning effort. See
+[`doc/agents.md`](../doc/agents.md#goal-execution) for the workflow and limits.
+
 An agent definition is a saved setup — provider, model, system prompt, tool set,
 and limits — that people switch between with `/agent use ID`. Each one carries a
 `description` saying what it is for, which a delegating model also reads when it

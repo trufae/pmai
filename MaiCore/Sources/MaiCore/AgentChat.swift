@@ -59,6 +59,7 @@ public struct AgentChat: PagedStoredChat, Equatable {
   public var subagents: [AgentProcessRecord]
   public var commands: [AgentCommandRecord]
   public var runtimeConfiguration: AgentChatConfiguration?
+  public var goal: AgentGoal? = nil
 
   public init(
     id: UUID = UUID(),
@@ -97,6 +98,7 @@ public struct AgentChat: PagedStoredChat, Equatable {
   private enum CodingKeys: String, CodingKey {
     case id, title, primaryAgent, messages, pendingContent, createdAt, updatedAt, isArchived
     case sessionID, subagents, commands, runtimeConfiguration, accessedFiles, isPinned
+    case goal
   }
 
   public init(from decoder: Decoder) throws {
@@ -132,6 +134,7 @@ public struct AgentChat: PagedStoredChat, Equatable {
     }
     runtimeConfiguration = try container.decodeIfPresent(
       AgentChatConfiguration.self, forKey: .runtimeConfiguration)
+    goal = try container.decodeIfPresent(AgentGoal.self, forKey: .goal)
   }
 
   public func encode(to encoder: Encoder) throws {
@@ -151,6 +154,7 @@ public struct AgentChat: PagedStoredChat, Equatable {
     try container.encode(commands, forKey: .commands)
     try container.encode(accessedFiles, forKey: .accessedFiles)
     try container.encodeIfPresent(runtimeConfiguration, forKey: .runtimeConfiguration)
+    try container.encodeIfPresent(goal, forKey: .goal)
   }
 
   public var historyMessageCount: Int { messages.count }
@@ -234,6 +238,7 @@ public struct AgentChat: PagedStoredChat, Equatable {
   ) {
     primaryAgent = agent
     if resettingTranscript {
+      goal = nil
       messages = Self.initialHistory(for: agent)
       accessedFiles.removeAll()
       subagents.removeAll()
@@ -245,6 +250,7 @@ public struct AgentChat: PagedStoredChat, Equatable {
   /// A cleared conversation keeps nothing of its runs: the agents they
   /// started go with the messages.
   public mutating func resetTranscript() {
+    goal = nil
     messages = Self.initialHistory(for: primaryAgent)
     accessedFiles.removeAll()
     subagents.removeAll()
@@ -265,6 +271,7 @@ public struct AgentChat: PagedStoredChat, Equatable {
     chat.updatedAt = date
     chat.isArchived = false
     chat.isPinned = false
+    if chat.goal?.isActive == true { chat.goal?.status = .paused }
     return chat
   }
 

@@ -4,6 +4,43 @@ How MaiCore runs work in child agents, why it does, and what the API looks like
 from the outside. This is the design reference; `MaiCore/README.md` covers the
 configuration file and `PLUGIN_API.md` covers tools.
 
+## Goal execution
+
+`/goal TASK` makes the current chat agent own an objective across planning,
+execution and review. It defines acceptance criteria, delegates focused work
+through the existing `agent_start` tools when useful, collects results, checks
+the evidence and revises its plan. Derived workers focus on one brief; named
+agents keep their configured capabilities. Enable the `agents` group to allow
+delegation. Small goals can be completed directly.
+
+The coordinator records each review with `goal_review`, using `continue`,
+`complete` or `blocked` plus evidence and the next action. Ordinary prose does
+not complete a goal. Reviews must run alone, after outstanding children have
+finished or been stopped. Completion remains the model's assessment of the
+evidence; the runtime validates the review contract, not the truth of its claims.
+
+`/goal --iterations N TASK` sets the review allowance per run (default 8,
+range 1–100). Exhausting it pauses the goal and saves its next step. Existing
+turn, tool, time, token, concurrency and depth limits still apply; goals cap
+an otherwise unlimited model-turn setting at 64. `/stop` and Ctrl+C use normal
+runtime cancellation. `/goal` shows the current state, `/goal resume` grants
+another review allowance, and `/goal clear` removes the goal after work stops.
+The objective and latest review survive saving and reopening the chat. A
+blocked goal can be resumed after supplying its missing input.
+
+Coordinator and worker prompts are separate and adapt to `/set effort`:
+low effort asks for a direct path and decisive checks; medium adds the main
+assumptions and failure cases; high through maximum asks for closer examination
+of risky assumptions and independent verification where useful. Every level
+asks for concise reports and actual evidence. Derived workers inherit the
+parent's effort; named agents retain their own effort. Effort does not increase
+the review allowance or require more agents. Existing worker instructions and
+delegation templates still apply alongside the goal-specific role guidance.
+
+Goals require tools and a provider whose tool loop pmai controls. Providers
+with managed tool loops, such as ACP, cannot use this command. `$goal` remains
+the separate built-in research prompt.
+
 ## The problem
 
 A chat with tools grows fast. Every call the model makes appends a tool-call

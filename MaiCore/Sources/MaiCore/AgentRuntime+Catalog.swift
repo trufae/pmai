@@ -108,7 +108,7 @@ extension AgentRuntime {
   ) throws {
     let name = tool.definition.name.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !name.isEmpty else { throw AgentToolError.invalidName }
-    guard !AgentProcessTools.reservedToolNames.contains(name) else {
+    guard !AgentProcessTools.reservedToolNames.contains(name), name != Self.goalReviewName else {
       throw AgentRuntimeError.reservedToolName(name)
     }
     guard replacingExisting || tools[name] == nil else {
@@ -137,7 +137,7 @@ extension AgentRuntime {
       guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
         throw AgentToolError.invalidName
       }
-      guard !Self.agentToolNames.contains(name),
+      guard name != Self.goalReviewName, !Self.agentToolNames.contains(name),
         !AgentProcessTools.legacyStartToolNames.contains(name)
       else { throw AgentRuntimeError.reservedToolName(name) }
       guard names.insert(name).inserted,

@@ -43,7 +43,7 @@ extension AgentRuntime {
     let primaryManagesTools =
       providers[state.request.provider]?.descriptor.capabilities.contains(.managedToolLoop) == true
     let selectingTools =
-      routedDecision == nil && !state.usingPrimary && taskAgents.tool != nil
+      routedDecision == nil && !state.usingPrimary && taskAgents.tool != nil && state.goal?.isActive != true
       && !primaryManagesTools
       && !concreteDefinitions.isEmpty
       && hasToolBudget && !state.repeatGuardTripped
@@ -120,6 +120,17 @@ extension AgentRuntime {
     let promptContext = AgentPromptContext(
       messages: inference.messages, activeTaskID: state.activeTaskID)
     var providerMessages = promptContext.messages()
+    if inference.isGoalWorker == true {
+      insertSystem(AgentGoalPrompt.worker(effort: inference.options.reasoningEffort),
+        into: &providerMessages)
+    }
+    if let goal = state.goal, goal.isActive {
+      insertSystem(AgentGoalPrompt.coordinator(goal, effort: inference.options.reasoningEffort),
+        into: &providerMessages)
+      if state.goalNeedsReview {
+        insertSystem("The goal is still active. Call goal_review with the evidence and decision, or use tools for the next concrete step. A prose answer does not complete the goal.", into: &providerMessages)
+      }
+    }
     if concreteDefinitions.contains(where: { MaiSkillTools.isSkillTool($0.name) }) {
       insertSystem(MaiSkillTools.promptSection, into: &providerMessages)
     }

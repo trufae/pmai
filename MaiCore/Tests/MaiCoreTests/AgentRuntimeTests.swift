@@ -5,6 +5,143 @@ import Testing
 
 @testable import MaiTestSupport
 
+private func goalReview(_ status: String, evidence: String = "Verified result: 42", next: String = "") -> ProviderResponse {
+  ProviderResponse(message: AgentMessage(role: .assistant, content: [
+    .toolCall(ToolCall(id: UUID().uuidString, name: "goal_review", arguments: .object([
+      "status": .string(status), "summary": .string("Reviewed the result"),
+      "evidence": .string(evidence), "next": .string(next),
+    ])))
+  ]), stopReason: .toolCall)
+}
+
+@Test("Goals collect worker results, verify and iterate before completing", arguments: ["low", "high"], ["agents", "runtime/agents"])
+func goalCoordinatesAndVerifies(effort: String, group: String) async throws {
+  let provider = ScriptedProvider(responses: [
+    ProviderResponse(message: .assistant("I will work on it"), stopReason: .stop),
+    ProviderResponse(message: AgentMessage(role: .assistant, content: [
+      .toolCall(ToolCall(id: "start", name: "agent_start", arguments: .object([
+        "task": .string("Compute the result"), "output": .string("The result and evidence")
+      ])))
+    ]), stopReason: .toolCall),
+    ProviderResponse(message: .assistant("42"), stopReason: .stop),
+    goalReview("continue", evidence: "Worker returned 42; verification remains", next: "Verify the result"),
+    ProviderResponse(message: AgentMessage(role: .assistant, content: [
+      .toolCall(ToolCall(id: "verify", name: "verify", arguments: .object([:])))
+    ]), stopReason: .toolCall),
+    goalReview("complete"),
+  ])
+  let runtime = AgentRuntime(approvalHandler: AllowAllApprovals())
+  try await runtime.register(provider)
+  try await runtime.register(tool: ClosureTool(definition: ToolDefinition(name: "verify", description: "Verify result")) { _, _ in
+    ToolOutput(text: "Verified result: 42")
+  })
+  var request = AgentRequest(provider: "scripted", messages: [.user("Compute and verify")],
+    toolNames: ["verify"], toolGroupNames: [group], options: .init(reasoningEffort: effort),
+    context: .cache)
+  request.goal = AgentGoal(objective: "Compute and verify")
+  let result = try await runtime.run(request)
+  #expect(result.goal?.status == .complete)
+  #expect(result.goal?.iterations == 2)
+  #expect(result.transcript.flatMap(\.toolResults).contains { $0.text == "Verified result: 42" })
+  #expect(result.response.text.contains("Verified result: 42"))
+  let child = try #require(await provider.requests.first { $0.messages.contains { $0.text.contains("## Task") } })
+  #expect(child.options.reasoningEffort == effort)
+  #expect(child.messages.contains { $0.text == AgentGoalPrompt.worker(effort: effort) })
+  #expect(!child.tools.contains { $0.name == "goal_review" || $0.name == "agent_start" })
+}
+
+@Test("Goals pause at the review allowance and retain a resumable next step")
+func goalReviewAllowance() async throws {
+  let provider = ScriptedProvider(responses: [goalReview("continue", next: "Fix the remaining gap")])
+  let runtime = AgentRuntime()
+  try await runtime.register(provider)
+  var request = AgentRequest(provider: "scripted", messages: [.user("Finish")], limits: .init(maxToolCalls: 1))
+  request.goal = AgentGoal(objective: "Finish", maxIterations: 1)
+  let result = try await runtime.run(request)
+  #expect(result.goal?.status == .paused)
+  #expect(result.toolCalls == 1)
+  #expect(result.goal?.nextStep == "Fix the remaining gap")
+  #expect(result.response.text.contains("/goal resume"))
+  request.messages = result.transcript
+  request.goal = result.goal
+  request.goal?.status = .active
+  let completion = ScriptedProvider(responses: [goalReview("complete")])
+  try await runtime.register(completion, replacingExisting: true)
+  let resumed = try await runtime.run(request)
+  #expect(resumed.goal?.status == .complete)
+  #expect(resumed.goal?.iterations == 2)
+}
+
+@Test("A goal that never reviews remains bounded by the normal turn limit")
+func goalWithoutReviewStopsAtLimit() async throws {
+  let provider = ScriptedProvider(responses: Array(repeating:
+    ProviderResponse(message: .assistant("Still working"), stopReason: .stop), count: 2))
+  let runtime = AgentRuntime()
+  try await runtime.register(provider)
+  var request = AgentRequest(provider: "scripted", messages: [.user("Finish")],
+    limits: .init(maxModelTurns: 2))
+  request.goal = AgentGoal(objective: "Finish")
+  let result = try await runtime.run(request)
+  #expect(result.interruption == .modelTurns(limit: 2))
+  #expect(result.goal?.status == .paused)
+}
+
+@Test("Goal review cannot race work or accept a decision without evidence")
+func goalRejectsPrematureReview() async throws {
+  var mixed = goalReview("complete")
+  mixed.message.content.append(.toolCall(ToolCall(id: "write", name: "write", arguments: .object([:]))))
+  let provider = ScriptedProvider(responses: [mixed, goalReview("complete", evidence: " "),
+    goalReview("blocked", evidence: "Required input is unavailable", next: "Provide the missing input")])
+  let runtime = AgentRuntime()
+  try await runtime.register(provider)
+  try await runtime.register(tool: ClosureTool(definition: ToolDefinition(name: "write", description: "Write")) { _, _ in
+    Issue.record("Work mixed with a review must not execute")
+    return ToolOutput(text: "Written")
+  })
+  var request = AgentRequest(provider: "scripted", messages: [.user("Finish")], toolNames: ["write"])
+  request.goal = AgentGoal(objective: "Finish")
+  let result = try await runtime.run(request)
+  #expect(result.goal?.status == .blocked)
+  #expect(result.goal?.iterations == 1)
+  #expect(result.transcript.flatMap(\.toolResults).filter(\.isError).count == 3)
+}
+
+@Test("Saved goals survive chat serialization and clearing removes them")
+func goalChatPersistence() throws {
+  var chat = AgentChat(primaryAgent: .init(id: "main", provider: "scripted", model: "fixture"))
+  chat.goal = AgentGoal(objective: "Finish", maxIterations: 3)
+  chat.goal?.status = .paused
+  chat.goal?.iterations = 2
+  chat.goal?.nextStep = "Verify saved data"
+  let restored = try JSONDecoder().decode(AgentChat.self, from: JSONEncoder().encode(chat))
+  #expect(restored.goal == chat.goal)
+  chat.resetTranscript()
+  #expect(chat.goal == nil)
+}
+
+@Test("A goal incorporates user steering received during a completion review")
+func goalReviewIncludesQueuedInput() async throws {
+  let provider = LiveSettingsProvider(id: "goal-steering", responses: [
+    goalReview("complete", evidence: "Stale result"),
+    goalReview("complete", evidence: "New requirement verified"),
+  ], blockedRequest: 1)
+  let runtime = AgentRuntime()
+  try await runtime.register(provider)
+  let pid = await runtime.allocateProcess(agentID: "main")
+  var request = AgentRequest(provider: "goal-steering", messages: [.user("Finish")])
+  request.goal = AgentGoal(objective: "Finish")
+  let task = Task { try await runtime.run(request, process: pid) }
+  defer { task.cancel() }
+  #expect(await provider.waitForRequests(1))
+  await runtime.supervisor.post(.user("Also verify the new requirement"), to: pid)
+  await provider.releaseBlockedRequest()
+  let result = try await task.value
+  #expect(result.goal?.evidence == "New requirement verified")
+  #expect(result.goal?.iterations == 1)
+  let reviewed = try #require(await provider.requests.last)
+  #expect(reviewed.messages.contains { $0.role == .user && $0.text.contains("new requirement") })
+}
+
 @Test("Provider default model fills an empty model but keeps explicit selections")
 func providerDefaultModelInference() async throws {
   let provider = ScriptedProvider(

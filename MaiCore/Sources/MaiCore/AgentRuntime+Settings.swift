@@ -257,10 +257,10 @@ extension AgentRuntime {
       instructions: workerInstructions ?? AgentDelegationPrompt.workerInstructions,
       provider: request.provider,
       model: request.model,
-      toolNames: delegates ? toolNames.union(Self.agentToolNames) : toolNames,
+      toolNames: delegates ? toolNames.union(Self.agentToolNames) : toolNames.subtracting(Self.agentToolNames),
       toolGroupNames: delegates
         ? (request.toolGroupNames ?? [])
-        : (request.toolGroupNames ?? []).subtracting([Self.agentToolGroup.id]),
+        : (request.toolGroupNames ?? []).subtracting([Self.agentToolGroup.id, Self.agentToolGroup.catalogID]),
       subagentNames: delegates ? request.subagentNames : [],
       stream: request.stream,
       limits: request.limits,

@@ -51,6 +51,7 @@ extension MaiCLI {
       "/set export.", "/set export.tools on", "/set export.tools off",
       "/set export.thinking on", "/set export.thinking off",
       "/fork", "/fork --empty", "/subagents", "/subagents main", "/subagents parent",
+      "/goal ", "/goal status", "/goal resume", "/goal clear", "/goal --iterations ", "/help goal",
       "/voice", "/voice on", "/voice off", "/voice realtime", "/voice walkie-talkie",
       "/set voice", "/set voice.", "/voice voices", "/voice languages",
       "/voice record", "/voice send", "/voice discard", "/voice cancel", "/voice pause", "/voice resume", "/voice status", "/voice help",

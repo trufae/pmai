@@ -121,6 +121,7 @@ public actor AgentRuntime {
     pauseOnToolLimit: Bool = false,
     emit: @escaping AgentEventHandler = { _ in }
   ) async throws -> AgentResult {
+    try validateGoal(request)
     let budget = RunBudget(limits: request.limits)
     let runID = UUID()
     let task = AgentProcessInfo.oneLine(
@@ -245,14 +246,24 @@ public actor AgentRuntime {
         if try await autocompact(&state) { continue }
         state.request = currentRequest(state.request, for: pid)
         await budget.update(limits: state.request.limits)
-        let concreteDefinitions = try visibleDefinitions(for: state.request, depth: depth)
-        let definitions = ToolProxy.definitions(
+        var concreteDefinitions = try visibleDefinitions(for: state.request, depth: depth)
+        var definitions = ToolProxy.definitions(
           for: concreteDefinitions,
           exposing: exposedTools(in: concreteDefinitions, request: state.request),
           hiding: hiddenTools(for: state.request))
+        if state.goal?.isActive == true, toolsEnabled, state.request.toolCallingStrategy != .off {
+          concreteDefinitions.append(Self.goalReviewDefinition)
+          definitions.append(Self.goalReviewDefinition)
+        }
         if !state.request.limits.allowsModelTurn(used: state.modelTurns) {
           return await finishRun(
             state, interruption: .modelTurns(limit: state.request.limits.maxModelTurns))
+        }
+        // A goal remains bounded even when the profile disables turn limits
+        // and the model never emits a valid review.
+        if state.goal?.isActive == true, state.modelTurns >= 64,
+          state.request.limits.maxModelTurns == 0 {
+          return await finishRun(state, interruption: .modelTurns(limit: 64))
         }
         if let interruption = await budget.exhausted() {
           return await finishRun(state, interruption: interruption)
@@ -295,6 +306,15 @@ public actor AgentRuntime {
         else { continue }
         let calls = response.message.toolCalls.filter { !$0.name.isEmpty }
         if !calls.isEmpty {
+          if try await reviewGoal(calls, state: &state) {
+            if let goal = state.goal, !goal.isActive {
+              let answer = AgentMessage.assistant(goal.report)
+              state.transcript.append(answer)
+              await emit(.provider(context, .textDelta(answer.text)))
+              return await finishRun(state, response: ProviderResponse(message: answer, stopReason: .stop))
+            }
+            continue
+          }
           try await executeToolBatch(calls, state: &state)
           continue
         }
@@ -305,6 +325,11 @@ public actor AgentRuntime {
           try await AgentProcessTools.awaitChildren(
             of: pid, supervisor: supervisor, excluding: state.request.ignoredQueuedMessageIDs)
         {
+          continue
+        }
+        if state.goal?.isActive == true, toolsEnabled, !turn.toolBudgetExhausted,
+          state.request.toolCallingStrategy != .off {
+          state.goalNeedsReview = true
           continue
         }
         return await finishRun(state, response: response)
@@ -319,7 +344,7 @@ public actor AgentRuntime {
     interruption: AgentRunInterruption? = nil
   ) async -> AgentResult {
     // A pause reports only this run's own assistant output, not an old answer.
-    let result = AgentResult(
+    var result = AgentResult(
       runID: state.context.runID, agentID: state.request.agentID, provider: state.request.provider,
       response: response?.message
         ?? state.transcript.dropFirst(state.request.messages.count).last { $0.role == .assistant }
@@ -329,6 +354,12 @@ public actor AgentRuntime {
       stopReason: response?.stopReason ?? .unknown,
       modelTurns: state.modelTurns + (await state.budget.approvalTurns),
       toolCalls: state.toolCalls, interruption: interruption, modelStats: state.modelStats)
+    result.goal = state.goal
+    if result.goal?.isActive == true {
+      result.goal?.status = .paused
+      if let interruption { result.goal?.summary = interruption.summary }
+      liveRequests[state.pid]?.goal = result.goal
+    }
     await state.emit(.finished(state.context, result))
     return result
   }

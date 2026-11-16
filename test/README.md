@@ -646,6 +646,11 @@ checks queue routing, cancellation, exit, transcript isolation, and piped input.
 The iOS `BTWTests` exercise the app's provider path while a main reply runs,
 including independent cancellation and fresh context.
 
+`python3 test/repl-goal-smoke.py MaiCore/.build/debug/pmai` checks bounded
+goal reviews, saved state across restart, resume, completion, clearing and
+disabled tools against a local deterministic provider. Core tests cover worker
+handoffs, evidence requirements, queued steering and turn limits.
+
 `python3 test/forwiroh-remote-smoke.py /path/to/pmai` checks device and ACP
 approval, service restrictions, remote chat, reconnect, and device revocation
 using the prebuilt Forwiroh SDK. It needs network access for device discovery

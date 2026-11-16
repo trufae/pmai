@@ -227,6 +227,8 @@ extension MaiCLI {
         await terminal.line(remindersHelp)
       case "todo", "/todo":
         await terminal.line(todoHelp)
+      case "goal", "/goal":
+        await terminal.line(goalHelp)
       case "vdb", "/vdb":
         await terminal.line(vdbHelp)
       case "prompt", "prompts", "/prompt", "/prompts":
@@ -405,6 +407,8 @@ extension MaiCLI {
       await terminal.line(voiceHelp)
     case "/btw":
       await handleBTWCommand(argument, session: session, runtime: runtime, terminal: terminal)
+    case "/goal":
+      await terminal.line("Use /goal at the interactive chat prompt.\n" + goalHelp)
     case "/reminders":
       await handleRemindersCommand(argument, store: ReminderStore(directory: services.home.rootURL),
         terminal: terminal)

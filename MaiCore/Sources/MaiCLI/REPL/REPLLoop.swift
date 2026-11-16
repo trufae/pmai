@@ -1174,7 +1174,7 @@ extension MaiCLI {
     /// request, including later tool results, at the inference boundary.
     func chatRequest() -> AgentRequest {
       let profile = session.profile
-      return AgentRequest(
+      var request = AgentRequest(
         agentID: profile.agentID,
         provider: profile.provider,
         model: profile.model,
@@ -1198,6 +1198,8 @@ extension MaiCLI {
         autocompact: profile.autocompact,
         context: profile.context,
         sessionID: session.sessionID)
+      request.goal = session.goal?.isActive == true ? session.goal : nil
+      return request
     }
 
     /// Picks a paused or interrupted task up where it stopped: the history is
@@ -1207,6 +1209,7 @@ extension MaiCLI {
     @discardableResult
     func continueTurn(limits: AgentRunLimits? = nil, withoutTools: Bool = false) async -> Bool {
       let pid = await mainProcess()
+      if !withoutTools, session.goal?.status == .paused { session.goal?.status = .active }
       if limits == nil, !withoutTools, await runtime.supervisor.hasQueuedMessages(pid) {
         await startTurn([])
         return true
@@ -1215,7 +1218,8 @@ extension MaiCLI {
         await terminal.line("Nothing to continue yet: this chat has no messages.")
         return false
       }
-      if last.role == .assistant, last.toolCalls.isEmpty, loop.limitDecisions[session.id] == nil {
+      if last.role == .assistant, last.toolCalls.isEmpty, loop.limitDecisions[session.id] == nil,
+        session.goal?.isActive != true {
         await terminal.line(
           "Nothing to continue: the last reply was complete. Type a message instead.")
         return false
@@ -1224,6 +1228,8 @@ extension MaiCLI {
       if let limits { request.limits = limits }
       if withoutTools {
         request.disableTools()
+        request.goal = nil
+        if session.goal?.isActive == true { session.goal?.status = .paused }
       }
       await beginTurn(request, process: pid, kind: .chat)
       return true
@@ -3106,6 +3112,62 @@ extension MaiCLI {
             await releaseIfIdle(workspace: workspace)
             return false
           }
+          if name == "/goal" {
+            do {
+              let command = try GoalCommand(argument)
+              let pid = await mainProcess()
+              switch command {
+              case .status:
+                let goal = loop.turn(for: pid)?.request.goal != nil
+                  ? await runtime.conversationSettings(for: pid)?.goal ?? session.goal : session.goal
+                await terminal.line(goal?.report ?? "No goal saved. Use /goal TASK to start one.")
+              case .clear, .resume, .start:
+                guard loop.focus == .main else {
+                  await terminal.note("Switch to /subagents main to manage this chat's goal.")
+                  return false
+                }
+                guard loop.activeTurn == nil, loop.turn(for: pid) == nil else {
+                  await terminal.note("A turn is running. Use /stop before replacing, resuming or clearing its goal.")
+                  return false
+                }
+                switch command {
+                case .clear:
+                  session.goal = nil
+                  session.touch()
+                  workspace.upsert(session.chat, selecting: true)
+                  await saveWorkspace(&workspace, store: store, terminal: terminal)
+                  await terminal.line("Goal cleared.")
+                case .start(let goal):
+                  var request = chatRequest()
+                  request.goal = goal
+                  try await runtime.validateGoal(request)
+                  session.goal = goal
+                  await startTurn([goal.objective])
+                case .resume:
+                  guard var goal = session.goal else {
+                    await terminal.line("No goal saved. Use /goal TASK to start one.")
+                    return false
+                  }
+                  guard goal.status != .complete else {
+                    await terminal.line("This goal is complete. Use /goal TASK to start another.")
+                    return false
+                  }
+                  goal.status = .active
+                  var request = chatRequest()
+                  request.goal = goal
+                  try await runtime.validateGoal(request)
+                  session.goal = goal
+                  await continueTurn()
+                case .status: break
+                }
+              }
+            } catch {
+              await terminal.line("error: \(error.localizedDescription)", to: .standardError)
+            }
+            await refreshStatus()
+            await releaseIfIdle(workspace: workspace)
+            return false
+          }
           if name == "/last" {
             if let lastMessage = session.history.messages.last {
               if lastMessage.role == .assistant {
@@ -3737,6 +3799,22 @@ extension MaiCLI {
           if let turn, turn.chatID != nil, turn.restartPrompt == nil {
             kept = await keepPartialTranscript(
               of: turn, reason: cancelled ? "the run was cancelled" : "the run failed")
+          }
+        }
+        if let turn, let chatID = turn.chatID, let original = turn.request.goal {
+          var goal: AgentGoal?
+          if case .success(let result) = outcome { goal = result.goal }
+          else {
+            goal = await runtime.conversationSettings(for: pid)?.goal ?? original
+            goal?.status = .paused
+          }
+          if chatID == session.id, session.goal?.objective == original.objective {
+            session.goal = goal ?? session.goal
+          } else if var chat = workspace.chats.first(where: { $0.id == chatID }),
+            chat.goal?.objective == original.objective {
+            chat.goal = goal ?? chat.goal
+            chat.touch()
+            workspace.upsert(chat)
           }
         }
         // The run's own chat is usually the one at the prompt; `elsewhere`

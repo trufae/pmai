@@ -33,6 +33,7 @@ struct REPLSession: Sendable {
   var commands: [AgentCommandRecord]
   var runtimeConfiguration: AgentChatConfiguration?
   var redactor: ContentRedactor?
+  var goal: AgentGoal? = nil
 
   init(
     id: UUID = UUID(),
@@ -76,6 +77,7 @@ struct REPLSession: Sendable {
     subagents = chat.subagents
     commands = chat.commands
     runtimeConfiguration = chat.runtimeConfiguration
+    goal = chat.goal
     redactor = nil
   }
 
@@ -97,6 +99,7 @@ struct REPLSession: Sendable {
       runtimeConfiguration: runtimeConfiguration,
       historyWindow: historyWindow)
     result.historyChanges = historyChanges
+    result.goal = goal
     return result
   }
 
@@ -112,6 +115,7 @@ struct REPLSession: Sendable {
   /// A cleared conversation keeps nothing of its runs: the agents they
   /// started go with the messages.
   mutating func reset(profile: SessionProfile? = nil) {
+    goal = nil
     if let profile { self.profile = profile }
     history.replaceAll(with: Self.initialHistory(for: self.profile))
     pendingContent.removeAll()

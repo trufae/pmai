@@ -360,6 +360,7 @@ extension MaiCLI {
     /stats                 Show model usage and performance
     /stop                  Interrupt the current turn
     /subagents [PID|main]  List or switch agent conversations
+    /goal TASK            Work toward a goal through delegation and review
     /theme                 List, apply, or customize terminal themes
     /then [LINE]           Queue a prompt or command until all tasks finish; no args lists it
     /todo                  Show or edit the project's todo list

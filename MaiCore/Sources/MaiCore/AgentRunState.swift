@@ -33,6 +33,9 @@ extension AgentRuntime {
     var repeatedCalls: [ToolCallKey: Int] = [:]
     var repeatGuardTripped = false
     var consecutiveRepairs = 0
+    var goal: AgentGoal?
+    var goalReviews = 0
+    var goalNeedsReview = false
 
     init(
       _ request: AgentRequest, context: AgentEventContext, pid: AgentPID,
@@ -44,6 +47,7 @@ extension AgentRuntime {
       self.budget = budget
       self.activeTaskID = activeTaskID
       self.emit = emit
+      goal = request.goal
       transcript = request.messages
       toolContext = AgentToolResultContext(messages: request.context == .tools ? AgentConversationContext.messages(from: transcript) : [])
     }
