@@ -281,11 +281,12 @@ func terminalViewMarkdown() {
   #expect(styled.contains("Reasoning") && !styled.contains("# Reasoning"))
   #expect(styled.contains("needle") && !styled.contains("**needle**"))
   #expect(!styled.contains("`code`"))
-  #expect(source.visibleRows(width: 80, height: 30).joined().contains("**needle**"))
   projected.updateView(from: source, selection: .all)
   #expect(!projected.visibleRows(width: 80, height: 30).joined().contains("**needle**"))
   projected.configureMarkdown(nil)
   #expect(projected.visibleRows(width: 80, height: 30).joined().contains("**needle**"))
+  source.configureMarkdown(nil)
+  #expect(source.visibleRows(width: 80, height: 30).joined().contains("**needle**"))
 
   var pins = TerminalView(source: .pins, title: "pins", markdown: renderer)
   pins.updateMessages([AgentMessage(role: .assistant, content: [.text("# Heading\n\n**bold** text")], isPinned: true)])
