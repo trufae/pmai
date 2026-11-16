@@ -2,6 +2,13 @@ import Foundation
 #if canImport(FoundationNetworking)
 import FoundationNetworking
 #endif
+#if os(Linux)
+#if canImport(Musl)
+import Musl
+#else
+import Glibc
+#endif
+#endif
 
 /// WinHTTP and curl bypass FoundationNetworking's socket event loop.
 public enum ProviderHTTPTransport: String, Sendable {
@@ -148,20 +155,35 @@ final class CurlHTTPProtocol: URLProtocol {
     child.standardInput = input
     child.standardOutput = output
     child.standardError = errors
-    try lock.withLock {
-      guard !cancelled else { throw URLError(.cancelled) }
-      process = child
-      try child.run()
-    }
+    var launched = false
     defer {
-      if child.isRunning { child.terminate() }
-      child.waitUntilExit()
-      lock.withLock { process = nil }
+      if launched {
+        if child.isRunning { child.terminate() }
+        child.waitUntilExit()
+        lock.withLock { process = nil }
+      }
       try? input.fileHandleForWriting.close()
       try? output.fileHandleForReading.close()
     }
-    try input.fileHandleForWriting.write(contentsOf: Data((config.joined(separator: "\n") + "\n").utf8))
-    try input.fileHandleForWriting.close()
+    let curlConfig = Data((config.joined(separator: "\n") + "\n").utf8)
+    try lock.withLock {
+      guard !cancelled else { throw URLError(.cancelled) }
+      #if os(Linux)
+      // libdispatch workers block SIGTERM. Curl must be able to receive it.
+      var signals = sigset_t()
+      var previous = sigset_t()
+      sigemptyset(&signals)
+      sigaddset(&signals, SIGTERM)
+      pthread_sigmask(SIG_UNBLOCK, &signals, &previous)
+      defer { pthread_sigmask(SIG_SETMASK, &previous, nil) }
+      #endif
+      try child.run()
+      launched = true
+      // Publish the child after closing stdin so cancellation cannot break the config write.
+      try input.fileHandleForWriting.write(contentsOf: curlConfig)
+      try input.fileHandleForWriting.close()
+      process = child
+    }
 
     var pending = Data()
     var receivedHeaders = false
