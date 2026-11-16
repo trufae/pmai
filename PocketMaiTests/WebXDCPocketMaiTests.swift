@@ -46,21 +46,26 @@ final class WebXDCPocketMaiTests: XCTestCase {
   func testCapabilityDiscoveryNeedsNoGrantAndRespectsMediaGates() async throws {
     let app = try WebXDCLibrary.createApp(name: "Capabilities", description: "")
     defer { try? WebXDCLibrary.deleteApp(id: app.id) }
-    try WebXDCPermissions(inference: true, transcription: true, synthesis: true).save(app.id)
-    let replyReceived = expectation(description: "Capabilities")
     var settings = AppSettings.defaults
     settings.toolSettings.webxdcAllowMicrophone = false
     settings.toolSettings.webxdcAllowAudioPlayback = false
-    let host = WebXDCPocketMaiHost(appID: app.id, settings: { settings }) { reply in
-      let result = reply["result"] as? [String: Any]
-      XCTAssertEqual(result?["host"] as? String, "pocketmai")
-      XCTAssertEqual(
-        result?["permissions"] as? [String: Bool],
-        ["inference": true, "transcription": false, "synthesis": false])
-      replyReceived.fulfill()
+    for grants in [
+      WebXDCPermissions(),
+      WebXDCPermissions(inference: true, transcription: true, synthesis: true),
+    ] {
+      try grants.save(app.id)
+      let replyReceived = expectation(description: "Capabilities")
+      let host = WebXDCPocketMaiHost(appID: app.id, settings: { settings }) { reply in
+        let result = reply["result"] as? [String: Any]
+        XCTAssertEqual(result?["host"] as? String, "pocketmai")
+        XCTAssertEqual(
+          result?["permissions"] as? [String: Bool],
+          ["inference": grants.inference, "transcription": false, "synthesis": false])
+        replyReceived.fulfill()
+      }
+      host.receive(["id": "caps", "method": "capabilities"])
+      await fulfillment(of: [replyReceived], timeout: 3)
     }
-    host.receive(["id": "caps", "method": "capabilities"])
-    await fulfillment(of: [replyReceived], timeout: 3)
   }
 
   func testCancellationSettlesOnceAndSuppressesLateCompletion() async {
@@ -144,42 +149,6 @@ final class WebXDCPocketMaiTests: XCTestCase {
     settings.webxdcAllowProviderAPIs = false
     let restored = try JSONDecoder().decode(NativeToolSettings.self, from: JSONEncoder().encode(settings))
     XCTAssertFalse(restored.webxdcAllowProviderAPIs)
-  }
-
-  func testJavaScriptCanReachNativeCapabilitiesInWKWebView() async throws {
-    let html = """
-      <!doctype html><script src="webxdc.js"></script><script>
-      webxdc.pocketmai.capabilities().then(c => {
-        console.info('native-bridge:' + c.host + ':' + c.permissions.inference);
-      }).catch(e => console.error('bridge-failure:' + e.message));
-      </script>
-      """
-    let app = try WebXDCLibrary.createApp(
-      name: "Bridge integration", description: "", indexHTML: html)
-    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    defer {
-      try? WebXDCLibrary.deleteApp(id: app.id)
-      try? FileManager.default.removeItem(at: directory)
-    }
-    let store = AppStore(persistence: PersistenceStore(localBaseURL: directory))
-    let session = WebXDCRunningSession(app: app, conversationID: nil, store: store)
-    defer { session.stop() }
-    let replied = expectation(description: "Native bridge round trip")
-    var completed = false
-    let observation = session.$debugLogs.sink { logs in
-      guard !completed, let message = logs.last?.message else { return }
-      if message.hasPrefix("native-bridge:") {
-        completed = true
-        XCTAssertEqual(message, "native-bridge:pocketmai:false")
-        replied.fulfill()
-      } else if message.hasPrefix("bridge-failure:") {
-        completed = true
-        XCTFail(message)
-        replied.fulfill()
-      }
-    }
-    defer { observation.cancel() }
-    await fulfillment(of: [replied], timeout: 15)
   }
 
   func testCompletionUsesOnlyAppMessagesAndCustomPrompt() async throws {
@@ -338,10 +307,12 @@ final class WebXDCPocketMaiTests: XCTestCase {
     }
     let app = try WebXDCLibrary.createApp(name: "Chat tools", description: "", indexHTML: """
       <!doctype html><script src="webxdc.js"></script><script>
-      webxdc.pocketmai.complete({scope:'chat', mode:'voice',
-        messages:[{role:'user',content:'Add Voice task to my todos'}]})
-        .then(r => console.info('chat-result:' + r.text))
-        .catch(e => console.error('chat-error:' + e.name + ':' + e.message));
+      (async () => {
+        const c = await webxdc.pocketmai.capabilities();
+        const r = await webxdc.pocketmai.complete({scope:'chat', mode:'voice',
+          messages:[{role:'user',content:'Add Voice task to my todos'}]});
+        console.info('chat-result:' + c.host + ':' + c.permissions.inference + ':' + r.text);
+      })().catch(e => console.error('chat-error:' + e.name + ':' + e.message));
       </script>
       """)
     defer { try? WebXDCLibrary.deleteApp(id: app.id) }
@@ -361,7 +332,7 @@ final class WebXDCPocketMaiTests: XCTestCase {
       guard !completed, let message = logs.last?.message,
         message.hasPrefix("chat-result:") || message.hasPrefix("chat-error:") else { return }
       completed = true
-      XCTAssertEqual(message, "chat-result:Saved your task.")
+      XCTAssertEqual(message, "chat-result:pocketmai:true:Saved your task.")
       finished.fulfill()
     }
     defer { observation.cancel() }
