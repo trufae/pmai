@@ -108,11 +108,13 @@ public actor AgentRuntime {
   /// a conversation's identity — and the background children it started —
   /// across turns; a stale or omitted pid starts a fresh process.
   /// A host restarting a child can deliver its replacement result to its parent.
+  /// Use `pauseOnToolLimit` when the host can ask how to continue this turn.
   @discardableResult
   public func run(
     _ request: AgentRequest,
     process: AgentPID? = nil,
     deliverToParent: Bool = false,
+    pauseOnToolLimit: Bool = false,
     emit: @escaping AgentEventHandler = { _ in }
   ) async throws -> AgentResult {
     let budget = RunBudget(limits: request.limits)
@@ -148,6 +150,7 @@ public actor AgentRuntime {
           parentRunID: parentRunID,
           depth: info?.depth ?? 0,
           budget: budget,
+          pauseOnToolLimit: pausesOnToolLimit || pauseOnToolLimit,
           emit: emit)
       }
       await supervisor.finish(pid, result: result, announce: deliverToParent, deliver: deliverToParent)
@@ -189,6 +192,7 @@ public actor AgentRuntime {
     budget: RunBudget,
     derivedFrom: DerivedRun? = nil,
     registeredAgent: Bool = false,
+    pauseOnToolLimit: Bool = false,
     emit downstream: @escaping AgentEventHandler
   ) async throws -> AgentResult {
     let emit: AgentEventHandler = { [weak self] event in
@@ -249,8 +253,8 @@ public actor AgentRuntime {
         if let interruption = await budget.exhausted() {
           return await finishRun(state, interruption: interruption)
         }
-        if pausesOnToolLimit, depth == 0, state.request.limits.maxToolCalls > 0,
-          state.toolCalls >= state.request.limits.maxToolCalls, !definitions.isEmpty,
+        if pauseOnToolLimit, depth == 0, state.request.limits.remainingToolCalls(used: state.toolCalls) == 0,
+          !definitions.isEmpty,
           !state.repeatGuardTripped
         {
           return await finishRun(

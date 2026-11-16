@@ -56,7 +56,7 @@ actor RunBudget {
   }
 
   func allowsToolCall(used: Int) -> Bool {
-    used < limits.maxToolCalls
+    limits.remainingToolCalls(used: used) > 0
   }
 
   func record(tokens newTokens: Int) {

@@ -97,7 +97,7 @@ func smartContextLargeHistory(mode: AgentContextMode) async throws {
   })
   let original: [AgentMessage] = [
     .system("STATIC RULE"), .developer("DEVELOPER RULE"),
-    .user("Earlier goal"), .assistant(String(repeating: "Earlier evidence.\n", count: 5_000)),
+    .user("Earlier goal"), .assistant(String(repeating: "Earlier evidence.\n", count: 5_600)),
     .user("Find bugs; do not edit files"),
   ]
   let result = try await runtime.run(AgentRequest(
@@ -122,6 +122,56 @@ func smartContextLargeHistory(mode: AgentContextMode) async throws {
   #expect(!requests[0].messages.contains(original[3]))
   #expect(requests[1].messages.flatMap(\.toolCalls) == [call])
   #expect(requests[1].messages.flatMap(\.toolResults).first?.text == evidence)
+}
+
+@Test("Adaptive keeps medium histories intact when the context window is unknown")
+func adaptiveDefersCompactionDuringToolWork() async throws {
+  let call = ToolCall(id: "read", name: "read", arguments: .object([:]))
+  let primary = SmartContextProvider(id: "primary", responses: [
+    .init(message: AgentMessage(role: .assistant, content: [.toolCall(call)])),
+    .init(message: .assistant("done")),
+  ])
+  let compact = SmartContextProvider(id: "compact", responses: [])
+  let runtime = try await smartRuntime(primary, compact)
+  try await runtime.register(tool: ClosureTool(definition: .init(
+    name: "read", description: "Read code", annotations: .init(approval: .automatic))) { _, _ in
+      ToolOutput(text: "fresh tool result")
+    })
+  let oldEvidence = AgentMessage.assistant(String(repeating: "evidence ", count: 7_000))
+  let result = try await runtime.run(AgentRequest(
+    provider: "primary", model: "frontier",
+    messages: [.user("Earlier task"), oldEvidence, .user("Continue")], toolNames: ["read"],
+    retry: .none))
+  #expect(result.response.text == "done")
+  #expect(await compact.requests.isEmpty)
+  let requests = await primary.requests
+  #expect(requests.count == 2)
+  #expect(requests.allSatisfy { $0.messages.contains(oldEvidence) })
+}
+
+@Test("Adaptive does not retry a failed summary for a small new result")
+func adaptiveWaitsForMoreEvidenceAfterFailedSummary() async throws {
+  let calls = ["small", "large"].map { id in
+    ToolCall(id: id, name: "read", arguments: .object(["file": .string(id)]))
+  }
+  let primary = SmartContextProvider(id: "primary", responses: calls.map { call in
+    .init(message: AgentMessage(role: .assistant, content: [.toolCall(call)]))
+  } + [.init(message: .assistant("done"))])
+  let compact = SmartContextProvider(id: "compact", responses: [])
+  let runtime = try await smartRuntime(primary, compact)
+  try await runtime.register(tool: ClosureTool(definition: .init(
+    name: "read", description: "Read code", annotations: .init(approval: .automatic))) { args, _ in
+      ToolOutput(text: args.objectValue?["file"]?.stringValue == "large"
+        ? String(repeating: "source ", count: 5_000) : "small result")
+    })
+  let oldEvidence = AgentMessage.assistant(String(repeating: "evidence ", count: 12_000))
+  let result = try await runtime.run(AgentRequest(
+    provider: "primary", model: "frontier",
+    messages: [.user("Earlier task"), oldEvidence, .user("Continue")], toolNames: ["read"],
+    retry: .none))
+  #expect(result.response.text == "done")
+  #expect(result.toolCalls == 2)
+  #expect(await compact.requests.count == 1)
 }
 
 @Test("Smart context still compacts the full growing transcript")

@@ -1,4 +1,5 @@
 import Foundation
+import MaiACP
 import MaiCore
 
 /// A stable identity separates a question's input from chat drafts and other questions.
@@ -22,6 +23,8 @@ enum REPLModalPrompt {
   case reset(id: UUID)
   case rewind(id: UUID, hasPins: Bool)
 
+  static let remoteRunLimitHelp = "extend doubles the limit for this prompt · answer continues without tools · stop keeps the work so far"
+
   static func approvalHelp(_ request: ApprovalRequest) -> String {
     request.tool.name == "files_path_access"
       ? "y (yes, this access) · a (always yolo, saved for project) · s (yolo, this session) · n (no) · c (cancel run); /path allow PATH grants ongoing access"
@@ -31,6 +34,10 @@ enum REPLModalPrompt {
   var input: TerminalPrompt {
     switch self {
     case .approval(let request, let id, let editing):
+      if request.runLimitSummary != nil {
+        let choices = ACP.RunLimitChoice.allCases.map(\.rawValue)
+        return TerminalPrompt(text: "limit [extend/answer/stop]> ", id: "approval-\(id)", choices: choices)
+      }
       if editing {
         return TerminalPrompt(text: "json> ", id: "edit-\(id)")
       }
@@ -57,6 +64,9 @@ enum REPLModalPrompt {
   var question: String? {
     switch self {
     case .approval(let request, _, let editing):
+      if let summary = request.runLimitSummary {
+        return "\(request.run.agentID): \(summary). What should happen next?\n" + Self.remoteRunLimitHelp
+      }
       let who = request.run.pid.map { "Agent#\($0.rawValue): " } ?? ""
       return "\(who)Approve \(request.tool.annotations.approval.rawValue) tool '\(request.tool.name)'?\nArguments: \(request.call.arguments.compactJSONString)\n"
         + (editing ? "Enter the replacement arguments as a JSON object." : Self.approvalHelp(request))
@@ -95,6 +105,9 @@ enum REPLModalPrompt {
   var status: String {
     switch self {
     case .approval(let request, _, let editing):
+      if request.runLimitSummary != nil {
+        return "RUN LIMIT · \(request.run.agentID) · choose below · Ctrl+C stops"
+      }
       let who = request.run.pid.map { " · agent#\($0.rawValue)" } ?? ""
       return "\(editing ? "EDIT ARGUMENTS" : "APPROVAL REQUIRED") · \(request.tool.name)\(who) · \(editing ? "JSON object" : "answer below") · Ctrl+C cancels"
     case .compaction(let request, _):

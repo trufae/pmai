@@ -384,11 +384,13 @@ public struct ApprovalRequest: Equatable, Sendable {
   public var run: AgentEventContext
   public var tool: ToolDefinition
   public var call: ToolCall
+  public var runLimitSummary: String?
 
-  public init(run: AgentEventContext, tool: ToolDefinition, call: ToolCall) {
+  public init(run: AgentEventContext, tool: ToolDefinition, call: ToolCall, runLimitSummary: String? = nil) {
     self.run = run
     self.tool = tool
     self.call = call
+    self.runLimitSummary = runLimitSummary
   }
 }
 

@@ -44,7 +44,7 @@ def main():
         result = subprocess.run(
             [binary, '--config', str(config), '--home', str(root / 'home'),
              '--no-markdown', *([] if args.stream else ['--no-stream']),
-             *([] if args.default_tools else ['--max-tool-calls', '0']),
+             *([] if args.default_tools else ['--no-tools']),
              *(['Say hello briefly. No tools are needed.'] if args.default_tools else
                ['What is 2 plus 2? Answer with one digit.'])],
             cwd=root, env=environment, text=True, capture_output=True, timeout=300)

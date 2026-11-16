@@ -1087,7 +1087,7 @@ func configurationLoading() async throws {
   #expect(configuration.approvals.mode == .ask)
   #expect(configuration.agents[0].limits == AgentRunLimits())
   #expect(configuration.agents[0].limits.maxModelTurns == 110)
-  #expect(configuration.agents[0].limits.maxToolCalls == 100)
+  #expect(configuration.agents[0].limits.maxToolCalls == 0)
   #expect(configuration.agents[0].limits.maxSubagents == 5)
   #expect(configuration.agents[0].limits.maxSubagentDepth == 5)
   #expect(configuration.agents[0].toolCallingStrategy == .json)

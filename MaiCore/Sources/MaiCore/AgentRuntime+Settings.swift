@@ -297,6 +297,13 @@ extension AgentRuntime {
 }
 
 extension AgentRequest {
+  public mutating func disableTools() {
+    limits.maxSubagents = 0
+    toolChoice = .none
+    toolCallingStrategy = .off
+    useSystemOne = false
+  }
+
   /// Copies only values that may change while a run is in progress. The
   /// transcript, queued-message exclusions, process identity and chat session
   /// belong to the run itself and are never replaced by reconfiguration.

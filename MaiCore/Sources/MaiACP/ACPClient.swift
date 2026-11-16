@@ -1099,7 +1099,9 @@ public actor ACPClient {
     let toolCall = params?.objectValue?["toolCall"]?.objectValue
     let kind = toolCall?["kind"]?.stringValue ?? ""
     let options = params?.objectValue?["options"]?.arrayValue ?? []
-    guard let optionID = configuration.permission.optionID(from: options, kind: kind) else {
+    guard ACP.RunLimitChoice.summary(from: params) == nil,
+      let optionID = configuration.permission.optionID(from: options, kind: kind)
+    else {
       return .object(["outcome": .object(["outcome": .string("cancelled")])])
     }
     return .object([

@@ -285,7 +285,7 @@ extension AgentRuntime {
         let current = await self.currentRequest(request, for: pid)
         await budget.update(limits: current.limits)
         guard !(await budget.deadlinePassed),
-          await toolCount.claim(limit: current.limits.maxToolCalls)
+          await toolCount.claim(limits: current.limits)
         else {
           return ToolResult(
             callID: call.id, text: "Error: the run's tool or time budget is exhausted.",
@@ -336,6 +336,7 @@ extension AgentRuntime {
       state.toolCalls = await toolCount.used
       state.transcript += await toolCount.transcript
       state.rejectedContextTokens = nil
+      state.contextRecoveryAttempts = 0
       return response
     } catch let error as ProviderContextLimitError {
       state.toolCalls = await toolCount.used
@@ -466,8 +467,8 @@ private actor ProviderToolCount {
   }
 
   init(used: Int) { self.used = used }
-  func claim(limit: Int) -> Bool {
-    guard used < limit else { return false }
+  func claim(limits: AgentRunLimits) -> Bool {
+    guard limits.remainingToolCalls(used: used) > 0 else { return false }
     used += 1
     return true
   }

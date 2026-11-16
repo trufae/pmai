@@ -95,6 +95,7 @@ public enum AgentSmartContextPrompt {
 /// In particular, a fresh tool result must reach the acting model verbatim.
 struct AgentSmartContext {
   static let thresholdTokens = 16_000
+  static let adaptiveThresholdTokens = 32_000
   static let recentTokens = 8_000
 
   private var summarized: [AgentMessage] = []
@@ -106,8 +107,9 @@ struct AgentSmartContext {
     in context: AgentPromptContext, activeTaskID: String?,
     thresholdTokens: Int = AgentSmartContext.thresholdTokens,
     recentTokens: Int = AgentSmartContext.recentTokens,
-    request: ProviderRequest? = nil, preserveUserMessages: Bool = true
-  ) -> [AgentMessage]? {
+    request: ProviderRequest? = nil, preserveUserMessages: Bool = true,
+    minimumNewEvidenceTokens: Int = 0, requiredAtTokens: Int? = nil
+  ) -> (messages: [AgentMessage], inputTokens: Int)? {
     let latestTask = context.conversation.last { $0.role == .user }
     let ids = Set(summarized.map(\.id))
     // A queued correction, transcript edit, or durable compaction can make
@@ -133,9 +135,18 @@ struct AgentSmartContext {
     }
     guard !evidence.isEmpty else { return nil }
     guard evidence != attempted else { return nil }
-    // A failed reduction is optional and is not retried every loop boundary.
+    // A weak or failed brief can leave us above the trigger. Wait for useful
+    // new evidence before spending another model call, unless space is needed now.
+    if minimumNewEvidenceTokens > 0, !attempted.isEmpty,
+      requiredAtTokens.map({ tokens < $0 }) ?? true
+    {
+      let prior = Set(attempted.map(\.id))
+      let fresh = evidence.filter { !prior.contains($0.id) }
+      guard AgentAutocompaction.estimatedTokens(of: fresh, lastUsage: nil) >= minimumNewEvidenceTokens
+      else { return nil }
+    }
     attempted = evidence
-    return evidence
+    return (evidence, tokens)
   }
 
   mutating func store(_ brief: String, for evidence: [AgentMessage]) {

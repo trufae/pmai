@@ -126,7 +126,7 @@ def main():
                      aliases[0])
         assert "Base URL for 'hello': http://flag.example/v1" in output, output
         run(args=['-r', 'retained', '--model', 'alternate::flag-model', '--effort', 'off',
-                  '--max-tool-calls', '0', '--max-turns', '3', '--max-subagents', '0',
+                  '--no-tools', '--max-tool-calls', '0', '--max-turns', '3', '--max-subagents', '0',
                   '--no-stream', '--system', 'Explicit instructions.'], env=aliases[0])
         overridden = json.loads(retained_path.read_text())
         agent = overridden['primaryAgent']

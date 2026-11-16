@@ -22,9 +22,10 @@ extension AgentRuntime {
     var definitions = offeredDefinitions
     // Once the run's tool budget is spent the model gets no tools and is
     // told to answer, instead of the run failing with a limit error.
+    let hasToolBudget = state.request.limits.remainingToolCalls(used: state.toolCalls) > 0
     let toolBudgetExhausted =
       !definitions.isEmpty
-      && (state.toolCalls >= state.request.limits.maxToolCalls || state.repeatGuardTripped)
+      && (!hasToolBudget || state.repeatGuardTripped)
     // Resolve once at the call boundary, after compaction and queued input.
     // A task assignment changed during an await cannot mix one provider with
     // another agent's model or options.
@@ -45,7 +46,7 @@ extension AgentRuntime {
       routedDecision == nil && !state.usingPrimary && taskAgents.tool != nil
       && !primaryManagesTools
       && !concreteDefinitions.isEmpty
-      && state.toolCalls < state.request.limits.maxToolCalls && !state.repeatGuardTripped
+      && hasToolBudget && !state.repeatGuardTripped
     if state.request.context == .tools {
       let candidates = state.toolContext.pending(in: state.workingMessages)
       if !candidates.isEmpty {
@@ -195,25 +196,29 @@ extension AgentRuntime {
     {
       let window = contextWindow(
         provider: inference.provider, model: inference.model, options: inference.options)
-      let threshold = min(state.adaptiveThreshold ?? Int.max, window.map {
-        Self.inputTokenBudget(window: $0, options: inference.options) * 3 / 4
-      } ?? AgentSmartContext.thresholdTokens)
+      let adaptive = state.request.context == .adaptive
+      let budget = window.map { Self.inputTokenBudget(window: $0, options: inference.options) }
+      let threshold = max(1, min(state.adaptiveThreshold ?? Int.max, budget.map {
+        adaptive ? $0 - $0 / 10 : $0 * 3 / 4
+      } ?? (adaptive ? AgentSmartContext.adaptiveThresholdTokens : AgentSmartContext.thresholdTokens)))
       var context = promptContext
       context.instructions = providerRequest.messages.filter(AgentPromptContext.isInstruction)
       if let evidence = state.smartContext.pending(
         in: context, activeTaskID: state.activeTaskID,
-        thresholdTokens: max(1, threshold), recentTokens: min(8_000, threshold / 4),
-        request: providerRequest, preserveUserMessages: state.request.context == .smart)
+        thresholdTokens: threshold, recentTokens: min(8_000, threshold / 4),
+        request: providerRequest, preserveUserMessages: !adaptive,
+        minimumNewEvidenceTokens: adaptive ? min(4_000, threshold / 8) : 0,
+        requiredAtTokens: state.rejectedContextTokens == nil ? budget : threshold)
       {
-        await state.emit(.compactionStarted(state.context, estimatedTokens: Self.contextTokens(providerRequest)))
+        await state.emit(.compactionStarted(state.context, estimatedTokens: evidence.inputTokens))
         await supervisor.note(state.pid, activity: "preparing context")
         do {
           let template = smartContextTemplate
           let brief = try await compactText(
-            source: AgentSmartContext.transcript(for: evidence, in: context),
+            source: AgentSmartContext.transcript(for: evidence.messages, in: context),
             render: { AgentSmartContextPrompt.render(transcript: $0, template: template) },
             state: &state, outputLimit: min(8_000, max(2_048, threshold / 8)))
-          state.smartContext.store(brief, for: evidence)
+          state.smartContext.store(brief, for: evidence.messages)
         } catch let error where error is CancellationError || error is RunDeadlineExceeded {
           throw error
         } catch {

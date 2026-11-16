@@ -2,7 +2,7 @@ import Foundation
 
 extension AgentRuntime {
   public func appToolDefinitions(for request: AgentRequest) throws -> [ToolDefinition] {
-    guard request.toolChoice != .none, request.limits.maxToolCalls > 0 else { return [] }
+    guard request.toolChoice != .none else { return [] }
     let groups = availableToolGroups()
     return try visibleDefinitions(for: request).filter { definition in
       guard internetAccess.allows(definition, in: groups) else { return false }

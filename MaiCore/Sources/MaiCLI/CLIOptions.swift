@@ -52,6 +52,7 @@ struct CLIOptions {
   var apiKeyOverride: String?
   var systemOverride: String?
   var maxToolCalls: Int?
+  var noTools = false
   var maxModelTurns: Int?
   var maxSubagents: Int?
   var stream = true
@@ -138,6 +139,8 @@ struct CLIOptions {
         systemOverride = try Self.value(after: argument, in: arguments, index: &index)
       case "--max-tool-calls":
         maxToolCalls = try Self.count(after: argument, in: arguments, index: &index)
+      case "--no-tools":
+        noTools = true
       case "--max-turns", "--max-model-turns":
         maxModelTurns = try Self.count(after: argument, in: arguments, index: &index)
       case "--max-subagents":
@@ -254,6 +257,11 @@ struct CLIOptions {
     }
     profile.stream = stream && profile.stream
     applyLimitOverrides(to: &profile.limits)
+    if noTools {
+      profile.toolChoice = .none
+      profile.toolCallingStrategy = .off
+      profile.useSystemOne = false
+    }
   }
 }
 

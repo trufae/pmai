@@ -1329,14 +1329,12 @@ public actor ACPServer {
     let request = try await sessionRequest(id)
     guard connected, let process = sessions[id]?.processes.first else { throw JSONRPCTransportError.closed }
 
-    let sessionID = id
     let scope = AgentExecutionScope(
       sessionID: id, workingDirectory: sessions[id]!.saved.workingDirectory)
-    let task = Task { [weak self, runtime] in
-      try await AgentExecutionScope.$current.withValue(scope) {
-        try await runtime.run(request, process: process) { [weak self] event in
-          await self?.forward(event, session: sessionID)
-        }
+    let task = Task { [weak self] in
+      guard let self else { throw JSONRPCTransportError.closed }
+      return try await AgentExecutionScope.$current.withValue(scope) {
+        try await self.completePrompt(request, process: process, session: id)
       }
     }
     sessions[id]?.task = task
@@ -1356,12 +1354,10 @@ public actor ACPServer {
       sessions[id]?.liveUpdates = []
       await messageSnapshot(session: id)
       await sessionState(id)
-      // A limit pauses the run with its transcript kept, so the next prompt
-      // carries on; the editor is told which limit it was.
       if let interruption = result.interruption {
         await update(
           session: id, kind: .agentMessageChunk,
-          text: "Stopped: \(interruption.summary). Send another prompt to continue.")
+          text: "Stopped: \(interruption.summary). The work so far was saved.")
         let stopReason: ACP.StopReason =
           switch interruption {
           case .modelTurns: .maxTurnRequests
@@ -1390,6 +1386,58 @@ public actor ACPServer {
       await update(session: id, kind: .agentMessageChunk, text: error.localizedDescription)
       return .object(["stopReason": .string(ACP.StopReason.refusal.rawValue)])
     }
+  }
+
+  private func completePrompt(
+    _ initial: AgentRequest, process: AgentPID, session id: String
+  ) async throws -> AgentResult {
+    var request = initial
+    while true {
+      let result = try await runtime.run(request, process: process, pauseOnToolLimit: true) { [weak self] event in
+        await self?.forward(event, session: id)
+      }
+      guard let limit = result.interruption else { return result }
+      sessions[id]?.saved.transcript = result.transcript
+      sessions[id]?.saved.updatedAt = Date()
+      sessions[id]?.liveUpdates = []
+      try await checkpointAgents(id)
+      await messageSnapshot(session: id)
+
+      let choice = try await requestRunLimitChoice(summary: limit.summary, session: id)
+      request.messages = result.transcript
+      switch choice {
+      case .extend:
+        limit.extend(&request.limits)
+      case .answer:
+        request.disableTools()
+      case .stop:
+        return result
+      }
+    }
+  }
+
+  private func requestRunLimitChoice(
+    summary: String, session id: String
+  ) async throws -> ACP.RunLimitChoice {
+    guard connected, let peer else { return .stop }
+    try authorize()
+    let params: JSONValue = .object([
+      "sessionId": .string(id),
+      "toolCall": .object([
+        "toolCallId": .string(UUID().uuidString), "title": .string(summary),
+        "status": .string("pending"), "kind": .string("other"),
+      ]),
+      "options": .array(ACP.RunLimitChoice.allCases.map(\.permissionOption)),
+      "_meta": .object(["pmai": .object(["runLimit": .string(summary)])]),
+    ])
+    let response = try? await peer.request(ACP.Method.requestPermission, params: params, timeout: 0)
+    try Task.checkCancellation()
+    guard let outcome = response?.objectValue?["outcome"]?.objectValue,
+      outcome["outcome"]?.stringValue == "selected",
+      let raw = outcome["optionId"]?.stringValue
+    else { return .stop }
+    try authorize()
+    return ACP.RunLimitChoice(rawValue: raw) ?? .stop
   }
 
   private static let interruptedPromptNotice =
@@ -1531,6 +1579,16 @@ public actor ACPServer {
       return .deny(reason: "no ACP client is connected")
     }
     do { try authorize() } catch { return .deny(reason: "Peer authorization was revoked") }
+    if let summary = request.runLimitSummary {
+      do {
+        let choice = try await requestRunLimitChoice(summary: summary, session: sessionID)
+        return .approve(arguments: .string(choice.rawValue))
+      } catch is CancellationError {
+        return .cancelRun
+      } catch {
+        return .deny(reason: error.localizedDescription)
+      }
+    }
     if yoloSessionIDs.contains(sessionID) {
       return .approve(arguments: request.call.arguments)
     }

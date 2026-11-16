@@ -3339,8 +3339,8 @@ struct AppSettings: Codable, Equatable, Sendable {
   static let defaultMCPTools: Set<String> = []
   static let defaultMCPRequestTimeoutSeconds = Int(MCPServerConfiguration.defaultTimeout)
   static let mcpRequestTimeoutRange = 5...300
-  static let defaultMaxToolCallsPerTurn = 100
-  static let maxToolCallsPerTurnRange = 1...100
+  static let defaultMaxToolCallsPerTurn = AgentRunLimits.defaultMaxToolCalls
+  static let maxToolCallsPerTurnRange = 0...100
   static let defaultLLMRequestTimeoutSeconds = 600
   static let llmRequestTimeoutChoices = [60, 180, 300, 600, 900, 1800]
   static let defaultSystemPrompt = SystemPrompt(

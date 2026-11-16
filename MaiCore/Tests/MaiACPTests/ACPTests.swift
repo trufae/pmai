@@ -760,6 +760,60 @@ func mcpServerExposesAgent() async throws {
   serving.cancel()
 }
 
+@Test("ACP asks how to continue after a run limit and keeps completed work",
+  arguments: [ACP.RunLimitChoice.extend, .answer, .stop], [true, false])
+func acpRunLimitChoice(choice: ACP.RunLimitChoice, toolLimit: Bool) async throws {
+  let call = ToolCall(id: "first", name: "echo", arguments: .object([:]))
+  let provider = ACPScriptedProvider(responses: [
+    .init(message: .init(role: .assistant, content: [.toolCall(call)]), stopReason: .toolCall),
+    .init(message: .assistant("finished")),
+  ])
+  let runtime = AgentRuntime()
+  try await runtime.register(provider)
+  try await runtime.register(tool: ClosureTool(definition: .init(
+    name: "echo", description: "Echo", annotations: .init(approval: .automatic))) { _, _ in
+      ToolOutput(text: "tool evidence")
+    })
+  let limits = toolLimit ? AgentRunLimits(maxToolCalls: 1) : AgentRunLimits(maxModelTurns: 1)
+  let agent = AgentDefinition(
+    id: "main", instructions: "", provider: "scripted", model: "fixture",
+    toolNames: ["echo"], limits: limits, useToolProxy: false)
+  let (clientTransport, serverTransport) = PipeTransport.pair()
+  let server = ACPServer(runtime: runtime, agent: agent, bridge: ACPPermissionBridge())
+  let serving = Task { await server.serve(on: serverTransport) }
+  defer { clientTransport.close(); serving.cancel() }
+  let received = ChunkRecorder()
+  let expected = toolLimit ? "tool call limit (1) reached" : "model turn limit (1) reached"
+  let client = JSONRPCPeer(transport: clientTransport, onRequest: { method, params in
+    #expect(method == ACP.Method.requestPermission)
+    #expect(ACP.RunLimitChoice.summary(from: params) == expected)
+    await received.append(expected)
+    #expect(await provider.requests.count == 1)
+    return .object(["outcome": .object([
+      "outcome": .string("selected"), "optionId": .string(choice.rawValue),
+    ])])
+  })
+  await client.start()
+  _ = try await client.request(ACP.Method.initialize, params: .object(["protocolVersion": .integer(1)]), timeout: 10)
+  let created = try await client.request(ACP.Method.sessionNew, params: .object(["cwd": .string("/tmp")]), timeout: 10)
+  let id = try #require(created.objectValue?["sessionId"]?.stringValue)
+  let result = try await client.request(ACP.Method.sessionPrompt, params: .object([
+    "sessionId": .string(id), "prompt": .array([ACP.ContentBlock.text("start").json]),
+  ]), timeout: 20)
+  #expect(await received.joined == expected)
+  let requests = await provider.requests
+  let stop = choice == .stop && !toolLimit ? ACP.StopReason.maxTurnRequests : .endTurn
+  #expect(result.objectValue?["stopReason"]?.stringValue == stop.rawValue)
+  if choice == .stop {
+    #expect(requests.count == 1)
+  } else {
+    try #require(requests.count == 2)
+    #expect(requests[1].messages.filter { $0.role == .user }.map(\.text) == ["start"])
+    #expect(requests[1].messages.flatMap(\.toolResults).map(\.text) == ["tool evidence"])
+    #expect(requests[1].tools.contains { $0.name == "echo" } == (choice == .extend))
+  }
+}
+
 private actor ACPScriptedProvider: ChatProvider {
   nonisolated let descriptor = ProviderDescriptor(
     id: "scripted", displayName: "Scripted", capabilities: [.streaming, .nativeToolCalling, .imageInput])

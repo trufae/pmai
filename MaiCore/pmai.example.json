@@ -186,7 +186,7 @@
       "toolPolicy": {"automatic": true, "groups": {}, "tools": {}},
       "limits": {
         "maxModelTurns": 110,
-        "maxToolCalls": 100,
+        "maxToolCalls": 0,
         "maxSubagents": 5,
         "maxSubagentDepth": 5
       },

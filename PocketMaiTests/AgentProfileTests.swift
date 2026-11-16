@@ -107,10 +107,10 @@ final class AgentProfileTests: XCTestCase {
   }
 
   func testToolCallLimitDefaultsAndBoundsApplyToEveryAgent() throws {
-    XCTAssertEqual(AppSettings.defaultMaxToolCallsPerTurn, 100)
-    XCTAssertEqual(AgentSettings().maxToolCallsPerTurn, 100)
-    XCTAssertEqual(AppSettings().maxToolCallsPerTurn, 100)
-    XCTAssertEqual(AppSettings.clampedMaxToolCallsPerTurn(0), 1)
+    XCTAssertEqual(AppSettings.defaultMaxToolCallsPerTurn, 0)
+    XCTAssertEqual(AgentSettings().maxToolCallsPerTurn, 0)
+    XCTAssertEqual(AppSettings().maxToolCallsPerTurn, 0)
+    XCTAssertEqual(AppSettings.clampedMaxToolCallsPerTurn(0), 0)
     XCTAssertEqual(AppSettings.clampedMaxToolCallsPerTurn(100), 100)
     XCTAssertEqual(AppSettings.clampedMaxToolCallsPerTurn(101), 100)
 

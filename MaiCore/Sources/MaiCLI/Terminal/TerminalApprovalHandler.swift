@@ -1,4 +1,5 @@
 import Foundation
+import MaiACP
 import MaiCore
 
 #if canImport(Android)
@@ -105,7 +106,8 @@ actor TerminalApprovalHandler: ApprovalHandler {
     return approvalMode == .yolo && projectSettings.pathYolo == true
   }
   func permitsUnattendedApproval(_ request: ApprovalRequest) -> Bool {
-    request.tool.name == "files_path_access"
+    guard request.runLimitSummary == nil else { return false }
+    return request.tool.name == "files_path_access"
       ? permitsUnattendedPathAccess() : effectiveApprovalMode(for: request.tool) == .yolo
   }
 
@@ -228,10 +230,15 @@ actor TerminalApprovalHandler: ApprovalHandler {
     let request = ApprovalRequest(
       run: .init(runID: UUID(), parentRunID: nil, agentID: host, depth: 0),
       tool: .init(name: name, description: "Run on \(host)", annotations: .init(approval: .confirm)),
-      call: .init(id: tool["toolCallId"]?.stringValue ?? UUID().uuidString, name: name, arguments: arguments))
+      call: .init(id: tool["toolCallId"]?.stringValue ?? UUID().uuidString, name: name, arguments: arguments),
+      runLimitSummary: ACP.RunLimitChoice.summary(from: params))
     let decision = permitsUnattendedApproval(request) ? ApprovalDecision.approve(arguments: arguments)
       : try await interactiveDecision(request)
     if case .cancelRun = decision { throw CancellationError() }
+    if request.runLimitSummary != nil {
+      guard case .approve(let choice) = decision else { return ACP.RunLimitChoice.stop.rawValue }
+      return choice.stringValue
+    }
     let kind: String
     switch decision {
     case .approve(let edited): kind = edited == arguments ? "allow" : "reject"
@@ -288,13 +295,13 @@ actor TerminalApprovalHandler: ApprovalHandler {
       if let screen { screen.write(text, to: .standardError) }
       else { FileHandle.standardError.write(Data(text.utf8)) }
     }
-    write("Approve \(request.tool.annotations.approval.rawValue) tool '\(request.tool.name)'?\nArguments: \(request.call.arguments.compactJSONString)\n")
-    write(REPLModalPrompt.approvalHelp(request) + "\n")
+    let id = UUID()
+    let initialModal = REPLModalPrompt.approval(request, id: id, editing: false)
+    if let question = initialModal.question { write(question + "\n") }
     let editor = TerminalLineEditor()
     editor.configure(
       ui: ConfiguredTerminalUI(backgroundLine: "", promptForeground: "yellow"))
     editor.install(surface: screen)
-    let id = UUID()
     var editing = false
     defer { screen?.setStatus("") }
     while true {
@@ -314,7 +321,15 @@ actor TerminalApprovalHandler: ApprovalHandler {
         write("Enter a valid JSON object, or Ctrl+C to cancel.\n")
         continue
       }
-      switch raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+      let answer = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+      if request.runLimitSummary != nil {
+        if let choice = ACP.RunLimitChoice(rawValue: answer) {
+          return .approve(arguments: .string(choice.rawValue))
+        }
+        write(REPLModalPrompt.remoteRunLimitHelp + "\n")
+        continue
+      }
+      switch answer {
       case "y", "yes": return .approve(arguments: request.call.arguments)
       case "a", "always":
         try saveApprovalMode(.yolo, includingPaths: true)

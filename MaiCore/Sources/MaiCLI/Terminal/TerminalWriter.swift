@@ -560,6 +560,12 @@ actor TerminalWriter {
   func approvalRequest(_ request: ApprovalRequest) {
     finishReply()
     closeRootLine()
+    if request.runLimitSummary != nil,
+      let question = REPLModalPrompt.approval(request, id: UUID(), editing: false).question
+    {
+      status(question, color: .warningForeground)
+      return
+    }
     let who = request.run.depth > 0 ? request.run.pid.map { "agent#\($0.rawValue) " } ?? "" : ""
     let kind = request.tool.annotations.approval.rawValue
     let choices = "? answer " + REPLModalPrompt.approvalHelp(request) + "; slash commands remain available"

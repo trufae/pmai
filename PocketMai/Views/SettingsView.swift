@@ -399,7 +399,7 @@ struct SettingsView: View {
     }
     Stepper(value: settingsBinding(\.maxToolCallsPerTurn), in: AppSettings.maxToolCallsPerTurnRange)
     {
-      Text("Max Tool Calls: \(store.settings.maxToolCallsPerTurn)")
+      Text(store.settings.maxToolCallsPerTurn == 0 ? "Max Tool Calls: Unlimited" : "Max Tool Calls: \(store.settings.maxToolCallsPerTurn)")
     }
   }
 
