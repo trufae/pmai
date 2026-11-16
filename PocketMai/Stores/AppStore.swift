@@ -1011,7 +1011,6 @@ final class AppStore: ObservableObject {
     var changedConversations = false
     for index in conversations.indices where conversations[index].folderID == id {
       conversations[index].folderID = ConversationFolder.defaultID
-      conversations[index].updatedAt = Date()
       changedConversations = true
     }
     if changedConversations {
@@ -1551,9 +1550,13 @@ final class AppStore: ObservableObject {
     guard conversationFolderIsAvailable(destination) else { return }
     var changed = false
     for index in conversations.indices where ids.contains(conversations[index].id) {
-      guard conversations[index].folderID != destination else { continue }
+      let source = conversations[index].folderID
+      guard source != destination else { continue }
       conversations[index].folderID = destination
-      conversations[index].updatedAt = Date()
+      // The newest copy wins when a chat crosses storage locations.
+      if source == ConversationFolder.iCloudID || destination == ConversationFolder.iCloudID {
+        conversations[index].updatedAt = Date()
+      }
       changed = true
     }
     guard changed else { return }
