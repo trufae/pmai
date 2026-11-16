@@ -210,10 +210,10 @@ jobs:
         id: build-cache
         uses: ./.github/actions/restore-swift-build
         with:
-          profile: windows-release-osize
+          profile: ${{ matrix.arch == 'arm64' && 'windows-release-osize-msvc-14.44' || 'windows-release-osize' }}
 
       - name: Build release CLI without debug information
-        run: swift build --package-path MaiCore --configuration release -debug-info-format none --disable-index-store --disable-prefetching --product pmai -Xswiftc -Osize -Xlinker /DEBUG:NONE
+        run: ./sys/build-windows.ps1 -Architecture ${{ matrix.arch }}
 
       - name: Package Windows beta CLI
         run: ./sys/package-windows.ps1 -Architecture ${{ matrix.arch }}

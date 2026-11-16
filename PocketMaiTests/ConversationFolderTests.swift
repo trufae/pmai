@@ -40,7 +40,9 @@ final class ConversationFolderTests: XCTestCase {
     store = AppStore(persistence: persistence)
     try await waitUntil { store.hasLoadedPersistedSettings }
     store.updateCurrentConversationSettings {
-      $0.messages = [ChatMessage(role: .user, text: "Keep this chat")]
+      $0.messages = [
+        ChatMessage(role: .user, text: "Keep this chat", createdAt: Date(timeIntervalSince1970: 1_700_000_000))
+      ]
     }
   }
 
