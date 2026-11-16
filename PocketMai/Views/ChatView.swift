@@ -705,14 +705,13 @@ struct ChatView: View {
         .font(.headline)
         .lineLimit(1)
         .foregroundStyle(remoteChat.map { $0.connected ? Color.primary : .red } ?? .primary)
-        if let remoteChat {
-          let host = remoteHosts?.selectedHost ?? remoteChat.bookmark
-          let providerModel = remoteChat.providerModelLabel
+        if let metadata = chatTitleMetadata {
           HStack(spacing: 4) {
-            Text(host.folderLabel(for: remoteChat.conversation.cwd) ?? "No folder selected")
+            Text(metadata.folder)
               .truncationMode(.head)
-              .layoutPriority(1)
-            if !providerModel.isEmpty { Text("· \(providerModel)") }
+            if !metadata.providerModel.isEmpty {
+              Text("· \(metadata.providerModel)").truncationMode(.middle)
+            }
           }
           .font(.caption)
           .foregroundStyle(.secondary)
@@ -729,6 +728,21 @@ struct ChatView: View {
     }
     .frame(minHeight: 44)
     .contentShape(Rectangle())
+  }
+
+  private var chatTitleMetadata: (folder: String, providerModel: String)? {
+    if let remoteChat {
+      let host = remoteHosts?.selectedHost ?? remoteChat.bookmark
+      return (host.folderLabel(for: remoteChat.conversation.cwd) ?? "No folder selected",
+        remoteChat.providerModelLabel)
+    }
+    if let conversation = currentConversation {
+      let model = AgentTooling.firstNonEmpty(conversation.modelID)
+      let providerModel = [providerLabel(for: conversation), model].compactMap { $0 }
+        .joined(separator: " · ")
+      return (store.folderDisplayName(for: conversation.folderID), providerModel)
+    }
+    return currentConversationSummary.map { (store.folderDisplayName(for: $0.folderID), "") }
   }
 
   private var systemPromptName: String? {
@@ -764,11 +778,9 @@ struct ChatView: View {
     if store.isCompacting { return "Compacting…" }
     if isLoadingConversation { return "Loading…" }
     if isLoadingCurrentLocalModel { return "Loading local model into memory…" }
-    guard let conversation = currentConversation else { return "No conversation" }
-    let providerName = providerLabel(for: conversation)
-    let model = conversation.modelID.trimmingCharacters(in: .whitespacesAndNewlines)
-    let parts = [providerName, model.isEmpty ? nil : model, systemPromptTitle].compactMap { $0 }
-    return parts.joined(separator: " · ")
+    guard let metadata = chatTitleMetadata else { return "No conversation" }
+    return [metadata.folder, metadata.providerModel, systemPromptTitle]
+      .compactMap { AgentTooling.firstNonEmpty($0) }.joined(separator: " · ")
   }
 
   private var isLoadingCurrentLocalModel: Bool {
