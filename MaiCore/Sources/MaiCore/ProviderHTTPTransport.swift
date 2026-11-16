@@ -38,6 +38,23 @@ public enum ProviderHTTPTransport: String, Sendable {
   }
 }
 
+public extension URLSession {
+  func providerData(for request: URLRequest) async throws -> (Data, URLResponse) {
+    let delegate = ProviderRedirectDelegate(originalRequest: request)
+    #if canImport(FoundationNetworking)
+    // For custom protocols, FoundationNetworking's data task completion keeps
+    // only the last didLoad callback. The data delegate receives every chunk.
+    let protocols = configuration.protocolClasses ?? []
+    if protocols.contains(where: { $0 == CurlHTTPProtocol.self || $0 == WinHTTPProtocol.self }) {
+      let (bytes, response) = try await URLSessionAsyncBytes.open(
+        for: request, session: self, delegate: delegate)
+      return (try await bytes.collectedData(), response)
+    }
+    #endif
+    return try await data(for: request, delegate: delegate)
+  }
+}
+
 /// Retain URLSession's streaming/delegate interface while bypassing its socket
 /// implementation. curl never follows redirects itself; the provider's existing
 /// same-origin redirect policy is applied before issuing another request.

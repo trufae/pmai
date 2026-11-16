@@ -59,6 +59,9 @@ class Provider(JSONProvider):
             self.respond({'data': None, 'models': [
                 {'model': 'native.gguf', 'name': 'Native model'}, {'name': 'name-only.gguf'},
             ]})
+        elif self.path == '/v1/models':
+            # Force more than one curl pipe read without depending on timing.
+            self.respond({'data': [{'id': 'split.gguf'}], 'padding': 'x' * 131072})
         else:
             if self.path == '/models':
                 catalog_release.wait(30)
@@ -189,6 +192,8 @@ def main():
                     if provider == 'native':
                         wait_for('name-only.gguf')
                         wait_for('native.gguf (Native model)')
+                    elif path == '/v1/models':
+                        wait_for('split.gguf')
                     else:
                         wait_for('test.gguf — llamacpp')
                     print(f'PASS model catalog {provider}', flush=True)
