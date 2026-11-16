@@ -942,6 +942,7 @@ struct ChatView: View {
       onSpeakFromHere: { speakFromHere(message, language: $0) },
       onReply: { sendReply($0) })
     if let remoteChat {
+      actions.showsMenuButton = true
       let throughEnd = remoteChat.deletesThroughEnd(message.id)
       actions.allowsConversationMutation = remoteChat.canDelete(message.id)
       actions.canReply = remoteChat.canSubmit

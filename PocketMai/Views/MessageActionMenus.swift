@@ -2,8 +2,8 @@ import SwiftUI
 import UIKit
 
 extension View {
-  func messageActionsMenu(_ menu: @escaping () -> UIMenu) -> some View {
-    modifier(MessageActionsMenu(menu: menu))
+  func messageActionsMenu(showsButton: Bool, _ menu: @escaping () -> UIMenu) -> some View {
+    modifier(MessageActionsMenu(showsButton: showsButton, menu: menu))
   }
 }
 
@@ -13,15 +13,30 @@ private struct MessageMenuRequest {
 }
 
 private struct MessageActionsMenu: ViewModifier {
+  let showsButton: Bool
   let menu: () -> UIMenu
   @State private var request: MessageMenuRequest?
 
   func body(content: Content) -> some View {
     content
+      .frame(minHeight: showsButton ? 44 : nil, alignment: .top)
+      .padding(.trailing, showsButton ? 44 : 0)
       .contentShape(.interaction, Rectangle())
-      .background(MessageMenuAnchor(request: request, menu: menu))
+      .background(MessageMenuAnchor(request: request, showsButton: showsButton, menu: menu))
       .gesture(MessageMenuLongPress { request = MessageMenuRequest(location: $0) })
       .accessibilityAction(named: "Message actions") { request = MessageMenuRequest() }
+      .overlay(alignment: .topTrailing) {
+        if showsButton {
+          Button { request = MessageMenuRequest() } label: {
+            Image(systemName: "ellipsis")
+              .foregroundStyle(.secondary)
+              .frame(width: 44, height: 44)
+              .contentShape(Rectangle())
+          }
+          .buttonStyle(.plain)
+          .accessibilityLabel("Message actions")
+        }
+      }
   }
 }
 
@@ -43,6 +58,7 @@ private struct MessageMenuLongPress: UIGestureRecognizerRepresentable {
 
 private struct MessageMenuAnchor: UIViewRepresentable {
   let request: MessageMenuRequest?
+  let showsButton: Bool
   let menu: () -> UIMenu
 
   func makeUIView(context: Context) -> AnchorView { AnchorView() }
@@ -50,8 +66,13 @@ private struct MessageMenuAnchor: UIViewRepresentable {
   func updateUIView(_ view: AnchorView, context: Context) {
     guard let request, request.id != view.lastRequestID else { return }
     view.lastRequestID = request.id
-    let point = request.location ?? CGPoint(x: view.bounds.midX, y: view.bounds.midY)
-    view.button.frame = CGRect(origin: point, size: CGSize(width: 1, height: 1))
+    let point = request.location ?? (showsButton
+      ? CGPoint(x: view.bounds.maxX - 22, y: view.bounds.minY + 22)
+      : CGPoint(x: view.bounds.midX, y: view.bounds.midY))
+    view.button.frame = CGRect(
+      x: min(max(0, point.x), max(0, view.bounds.width - 1)),
+      y: min(max(0, point.y), max(0, view.bounds.height - 1)),
+      width: 1, height: 1)
     view.button.menu = menu()
     view.button.performPrimaryAction()
   }
