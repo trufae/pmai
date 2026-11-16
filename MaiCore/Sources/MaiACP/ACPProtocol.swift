@@ -36,6 +36,27 @@ public enum ACP {
     public static let writeTextFile = "fs/write_text_file"
   }
 
+  public enum RunLimitChoice: String, CaseIterable, Sendable {
+    case extend, answer, stop
+
+    public static func summary(from params: JSONValue?) -> String? {
+      params?.objectValue?["_meta"]?.objectValue?["pmai"]?.objectValue?["runLimit"]?.stringValue
+    }
+
+    var permissionOption: JSONValue {
+      let name: String
+      switch self {
+      case .extend: name = "Double limit & continue"
+      case .answer: name = "Answer without tools"
+      case .stop: name = "Stop"
+      }
+      return .object([
+        "optionId": .string(rawValue), "name": .string(name),
+        "kind": .string(self == .stop ? "reject_once" : "allow_once"),
+      ])
+    }
+  }
+
   /// The `sessionUpdate` discriminator inside a `session/update` notification.
   public enum Update: String, Sendable {
     case agentMessageChunk = "agent_message_chunk"

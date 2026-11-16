@@ -102,7 +102,7 @@ extension AgentRuntime {
         tools: turn.definitions,
         mode: turn.textToolMode ?? .native,
         hasToolResults: state.toolCalls > 0,
-        remainingToolCalls: state.request.limits.maxToolCalls - state.toolCalls)
+        remainingToolCalls: state.request.limits.remainingToolCalls(used: state.toolCalls))
       switch decision {
       case .final(let text):
         if text != providerResponse.message.text {

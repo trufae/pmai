@@ -994,8 +994,9 @@ shows the per-prompt limits of the current
 chat's agent; `/set limits.maxToolCalls N` and `/set limits.maxModelTurns N`
 change them and persist the change into that agent's configuration. The
 `--max-tool-calls N` and `--max-turns N` flags override both for one launch.
-`limits.maxToolCalls` defaults to 100 per prompt, not per conversation; each
-new prompt gets a fresh allowance. `limits.maxModelTurns` defaults to 110.
+`limits.maxToolCalls` defaults to 0 (unlimited). A positive value caps each
+prompt separately. Use `--no-tools` for a launch without tool calling.
+`limits.maxModelTurns` defaults to 110.
 `limits.maxTotalTokens` defaults to `off` (no token cap per run).
 `/set limits.runTimeoutSeconds 5m` sets the default timeout for each captured
 `run_shell` call (1–600 seconds). Use `default` to inherit the tool-source
@@ -1011,7 +1012,9 @@ chat and its configured agent, and resumes with a fresh run budget.
 `extend N` saves N as that limit (seconds for a time limit). Later prompts
 and resumed chats use the saved limit. `stop` keeps the work so far; `answer`
 continues with no more tool calls. The tool-call limit offers the same choice before asking the
-model for a final answer. Ctrl+C or `/stop` dismisses the choice, and
+model for a final answer. ACP clients, including PocketMai over Forwiroh,
+also receive the choice. Extending in a remote client doubles the allowance
+for the current prompt. Ctrl+C or `/stop` dismisses the local choice, and
 `/continue` can resume the saved work later. Slash commands remain available
 at the decision prompt. A cancelled or failed turn is kept the same way, with
 any tool call it never answered marked as not executed, so Ctrl+C is no longer

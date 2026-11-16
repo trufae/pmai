@@ -586,7 +586,7 @@ extension MaiCLI {
       /set tool.auto BOOL          Automatically expose frequently used tools (default on)
       /set delegation MODE         off: runs every tool itself; subagent: may also hand work to a child
       /set limits.                 List the tool, turn, and subagent limits
-      /set limits.maxToolCalls N   Tool calls allowed per prompt (default: 100)
+      /set limits.maxToolCalls N   Tool calls allowed per prompt (0 = unlimited, default)
       /set limits.maxModelTurns N  Model turns allowed per run
       /set limits.maxSubagents N   Child agents allowed at once (0 disables delegation)
       /set limits.maxSubagentDepth N  Maximum depth of the agent tree
@@ -1100,7 +1100,8 @@ extension MaiCLI {
         -l, --list          list saved chats in this project and exit
         --markdown          render replies as markdown even when piped
         --max-subagents N   children an agent may run at once (default 5)
-        --max-tool-calls N  tool calls allowed per agent run (default 50)
+        --max-tool-calls N  tool calls allowed per agent run (0 = unlimited, default)
+        --no-tools          disable tool calling
         --max-turns N       model turns allowed per agent run (default 60)
         --mcp               serve pmai as an MCP server on stdio (one prompt tool)
         --model [ID::]MODEL  override model, optionally on provider ID

@@ -268,7 +268,7 @@ reuse (append only, never touch old messages).
 - [ ] **Unknown argument keys are dropped silently**, then the error says "No
   fields were given" (`Tooling.swift:321`). Name the unknown keys so the model
   can fix the shape in one turn (this is how the nested envelope hid).
-- [ ] **`maxModelTurns` default 110 and `maxToolCalls` default 100** still lets a runaway run
+- [ ] **`maxModelTurns` defaults to 110** and still lets a runaway run
   spend a large token budget. Consider budgeting by tokens or selecting lower
   limits per agent for small tasks.
 

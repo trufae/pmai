@@ -843,12 +843,11 @@ public struct ProviderResponse: Codable, Equatable, Sendable {
 /// at its next turn boundary with `AgentResult.interruption` set and a
 /// transcript a host can continue from, so a long task is paused, not lost.
 public struct AgentRunLimits: Codable, Equatable, Sendable {
-  public static let defaultMaxToolCalls = 100
-  /// Text tool protocols use one model turn per call and still need a final reply.
-  public static let defaultMaxModelTurns = defaultMaxToolCalls + 10
+  public static let defaultMaxToolCalls = 0
+  public static let defaultMaxModelTurns = 110
 
   public var maxModelTurns: Int
-  /// Tool calls allowed per prompt; each new prompt starts a fresh counter.
+  /// Tool calls allowed per prompt. Zero leaves the tool count unlimited.
   public var maxToolCalls: Int
   /// Children that may run at once per parent process. Excess children wait
   /// in the `queued` state for a slot instead of being refused.
@@ -877,6 +876,10 @@ public struct AgentRunLimits: Codable, Equatable, Sendable {
     self.maxTotalTokens = maxTotalTokens.map { max(1, $0) }
     self.maxSeconds = maxSeconds.flatMap { $0 > 0 ? $0 : nil }
     self.runTimeoutSeconds = runTimeoutSeconds.map { max(1, $0) }
+  }
+
+  public func remainingToolCalls(used: Int) -> Int {
+    maxToolCalls == 0 ? Int.max : max(0, maxToolCalls - used)
   }
 
   private enum CodingKeys: String, CodingKey {
@@ -998,6 +1001,24 @@ public enum AgentRunInterruption: Equatable, Sendable {
     case .toolCalls: "limits.maxToolCalls"
     case .totalTokens: "limits.maxTotalTokens"
     case .time: "limits.maxSeconds"
+    }
+  }
+
+  public var doubledLimit: Int {
+    let limit: Int
+    switch self {
+    case .modelTurns(let value), .toolCalls(let value), .totalTokens(let value), .time(let value):
+      limit = value
+    }
+    return limit > Int.max / 2 ? Int.max : limit * 2
+  }
+
+  public func extend(_ limits: inout AgentRunLimits) {
+    switch self {
+    case .modelTurns: limits.maxModelTurns = doubledLimit
+    case .toolCalls: limits.maxToolCalls = doubledLimit
+    case .totalTokens: limits.maxTotalTokens = doubledLimit
+    case .time: limits.maxSeconds = doubledLimit
     }
   }
 

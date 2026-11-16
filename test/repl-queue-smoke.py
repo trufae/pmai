@@ -217,7 +217,7 @@ def main():
                         # Extending must increase the usable allowance and save it,
                         # otherwise later prompts and resumed chats hit the old cap.
                         send('/set limits.maxToolCalls\n')
-                        wait_for('limits.maxToolCalls = 100')
+                        wait_for('limits.maxToolCalls = 0')
                         send('/set limits.maxToolCalls 1\n')
                         wait_for('Set limits.maxToolCalls = 1')
                         send('limit\n')

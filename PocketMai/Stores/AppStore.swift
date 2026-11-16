@@ -5758,7 +5758,7 @@ final class AppStore: ObservableObject {
       return visibleDefinitions.map { resolver.apiName(for: $0.name) }
     }()
     let maxToolCalls = AppSettings.clampedMaxToolCallsPerTurn(settings.maxToolCallsPerTurn)
-    let maxRepairTurns = min(4, maxToolCalls + 1)
+    let maxRepairTurns = maxToolCalls == 0 ? 4 : min(4, maxToolCalls + 1)
     let contextPrompt = context?.text ?? ""
     let requestContext = [contextPrompt, toolPrompt]
       .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }

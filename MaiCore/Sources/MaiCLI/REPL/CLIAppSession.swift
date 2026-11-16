@@ -84,7 +84,7 @@ actor CLIAppSession {
       guard let name = params["name"]?.stringValue else {
         throw JSONRPCError.invalidParams("Expected a tool name")
       }
-      guard directCalls < request.limits.maxToolCalls else {
+      guard request.limits.remainingToolCalls(used: directCalls) > 0 else {
         throw JSONRPCError.internalError("App tool call limit reached")
       }
       directCalls += 1

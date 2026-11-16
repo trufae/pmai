@@ -640,6 +640,7 @@ struct RemoteAgentPermission: Identifiable {
   let rawInput: JSONValue?
   let supportsEditing: Bool
   let supportsYolo: Bool
+  let isRunLimit: Bool
   let options: [Option]
   struct Option: Identifiable {
     let id: String
@@ -1411,6 +1412,7 @@ final class RemoteAgentChat {
             rawInput: tool?.objectValue?["rawInput"],
             supportsEditing: pmai?["permissionEditing"]?.boolValue == true,
             supportsYolo: pmai?["yolo"]?.boolValue == true,
+            isRunLimit: ACP.RunLimitChoice.summary(from: request) != nil,
             options: options))
       }
     } onCancel: {

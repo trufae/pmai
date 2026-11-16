@@ -189,6 +189,7 @@ enum AssistantToolLoop {
     var state = State()
     var didFinish = false
     let maxToolCalls = maxToolCallsPerTurn(store: store)
+    let toolCallBudget = maxToolCalls == 0 ? Int.max : maxToolCalls
     let maxRepairTurns = maxRepairTurnsPerTurn(store: store)
 
     store.clearToolCallingDebugIterations(
@@ -200,7 +201,7 @@ enum AssistantToolLoop {
     }
 
     while state.answering || store.settings.taskAgent(.tool) != nil
-      || (state.toolCallCount < maxToolCalls && state.repairTurnCount < maxRepairTurns)
+      || (state.toolCallCount < toolCallBudget && state.repairTurnCount < maxRepairTurns)
     {
       try Task.checkCancellation()
       guard let conversation = store.conversation(withID: conversationID) else { return }
@@ -209,7 +210,7 @@ enum AssistantToolLoop {
         baselineText: state.displayText,
         conversationID: conversationID)
       if Self.settings(for: host, store: store).taskAgent(.tool) != nil,
-        state.toolCallCount >= maxToolCalls || state.repairTurnCount >= maxRepairTurns
+        state.toolCallCount >= toolCallBudget || state.repairTurnCount >= maxRepairTurns
       {
         state.answering = true
       }
@@ -272,7 +273,7 @@ enum AssistantToolLoop {
         host: host,
         store: store,
         hasToolResults: state.toolCallCount > 0,
-        remainingToolCalls: maxToolCalls - state.toolCallCount)
+        remainingToolCalls: toolCallBudget - state.toolCallCount)
       try Task.checkCancellation()
 
       switch outcome {
@@ -428,8 +429,7 @@ enum AssistantToolLoop {
     }
 
     if !didFinish {
-      let suffix =
-        "\n\nTool loop stopped after \(state.toolCallCount) of \(maxToolCalls) allowed tool call\(maxToolCalls == 1 ? "" : "s") and \(state.repairTurnCount) repair turn\(state.repairTurnCount == 1 ? "" : "s") before the model produced a final answer."
+      let suffix = toolLoopStopped(state, limit: maxToolCalls)
       let text =
         state.displayText.isEmpty
         ? suffix.trimmingCharacters(in: .whitespacesAndNewlines) : state.displayText + suffix
@@ -487,12 +487,13 @@ enum AssistantToolLoop {
     var toolRuns: [ToolRunDetail] = []
     var modelTurns = 0
     let maxToolCalls = maxToolCallsPerTurn(settings: settings)
+    let toolCallBudget = maxToolCalls == 0 ? Int.max : maxToolCalls
     let maxRepairTurns = maxRepairTurnsPerTurn(settings: settings)
 
     await store.refreshEnabledMCPServers(for: conversation, settings: settings)
 
     while state.answering || settings.taskAgent(.tool) != nil
-      || (state.toolCallCount < maxToolCalls && state.repairTurnCount < maxRepairTurns)
+      || (state.toolCallCount < toolCallBudget && state.repairTurnCount < maxRepairTurns)
     {
       try Task.checkCancellation()
       // A run started without a process gets one the first time it uses an
@@ -538,7 +539,7 @@ enum AssistantToolLoop {
         mcpStatuses: store.mcpStatuses,
         process: process)
       if Self.settings(for: host, store: store).taskAgent(.tool) != nil,
-        state.toolCallCount >= maxToolCalls || state.repairTurnCount >= maxRepairTurns
+        state.toolCallCount >= toolCallBudget || state.repairTurnCount >= maxRepairTurns
       {
         state.answering = true
       }
@@ -562,7 +563,7 @@ enum AssistantToolLoop {
         host: host,
         store: store,
         hasToolResults: state.toolCallCount > 0,
-        remainingToolCalls: maxToolCalls - state.toolCallCount)
+        remainingToolCalls: toolCallBudget - state.toolCallCount)
 
       switch outcome {
       case .final(let turnText):
@@ -625,8 +626,7 @@ enum AssistantToolLoop {
       }
     }
 
-    let suffix =
-      "\n\nTool loop stopped after \(state.toolCallCount) of \(maxToolCalls) allowed tool call\(maxToolCalls == 1 ? "" : "s") and \(state.repairTurnCount) repair turn\(state.repairTurnCount == 1 ? "" : "s") before the model produced a final answer."
+    let suffix = toolLoopStopped(state, limit: maxToolCalls)
     let text = state.assistantText + suffix
     updateLocalAssistantMessage(id: assistantID, text: text, conversation: &conversation)
     return IsolatedResult(
@@ -1777,6 +1777,11 @@ enum AssistantToolLoop {
     return conversation.modelID
   }
 
+  private static func toolLoopStopped(_ state: State, limit: Int) -> String {
+    let budget = limit == 0 ? "" : " of \(limit) allowed"
+    return "\n\nTool loop stopped after \(state.toolCallCount)\(budget) tool calls and \(state.repairTurnCount) repair turns before the model produced a final answer."
+  }
+
   private static func maxToolCallsPerTurn(store: AppStore) -> Int {
     maxToolCallsPerTurn(settings: store.settings)
   }
@@ -1790,7 +1795,8 @@ enum AssistantToolLoop {
   }
 
   private static func maxRepairTurnsPerTurn(settings: AppSettings) -> Int {
-    min(4, maxToolCallsPerTurn(settings: settings) + 1)
+    let limit = maxToolCallsPerTurn(settings: settings)
+    return limit == 0 ? 4 : min(4, limit + 1)
   }
 
   private static func nativeToolCallingUnavailableReason(

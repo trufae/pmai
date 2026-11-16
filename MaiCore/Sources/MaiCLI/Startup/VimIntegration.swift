@@ -108,7 +108,7 @@ enum VimIntegration {
       let l:last = a:lastline
       let l:stdin = join(getline(l:first, l:last), "\n")
       let l:args = [get(g:, 'pmai_command', 'pmai'), '--stdin', '--no-markdown', '--no-stream',
-            \ '--max-tool-calls', '0', '--max-subagents', '0', '--system',
+            \ '--no-tools', '--max-subagents', '0', '--system',
             \ 'Apply the request to the attached text. Return only the resulting text, without explanations or Markdown fences. Do not use tools or modify files.']
       if !empty(get(g:, 'pmai_provider', ''))
         let l:args += ['--provider', g:pmai_provider]

@@ -429,8 +429,7 @@ extension AgentRuntime {
           results[index] = result
           continue
         }
-        guard state.toolCalls < callRequest.limits.maxToolCalls,
-          await budget.allowsToolCall(used: state.toolCalls)
+        guard await budget.allowsToolCall(used: state.toolCalls)
         else {
           let result = AgentProcessTools.failure(
             callID: call.id,

@@ -34,15 +34,19 @@ struct RemoteToolPermissionView: View {
       ScrollView {
         VStack(spacing: 20) {
           header
-          argumentsCard
-          actions
+          if permission.isRunLimit {
+            runLimitActions
+          } else {
+            argumentsCard
+            actions
+          }
         }
         .padding(.horizontal, 20)
         .padding(.top, 12)
         .padding(.bottom, 28)
       }
       .background(Color(uiColor: .systemGroupedBackground))
-      .navigationTitle("Tool Permission")
+      .navigationTitle(permission.isRunLimit ? "Run Limit" : "Tool Permission")
       .navigationBarTitleDisplayMode(.inline)
       .toolbar {
         ToolbarItem(placement: .cancellationAction) {
@@ -68,7 +72,7 @@ struct RemoteToolPermissionView: View {
 
   private var header: some View {
     VStack(spacing: 12) {
-      Image(systemName: permission.kind == "read" ? "eye" : "wrench.and.screwdriver")
+      Image(systemName: permission.isRunLimit ? "pause.circle" : permission.kind == "read" ? "eye" : "wrench.and.screwdriver")
         .font(.system(size: 30, weight: .semibold))
         .foregroundStyle(permission.kind == "read" ? .blue : .orange)
         .frame(width: 64, height: 64)
@@ -76,14 +80,28 @@ struct RemoteToolPermissionView: View {
       Text(permission.title)
         .font(.title2.weight(.bold))
         .multilineTextAlignment(.center)
-      Label(
-        permission.kind == "read" ? "Read-only action" : "This action can make changes",
-        systemImage: permission.kind == "read" ? "checkmark.shield" : "exclamationmark.triangle")
-        .font(.subheadline.weight(.medium))
-        .foregroundStyle(permission.kind == "read" ? Color.secondary : Color.orange)
+      if !permission.isRunLimit {
+        Label(
+          permission.kind == "read" ? "Read-only action" : "This action can make changes",
+          systemImage: permission.kind == "read" ? "checkmark.shield" : "exclamationmark.triangle")
+          .font(.subheadline.weight(.medium))
+          .foregroundStyle(permission.kind == "read" ? Color.secondary : Color.orange)
+      }
     }
     .frame(maxWidth: .infinity)
     .padding(.vertical, 8)
+  }
+
+  private var runLimitActions: some View {
+    ForEach(permission.options) { option in
+      Button {
+        onAnswer(option.id, nil)
+      } label: {
+        Text(option.name).frame(maxWidth: .infinity)
+      }
+      .buttonStyle(.bordered)
+      .controlSize(.large)
+    }
   }
 
   private var argumentsCard: some View {

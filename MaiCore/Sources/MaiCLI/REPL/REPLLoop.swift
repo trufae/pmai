@@ -1223,10 +1223,7 @@ extension MaiCLI {
       var request = chatRequest()
       if let limits { request.limits = limits }
       if withoutTools {
-        request.limits.maxToolCalls = 0
-        request.limits.maxSubagents = 0
-        request.toolChoice = .none
-        request.useSystemOne = false
+        request.disableTools()
       }
       await beginTurn(request, process: pid, kind: .chat)
       return true
@@ -1757,6 +1754,15 @@ extension MaiCLI {
       }
       guard let waiting = loop.approvals.first else { return false }
       if text.hasPrefix("/") { return false }
+      if waiting.request.runLimitSummary != nil {
+        guard let choice = ACP.RunLimitChoice(rawValue: text.lowercased()) else {
+          await terminal.note(REPLModalPrompt.remoteRunLimitHelp, tone: .warning)
+          return true
+        }
+        loop.approvals.removeFirst()
+        waiting.reply.resume(with: .approve(arguments: .string(choice.rawValue)))
+        return true
+      }
       let tool = waiting.request.tool.name
       switch text.lowercased() {
       case "y", "yes":
@@ -2570,11 +2576,7 @@ extension MaiCLI {
               }
               value = explicit
             } else {
-              switch reason {
-              case .modelTurns(let limit), .toolCalls(let limit), .totalTokens(let limit),
-                .time(let limit):
-                value = limit > Int.max / 2 ? Int.max : limit * 2
-              }
+              value = reason.doubledLimit
             }
             await setLimit(
               reason.settingKey, parts: [reason.settingKey, String(value)], session: &session,
