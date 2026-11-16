@@ -9,7 +9,7 @@ extension View {
 
 private struct MessageMenuRequest {
   let id = UUID()
-  var location: CGPoint?
+  var windowLocation: CGPoint?
 }
 
 private struct MessageActionsMenu: ViewModifier {
@@ -23,7 +23,7 @@ private struct MessageActionsMenu: ViewModifier {
       .padding(.trailing, showsButton ? 44 : 0)
       .contentShape(.interaction, Rectangle())
       .background(MessageMenuAnchor(request: request, showsButton: showsButton, menu: menu))
-      .gesture(MessageMenuLongPress { request = MessageMenuRequest(location: $0) })
+      .gesture(MessageMenuLongPress { request = MessageMenuRequest(windowLocation: $0) })
       .accessibilityAction(named: "Message actions") { request = MessageMenuRequest() }
       .overlay(alignment: .topTrailing) {
         if showsButton {
@@ -51,7 +51,7 @@ private struct MessageMenuLongPress: UIGestureRecognizerRepresentable {
 
   func handleUIGestureRecognizerAction(_ recognizer: UILongPressGestureRecognizer, context: Context) {
     if recognizer.state == .began {
-      onPress(context.converter.localLocation)
+      onPress(recognizer.location(in: nil))
     }
   }
 }
@@ -66,19 +66,16 @@ private struct MessageMenuAnchor: UIViewRepresentable {
   func updateUIView(_ view: AnchorView, context: Context) {
     guard let request, request.id != view.lastRequestID else { return }
     view.lastRequestID = request.id
-    let point = request.location ?? (showsButton
+    let point = request.windowLocation.map { view.convert($0, from: nil) } ?? (showsButton
       ? CGPoint(x: view.bounds.maxX - 22, y: view.bounds.minY + 22)
       : CGPoint(x: view.bounds.midX, y: view.bounds.midY))
-    view.button.frame = CGRect(
-      x: min(max(0, point.x), max(0, view.bounds.width - 1)),
-      y: min(max(0, point.y), max(0, view.bounds.height - 1)),
-      width: 1, height: 1)
+    view.button.center = point
     view.button.menu = menu()
     view.button.performPrimaryAction()
   }
 
   final class AnchorView: UIView {
-    let button = UIButton(type: .custom)
+    let button = MenuButton(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
     var lastRequestID: UUID?
 
     override init(frame: CGRect) {
@@ -95,6 +92,12 @@ private struct MessageMenuAnchor: UIViewRepresentable {
 
     // Links, attachments, and scrolling continue to receive their normal taps.
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? { nil }
+  }
+
+  final class MenuButton: UIButton {
+    override func menuAttachmentPoint(for configuration: UIContextMenuConfiguration) -> CGPoint {
+      CGPoint(x: bounds.midX, y: bounds.midY)
+    }
   }
 }
 
