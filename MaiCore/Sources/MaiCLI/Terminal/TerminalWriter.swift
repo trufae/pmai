@@ -1046,7 +1046,7 @@ actor TerminalWriter {
       screen.writeUserMessage(text, prompt: prompt)
     } else if colorsStatus {
       emitStatus(TerminalOutputBuffer.userMessage(text, prompt: prompt,
-        width: max(1, outputColumns - 1), colors: ui))
+        width: max(1, outputColumns - 1), colors: ui, markdown: markdownRenderer))
     } else {
       status(prompt + text, color: .promptForeground)
     }

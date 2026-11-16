@@ -998,7 +998,8 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
         requestScrollDraw()
       } else {
         let rendered = TerminalOutputBuffer.userMessage(text, prompt: prompt,
-          width: max(1, columns - 1), colors: bufferColorsEnabled ? ui : nil)
+          width: max(1, columns - 1), colors: bufferColorsEnabled ? ui : nil,
+          markdown: markdownTemplate)
         write(Self.restoreCursor + (outputEndedLine ? "" : "\n")
           + rendered + "\n" + Self.saveCursor)
         placeCaret()

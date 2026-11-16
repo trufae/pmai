@@ -258,6 +258,33 @@ func terminalBufferMarkdown() {
   }
 }
 
+@Test("User bubbles and reasoning between tool calls render Markdown")
+func terminalBufferInterleavedMarkdown() {
+  var buffer = TerminalOutputBuffer()
+  buffer.configureMarkdown(MarkdownTerminalRenderer(theme: .plain))
+  buffer.configureTools(.icons)
+  buffer.appendTool(call: ToolCall(id: "one", name: "files_read", arguments: .object([:])),
+    result: ToolResult(callID: "one", text: "done"))
+  let thinking = buffer.appendThinking("**Comparing changes**\n")
+  buffer.finishThinking(thinking)
+  buffer.appendTool(call: ToolCall(id: "two", name: "files_read", arguments: .object([:])),
+    result: ToolResult(callID: "two", text: "done"))
+  buffer.appendUserMessage("**Check this** and `that`", prompt: "you: ")
+  buffer.appendUserMessage("/set ui.tools icons")
+
+  let rendered = buffer.visibleRows(width: 80, height: 30).joined(separator: "\n")
+  #expect(rendered.contains("Comparing changes") && !rendered.contains("**Comparing changes**"))
+  #expect(rendered.contains("Check this") && !rendered.contains("**Check this**"))
+  #expect(rendered.contains("that") && !rendered.contains("`that`"))
+  #expect(rendered.contains("/set ui.tools icons"))
+  #expect(rendered.contains("📖"))
+
+  buffer.configureMarkdown(nil)
+  let raw = buffer.visibleRows(width: 80, height: 30).joined(separator: "\n")
+  #expect(raw.contains("**Comparing changes**"))
+  #expect(raw.contains("**Check this** and `that`"))
+}
+
 @Test("Markdown can be toggled during a stream and reflows after resize")
 func terminalBufferLiveMarkdown() {
   var buffer = TerminalOutputBuffer()

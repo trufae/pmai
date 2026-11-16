@@ -227,7 +227,6 @@ struct TerminalOutputBuffer {
   private var escape = ""
   private var top: Position?
   private var selection: TerminalOutputSelection = .all
-  private var renderThinkingMarkdown = false
   private var excludedSelection: TerminalOutputSelection?
   private static let reset = "\u{1B}[0m"
 
@@ -262,10 +261,6 @@ struct TerminalOutputBuffer {
       return
     }
     self = source
-    if !renderThinkingMarkdown {
-      renderThinkingMarkdown = true
-      for index in thinkingBlocks.keys { invalidateLine(index) }
-    }
     top = anchor.flatMap { $0.line < lines.count ? $0 : nil }
     if tools == .icons && self.selection != selection {
       for index in toolBlocks.keys { invalidateLine(index) }
@@ -371,6 +366,7 @@ struct TerminalOutputBuffer {
   mutating func configureMarkdown(_ renderer: MarkdownTerminalRenderer?) {
     markdownRenderer = renderer
     for index in thinkingBlocks.keys { invalidateLine(index) }
+    for index in userBlocks.keys { invalidateLine(index) }
     for index in replyBlocks.keys {
       replyBlocks[index]?.width = 0
       invalidateLine(index)
@@ -490,10 +486,11 @@ struct TerminalOutputBuffer {
 
   /// Classic terminals use the same layout as retained, resizable messages.
   static func userMessage(_ text: String, prompt: String = "", width: Int,
-    colors: ConfiguredTerminalUI?) -> String
+    colors: ConfiguredTerminalUI?, markdown: MarkdownTerminalRenderer? = nil) -> String
   {
     var buffer = TerminalOutputBuffer()
     buffer.configureColors(colors)
+    buffer.configureMarkdown(markdown)
     buffer.appendUserMessage(text, prompt: prompt)
     return blockRows(&buffer, index: 0, width: max(1, width)).map(\.text).joined(separator: "\n")
   }
@@ -740,17 +737,25 @@ struct TerminalOutputBuffer {
       if thinkingDisplay == .full
         || (thinkingDisplay != .status && !activeThinking.contains(index))
       {
-        if renderThinkingMarkdown, let template = markdownRenderer {
+        if let template = markdownRenderer {
           let source = thinkingBlocks[index]!.lines.map { $0.glyphs.text }
             .joined(separator: "\n")
           var options = template.options
           options.width = width
           var renderer = MarkdownTerminalRenderer(theme: template.theme, options: options)
           var output = TerminalOutputBuffer()
-          output.configureColors(colors)
-          output.configureHighlight(highlight)
           output.append(renderer.feed(source) + renderer.flush())
-          result = Self.blockRows(&output, index: index, width: width)
+          // Preserve the original terminal styling for plain reasoning.
+          if output.lines.map({ $0.glyphs.text }).joined(separator: "\n") == source {
+            thinkingBlocks[index]?.configureHighlight(highlight)
+            result = Self.blockRows(&thinkingBlocks[index]!, index: index, width: width)
+          } else {
+            var theme = colors
+            theme?.foreground = colors?.thinkingForeground ?? ""
+            output.configureColors(theme)
+            output.configureHighlight(highlight)
+            result = Self.blockRows(&output, index: index, width: width)
+          }
         } else {
           thinkingBlocks[index]?.configureHighlight(highlight)
           result = Self.blockRows(&thinkingBlocks[index]!, index: index, width: width)
@@ -818,14 +823,24 @@ struct TerminalOutputBuffer {
     if let colors, !colors.bubbleForeground.isEmpty { theme?.foreground = colors.bubbleForeground }
     let fill = colors.flatMap { $0.bubbleBackground.isEmpty ? nil : $0.bubbleBackground }
     if let fill { theme?.background = fill }
+    let bodyWidth = decorated ? width - 4 : width
+    let renderedText: String
+    if !message.command, let template = markdownRenderer {
+      var options = template.options
+      options.width = bodyWidth
+      renderedText = MarkdownTerminalRenderer(theme: template.theme, options: options)
+        .render(message.text)
+    } else {
+      renderedText = message.text
+    }
     var output = TerminalOutputBuffer()
     output.configureColors(theme)
     output.configureHighlight(highlight)
-    output.append(colors == nil ? message.prompt + message.text
+    output.append(colors == nil ? message.prompt + renderedText
       : TerminalThemeStyle.promptForeground.marker + message.prompt + Self.reset
-        + TerminalThemeStyle.bold.marker + message.text)
+        + TerminalThemeStyle.bold.marker + renderedText)
     let body = Self.blockRows(&output, index: index,
-      width: decorated ? width - 4 : width)
+      width: bodyWidth)
     guard decorated else { return body }
     let widths = body.map {
       TerminalLineEditor.displayWidth(of: $0.text.replacingOccurrences(
