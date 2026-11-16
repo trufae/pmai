@@ -280,6 +280,9 @@ extension AgentRuntime {
       for name in names where !scope.contains(name) { result[name] = .disabled }
     }
     result = internetAccess.restricting(result, tools: availableTools(), groups: groups)
+    // A host tool is for a deliberate ask (`runTool`), never for the model's
+    // own catalog: `/status` already answers the person without a turn.
+    for (name, tool) in tools where tool.isHostTool { result[name] = .hidden }
     cachedToolModes = (key, internetAccess, toolUsage.recent, result)
     return result
   }

@@ -210,6 +210,9 @@ public struct ToolExecutionContext: Codable, Equatable, Sendable {
 public protocol AgentTool: Sendable {
   func approvalEnvironment(arguments: JSONValue) throws -> ToolApprovalEnvironment
   var definition: ToolDefinition { get }
+  /// Whether a host with its own status screen should offer the tool to the
+  /// model. A host that already shows limits hides it.
+  var isHostTool: Bool { get }
 
   func call(
     arguments: JSONValue,
@@ -358,6 +361,8 @@ extension AgentTool {
   public func approvalEnvironment(arguments: JSONValue) throws -> ToolApprovalEnvironment {
     .current
   }
+
+  public var isHostTool: Bool { false }
 }
 
 public struct ClosureTool: AgentTool {

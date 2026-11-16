@@ -74,6 +74,34 @@ extension AgentRuntime {
     usageStats
   }
 
+  /// Installs the limits a host reads for `/status`. `configuration` returns
+  /// the settings in force right now, because a host may switch provider or
+  /// key mid-session.
+  public func registerProviderStatus(
+    _ store: ProviderStatusStore, configuration: @escaping @Sendable () -> MaiConfiguration?
+  ) {
+    providerStatusStore = store
+    providerStatusConfiguration = configuration
+  }
+
+  /// A host that only answers `_pmai/status` needs no tool: its sessions run
+  /// with their own provider and never read the host's key.
+  public func registerProviderStatus(_ settings: ConfigurationBox) {
+    registerProviderStatus(ProviderStatusStore(), configuration: { settings.value })
+  }
+
+  /// The status of one configured provider, or nil when it publishes none.
+  public func providerStatus(
+    for providerID: String, model: String? = nil, refresh: Bool = false,
+    environment: [String: String] = ProcessInfo.processInfo.environment
+  ) async throws -> MaiProviderStatus? {
+    guard let store = providerStatusStore,
+      let provider = providerStatusConfiguration?()?.providers.first(where: { $0.id == providerID })
+    else { return nil }
+    return try await store.status(
+      for: provider, model: model, refresh: refresh, environment: environment)
+  }
+
   struct ProviderCall {
     var response: ProviderResponse
     var timing: StreamTimingObservation

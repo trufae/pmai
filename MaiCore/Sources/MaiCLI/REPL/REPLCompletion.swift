@@ -156,6 +156,7 @@ extension MaiCLI {
       "/jobs focus main", "/queue", "/queue push ", "/queue pop", "/queue del",
       "/help queue", "/help export", "/help import", "/export archive ", "/import ",
       "/export txt ", "/export markdown ", "/export html ", "/export json ", "/export debug ",
+      "/usage", "/usage -verbose", "/usage -models", "/usage refresh", "/help usage",
       "/stats", "/stats ranking", "/stats speed", "/stats time", "/stats efficiency",
       "/stats show ",
       "/stats reset", "/stats del ", "/stats path", "/help stats",

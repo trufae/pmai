@@ -27,6 +27,9 @@ public enum ACP {
     public static let workspaceFiles = "_pmai/workspace/files"
     public static let workspaceTerminal = "_pmai/workspace/terminal"
     public static let workspacePrompts = "_pmai/workspace/prompts"
+    /// How much of each provider limit the host has left, and when it resets.
+    /// The host holds the API key, so a client asks it rather than the provider.
+    public static let providerStatus = "_pmai/status"
     public static let sessionPrompt = "session/prompt"
     public static let sessionCancel = "session/cancel"
     public static let sessionSetConfigOption = "session/set_config_option"

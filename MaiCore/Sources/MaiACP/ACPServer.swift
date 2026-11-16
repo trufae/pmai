@@ -208,6 +208,8 @@ public actor ACPServer {
       return try await sessionAgents(params: params)
     case "_pmai/session/voice":
       return try await voicePrompt(params: params)
+    case ACP.Method.providerStatus:
+      return try await providerStatus(params: params)
     case ACP.Method.sessionPrompt:
       return try await runPrompt(params: params)
     case ACP.Method.sessionSetConfigOption:
@@ -441,6 +443,29 @@ public actor ACPServer {
       try await runtime.runTool(call, for: agent)
     }
     return try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(result))
+  }
+
+  /// `_pmai/status`: the limits `/status` prints on this host, so a client
+  /// shows them instead of calling the provider with the host's key.
+  private func providerStatus(params: JSONValue?) async throws -> JSONValue {
+    let fields = params?.objectValue ?? [:]
+    let requested = fields["provider"]?.stringValue?.trimmingCharacters(in: .whitespaces) ?? ""
+    let id = try await runtime.providerStatusDefaultID(
+      requested, configuration: profileDocument?.configuration)
+    guard let id else {
+      return .object(["supported": .bool(false)])
+    }
+    do {
+      guard let status = try await runtime.providerStatus(
+        for: id, model: fields["model"]?.stringValue ?? fields["modelId"]?.stringValue,
+        refresh: fields["refresh"]?.boolValue ?? false)
+      else {
+        return .object(["supported": .bool(false)])
+      }
+      return MaiProviderStatusTool.structured(status)
+    } catch {
+      return .object(["supported": .bool(true), "error": .string(error.localizedDescription)])
+    }
   }
 
   private func listSessions(params: JSONValue?) async throws -> JSONValue {

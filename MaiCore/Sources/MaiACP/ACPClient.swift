@@ -375,6 +375,26 @@ public actor ACPClient {
     return try JSONDecoder().decode(ToolResult.self, from: JSONEncoder().encode(result))
   }
 
+  /// The host's provider limits. The host owns the API key, so an agent that
+  /// runs as an ACP provider reports its numbers this way. A host that
+  /// publishes none, or is older than this call, reports nil.
+  public func providerStatus(
+    cwd: String, provider: String? = nil, model: String? = nil, refresh: Bool = false
+  ) async throws -> MaiProviderStatus? {
+    let peer = try await connectedPeer()
+    var params: [String: JSONValue] = ["cwd": .string(cwd), "refresh": .bool(refresh)]
+    if let provider, !provider.isEmpty { params["provider"] = .string(provider) }
+    if let model, !model.isEmpty { params["model"] = .string(model) }
+    let result: JSONValue
+    do {
+      result = try await peer.request(
+        ACP.Method.providerStatus, params: .object(params), timeout: 30)
+    } catch let error as JSONRPCError where error.code == JSONRPCError.methodNotFound {
+      return nil
+    }
+    return MaiProviderStatus(payload: result)
+  }
+
   /// Terminal traffic is independent of chat turns and reads may overlap input.
   public func terminalSupported() async throws -> Bool {
     _ = try await connectedPeer()

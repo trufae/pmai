@@ -56,6 +56,27 @@ extension MaiCLI {
     (seconds in use × requests).
     """
 
+  static let usageHelp: String = """
+    What is left to spend:
+      /usage             Limits, their resets, and this machine's token usage
+      /usage PROVIDER    The same for another configured provider
+      /usage -verbose    The recorded usage of that provider, all time
+      /usage -models     The same, one row per model
+      /usage refresh     Ask again instead of reusing a minute-old answer
+
+    The first line is the account's own report. Ollama Cloud gives a session and
+    a weekly percentage from /api/balance, with the included credit. Codex and
+    Claude Code give theirs by running the command they already have — /status
+    and /usage — through the agent pmai starts, so their own login answers and
+    pmai never reads or copies those credentials. The second line is the local
+    ledger: tokens sent and received, requests, and the last reply's size.
+
+    The real allowance is the provider's and it never publishes it in tokens, so
+    a percentage is the share left, not a token count. A provider that reports
+    nothing says so. Answers are cached for a minute; an agent query runs only
+    when that minute has passed.
+    """
+
   static let exportHelp: String = """
     Export this chat as a document, or make a portable Mai archive:
 
@@ -337,6 +358,7 @@ extension MaiCLI {
     /set [SETTING VALUE]   Show or change settings
     /skills                Manage or send skills
     /stats                 Show model usage and performance
+    /usage                 Show provider limits and local token usage
     /stop                  Interrupt the current turn
     /subagents [PID|main]  List or switch agent conversations
     /theme                 List, apply, or customize terminal themes

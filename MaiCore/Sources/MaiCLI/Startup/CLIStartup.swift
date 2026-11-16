@@ -347,6 +347,11 @@ extension MaiCLI {
       }
       let usageStats = ModelUsageStore(url: home.usageStatsURL)
       await runtime.configureUsageStats(usageStats)
+      // `/usage` and the `provider_status` tool read the same limits.
+      let providerStatus = ProviderStatusStore()
+      let settings = ConfigurationBox()
+      settings.value = configuration
+      await runtime.registerProviderStatusTool(providerStatus, configuration: { settings.value })
       await runtime.configureToolUsage(AgentToolUsageStore(url: home.toolUsageURL))
       memoryState.adopt(project: project, settings: configuration?.memory ?? .init())
       todoState.focus(project: project)
@@ -390,7 +395,7 @@ extension MaiCLI {
         todo: todoState,
         skills: skillState,
         themesDirectory: themesDirectory,
-        usageStats: usageStats, home: home)
+        usageStats: usageStats, providerStatus: providerStatus, home: home)
       if let theme = environmentValue(["PMAI_THEME"], in: environment) {
         do {
           let ui = try TerminalTheme.load(
@@ -489,6 +494,7 @@ extension MaiCLI {
         if let changes = pmaiBridge.takeChanges() {
           session.profile = changes.profile
           configuration = changes.configuration
+          settings.value = changes.configuration
         }
         if let process = oneShotProcess {
           session.subagents = AgentProcessRecord.merging(

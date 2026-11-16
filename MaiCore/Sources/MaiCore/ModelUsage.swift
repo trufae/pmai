@@ -921,6 +921,12 @@ public enum ModelUsageFormat {
     return "\(millionths / 10).\(millionths % 10)M"
   }
 
+  /// `7349`: a count written out in full, for a number a person may compare
+  /// with a provider's own report.
+  public static func exact(_ count: Int) -> String {
+    (count).formatted(.number.grouping(.never))
+  }
+
   /// A token count with its unit, `~` first when the number was estimated
   /// rather than reported by the provider: `12.0k tok`, `~552.2k tok`.
   public static func tokens(_ count: Int, estimated: Bool = false) -> String {

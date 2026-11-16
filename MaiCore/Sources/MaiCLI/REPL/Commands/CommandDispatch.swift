@@ -275,6 +275,8 @@ extension MaiCLI {
         await terminal.line(copyHelp)
       case "stats", "/stats":
         await terminal.line(statsHelp)
+      case "usage", "/usage":
+        await terminal.line(usageHelp)
       case "skills", "/skills":
         await terminal.line(skillsHelp)
       case "path", "/path":
@@ -589,6 +591,10 @@ extension MaiCLI {
       await terminal.line("Use /import PATH at the interactive chat prompt.")
     case "/stats":
       await handleStatsCommand(argument, store: services.usageStats, terminal: terminal)
+    case "/usage":
+      await handleUsageCommand(
+        argument, session: session, configuration: configuration, services: services,
+        terminal: terminal)
     case "/clear":
       await terminal.clearScreen()
     case "/queue":

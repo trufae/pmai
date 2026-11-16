@@ -33,6 +33,9 @@ extension MaiCLI {
       // Tool approvals belong to the editor, not to a terminal nobody is at.
       let bridge = ACPPermissionBridge()
       await approvalHandler.setDelegate(bridge.approvalHandler)
+      // `_pmai/status` reads the host's own limits; the client never sees its key.
+      let statusSettings = ConfigurationBox(configuration)
+      await runtime.registerProviderStatus(statusSettings)
       var directory = options.acpSessionDirectory.map {
         URL(fileURLWithPath: NSString(string: $0).expandingTildeInPath, isDirectory: true)
       } ?? resolvedHome(options: options, environment: environment).rootURL

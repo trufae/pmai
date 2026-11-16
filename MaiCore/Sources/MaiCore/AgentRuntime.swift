@@ -58,6 +58,10 @@ public actor AgentRuntime {
   /// Where completed provider calls' tokens and timing are folded in.
   /// Nil disables usage recording.
   var usageStats: ModelUsageStore?
+  /// The limits `/status` and the `provider_status` tool read, with the
+  /// settings in force when they were installed.
+  var providerStatusStore: ProviderStatusStore?
+  var providerStatusConfiguration: (@Sendable () -> MaiConfiguration?)?
   var debugLog: AgentDebugLog?
   var redactionMode: RedactionMode = .off
   var redactionFile: URL?
