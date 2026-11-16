@@ -516,6 +516,12 @@ only in the view. The thinking view also replaces the live thinking preview. Clo
 view or selecting another source restores those blocks in the conversation
 according to `ui.thinking` and `ui.tools`.
 
+`/set ui.tools all` keeps every line and wraps long ones. A limited preview
+(`/set ui.tools 3`, or the three relevant lines) instead clips each line to the
+terminal width with `…`, so the preview stays one screen row per shown line
+however narrow the terminal is, and the remaining count shows as `… 3 more lines`
+(or `…+3` when the width is too small for the words).
+
 `/set ui.tools icons` replaces consecutive tool calls and results with a compact
 emoji row in classic and buffer modes. Buffer mode also redraws retained calls;
 `ui.toolgroups` does not collapse these rows into a text summary. Emoji rows wrap

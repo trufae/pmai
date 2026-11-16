@@ -412,6 +412,49 @@ func terminalBufferTools() {
   }
 }
 
+@Test("Limited tool previews keep one screen row per requested line on a narrow terminal")
+func terminalBufferLongToolLines() {
+  var buffer = TerminalOutputBuffer()
+  buffer.configureColors(ConfiguredTerminalUI())
+  buffer.append("prompt\n")
+  let long = String(repeating: "x", count: 400)
+  buffer.appendTool(
+    call: ToolCall(id: "read", name: "files_read", arguments: .object(["path": .string("a.txt")])),
+    result: nil)
+  buffer.appendTool(
+    call: nil, result: ToolResult(callID: "read", text: "\(long)\n\(long)\n\(long)"), to: 1)
+  buffer.append("answer")
+  for count in [1, 2, 3] {
+    buffer.configureTools(.lines(count))
+    for width in [20, 40, 80, 200, 20] {
+      let rows = buffer.visibleRows(width: width, height: 40)
+      let plain = rows.map {
+        $0.replacingOccurrences(
+          of: "\u{1B}\\[[0-9;]*m", with: "", options: .regularExpression)
+      }
+      // prompt, call line, `count` result rows plus the "more lines" tail, answer, tail
+      #expect(plain.first == "prompt")
+      #expect(plain.last == "answer")
+      let body = plain.dropFirst(2).dropLast(1)
+      #expect(body.count == count + (count < 3 ? 1 : 0))
+      for row in plain where row.hasPrefix("←") || row.hasPrefix("  ") {
+        #expect(TerminalLineEditor.displayWidth(of: row) <= width)
+      }
+      #expect(plain.contains { $0.hasSuffix("…") })
+    }
+  }
+  // Complete output still wraps instead of losing the rest of a long line.
+  buffer.configureTools(.all)
+  let all = buffer
+    .visibleRows(width: 40, height: 400)
+    .map {
+      $0.replacingOccurrences(of: "\u{1B}\\[[0-9;]*m", with: "", options: .regularExpression)
+    }
+    .joined()
+    .replacingOccurrences(of: "\n", with: "")
+  #expect(all.contains(String(repeating: "x", count: 400)))
+}
+
 @Test("Compact tool entries fit one row and reveal retained text after resize", arguments: [false, true])
 func terminalBufferCompactToolWidth(isError: Bool) {
   for prefix in ["", "\u{1B}[36magent#3 \u{1B}[0m"] {

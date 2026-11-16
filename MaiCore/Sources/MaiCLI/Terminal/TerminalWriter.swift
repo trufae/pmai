@@ -742,7 +742,11 @@ actor TerminalWriter {
         color: result.isError ? .errorForeground : .toolCallForeground, background: .toolCallBackground,
         call: call?.call)
       if result.isError {
-        toolStatus(ToolResultPreview.render(result, display: .lines(3)), context: context,
+        toolStatus(
+          ToolResultPreview.render(
+            result, display: .lines(3),
+            maxLineLength: previewWidth(for: context, display: .lines(3), result: result)),
+          context: context,
           color: .errorForeground, background: .toolResultBackground)
       }
       return
@@ -778,10 +782,24 @@ actor TerminalWriter {
         call: call?.call, calls: call?.display ?? ui.toolCalls)
     } else {
       toolStatus(
-        ToolResultPreview.render(result, display: tools), context: context,
+        ToolResultPreview.render(
+          result, display: tools,
+          maxLineLength: previewWidth(for: context, display: tools, result: result)),
+        context: context,
         color: result.isError ? .errorForeground : .toolResultForeground,
         background: .toolResultBackground, diff: true)
     }
+  }
+
+  /// Classic output wraps at the terminal width, so a preview clipped to it
+  /// keeps one row per line instead of several. Captures and redirects keep the
+  /// text intact because nothing there wraps it.
+  private func previewWidth(for context: AgentEventContext, display: ToolResultDisplay,
+    result: ToolResult) -> Int {
+    guard terminalOutput, REPLRedirection.current == nil,
+      ToolResultPreview.clipsToWidth(result, display: display)
+    else { return .max }
+    return max(1, TerminalLineEditor.terminalColumns() - (context.depth > 0 ? 9 : 0))
   }
 
   private func toolStatus(

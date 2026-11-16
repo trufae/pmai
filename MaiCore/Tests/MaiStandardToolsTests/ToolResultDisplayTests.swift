@@ -63,6 +63,39 @@ func toolResultDisplayRelevance() {
   #expect(ToolResultPreview.render(important, display: .lines(0)) == "← done")
 }
 
+@Test("Preview lines are clipped to the terminal width in cells")
+func toolResultPreviewClipsToWidth() {
+  let long = String(repeating: "x", count: 200)
+  let result = ToolResult(callID: "long", text: "\(long)\nshort\n\(long)")
+  let shown = ToolResultPreview.render(result, display: .lines(3), maxLineLength: 20)
+  let rows = shown.components(separatedBy: "\n")
+  #expect(rows.count == 3)
+  #expect(rows[1] == "  short")
+  for row in rows {
+    #expect(ToolResultPreview.cellWidth(of: row) <= 20)
+  }
+  #expect(rows[0].hasSuffix("…"))
+  #expect(rows[2].hasSuffix("…"))
+  // Wide characters count as two cells and are never split.
+  let wide = ToolResult(callID: "wide", text: String(repeating: "漢", count: 40))
+  let clipped = ToolResultPreview.render(wide, display: .lines(1), maxLineLength: 11)
+  #expect(ToolResultPreview.cellWidth(of: clipped) <= 11)
+  #expect(clipped.hasSuffix("…"))
+  #expect(!clipped.contains("\u{FFFD}"))
+  // A width large enough to hold everything leaves the text alone.
+  #expect(ToolResultPreview.render(result, display: .lines(1), maxLineLength: .max)
+    == "← \(long)\n  … 2 more lines")
+  // Complete output is never clipped, so a long line stays readable in full.
+  #expect(ToolResultPreview.render(result, display: .all, maxLineLength: 20)
+    == "← \(long)\n  short\n  \(long)")
+  #expect(!ToolResultPreview.clipsToWidth(result, display: .all))
+  #expect(ToolResultPreview.clipsToWidth(result, display: .lines(2)))
+  #expect(!ToolResultPreview.clipsToWidth(result, display: .icons))
+  #expect(ToolResultPreview.clipsToWidth(result, display: .relevant))
+  #expect(!ToolResultPreview.clipsToWidth(
+    ToolResult(callID: "important", text: long, importance: .important), display: .relevant))
+}
+
 @Test("Result importance is optional in older catalogs and transcripts and survives saving")
 func toolResultImportancePersistence() throws {
   let annotations = try JSONDecoder().decode(ToolAnnotations.self, from: Data("{}".utf8))

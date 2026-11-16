@@ -52,7 +52,7 @@ struct TerminalToolBlock {
     if let result {
       output.append(
         styled(
-          ToolResultPreview.render(result, display: display),
+          ToolResultPreview.render(result, display: display, maxLineLength: max(1, width)),
           color: result.isError ? .errorForeground : .toolResultForeground,
           background: .toolResultBackground, diff: true))
     }

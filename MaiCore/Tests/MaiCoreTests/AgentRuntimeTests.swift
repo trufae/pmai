@@ -245,7 +245,7 @@ func toolResultPreview() {
 
   #expect(
     ToolResultPreview.render(result, maxLines: 2, maxLineLength: 12)
-      == "← first line\n  second [31m …\n  … 2 more lines")
+      == "← first line\n  second [3…\n  …+2")
   #expect(ToolResultPreview.render(result, maxLines: 0) == "← done")
   let longLine = String(repeating: "x", count: 300)
   #expect(

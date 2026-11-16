@@ -217,6 +217,9 @@ struct TerminalOutputBuffer {
   private var markdownRenderer: MarkdownTerminalRenderer?
   private var colors: ConfiguredTerminalUI?
   private var fillsLineBackgrounds = false
+  /// Tool preview rows were already clipped to the draw width, so wrapping
+  /// them again would only split them a second time.
+  private var clipsToWidth = false
   private var highlight = ""
   static let highlightStyle = "\u{1B}[0;30;47m"
   private var cursor = 0
@@ -701,6 +704,11 @@ struct TerminalOutputBuffer {
       var output = TerminalOutputBuffer()
       output.configureColors(colors)
       output.fillsLineBackgrounds = true
+      // A bounded preview is already clipped per line, so wrapping again would
+      // only split one line into several rows. Icon rows and complete output
+      // still wrap: whole emojis move to the next row, long lines stay readable.
+      output.clipsToWidth =
+        !isHeader && tool.result.map { ToolResultPreview.clipsToWidth($0, display: tools) } ?? false
       output.append(text)
       if isHeader && !expanded || !isHeader && tools == .lines(0) && toolCalls == .truncate {
         output.truncateLine(to: width)
@@ -768,7 +776,9 @@ struct TerminalOutputBuffer {
     let matches = highlightedGlyphs(in: lines[index].glyphs)
     for (offset, glyph) in lines[index].glyphs.enumerated() {
       let cells = glyph.width
-      if used > 0 && used + cells > width {
+      // Already clipped to this width: overflow can only be a glyph the source
+      // text itself carried past the clip, so never spend a second screen row.
+      if !clipsToWidth, used > 0, used + cells > width {
         result.append(filled(row, used: used))
         row = Row(position: Position(line: index, glyph: offset), text: base)
         used = 0

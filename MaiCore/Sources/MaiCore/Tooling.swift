@@ -305,15 +305,29 @@ package enum ToolCallPreview {
 /// after `←`, the rest indented, cut at `maxLines`. No heading line, because
 /// the result is the point; `← done` only when nothing is to be shown.
 package enum ToolResultPreview {
-  package static func render(_ result: ToolResult, display: ToolResultDisplay) -> String {
-    let maxLines: Int
+  package static func render(
+    _ result: ToolResult, display: ToolResultDisplay, maxLineLength: Int = .max
+  ) -> String {
+    guard display != .icons else { return "" }
+    let lines = lineLimit(result, display: display)
+    return render(result, maxLines: lines, maxLineLength: maxLineLength)
+  }
+
+  /// Rows a display shows: a negative count means the whole result.
+  static func lineLimit(_ result: ToolResult, display: ToolResultDisplay) -> Int {
     switch display {
-    case .all: maxLines = -1
-    case .relevant: maxLines = result.isError || result.importance == .important ? -1 : 3
-    case .icons: return ""
-    case .lines(let count): maxLines = max(0, count)
+    case .all: return -1
+    case .relevant: return result.isError || result.importance == .important ? -1 : 3
+    case .icons: return 0
+    case .lines(let count): return max(0, count)
     }
-    return render(result, maxLines: maxLines)
+  }
+
+  /// A bounded preview occupies one screen row per shown line, so its rows are
+  /// clipped to the terminal width. Complete output keeps wrapping, because a
+  /// clipped line could not be read anywhere else.
+  package static func clipsToWidth(_ result: ToolResult, display: ToolResultDisplay) -> Bool {
+    display != .icons && lineLimit(result, display: display) >= 0
   }
 
   package static func render(
@@ -321,6 +335,10 @@ package enum ToolResultPreview {
     maxLines: Int,
     maxLineLength: Int = .max
   ) -> String {
+    // `maxLineLength` is measured in terminal cells, so wide characters and
+    // emoji cannot push one preview row onto extra screen rows. Complete output
+    // ignores it and wraps instead, so no text becomes unreachable.
+    let maxLineLength = maxLines < 0 ? .max : maxLineLength
     let compactHeading = result.isError ? "← error" : "← done"
     guard maxLines != 0 else { return compactHeading }
     var text = result.text
@@ -335,25 +353,75 @@ package enum ToolResultPreview {
     }
     let lines = text.components(separatedBy: .newlines)
     let shownCount = maxLines < 0 ? lines.count : min(lines.count, maxLines)
+    let budget = max(1, maxLineLength)
     var output: [String] = []
     for (index, line) in lines.prefix(shownCount).enumerated() {
-      let safe = safeLine(line, maximumLength: max(1, maxLineLength))
-      output.append(index == 0 ? "← \(safe)" : "  \(safe)")
+      let marker = index == 0 ? "← " : "  "
+      let available = budget - Self.cellWidth(of: marker)
+      let safe = safeLine(line, maximumLength: max(1, available))
+      output.append(marker + safe)
     }
     if lines.count > shownCount {
       let remaining = lines.count - shownCount
-      output.append("  … \(remaining) more line\(remaining == 1 ? "" : "s")")
+      let spelled = "  … \(remaining) more line\(remaining == 1 ? "" : "s")"
+      let short = "  …+\(remaining)"
+      // The summary row must fit too, or it would wrap where the preview does not.
+      output.append(
+        cellWidth(of: spelled) <= budget ? spelled
+          : cellWidth(of: short) <= budget ? short
+          : safeLine(spelled, maximumLength: budget))
     }
     return output.joined(separator: "\n")
   }
 
+  /// Clip a preview line to `maximumLength` terminal cells, keeping one cell
+  /// free for the ellipsis. Wide characters are never cut in half.
   static func safeLine(_ line: String, maximumLength: Int) -> String {
     let sanitized = line.unicodeScalars.map { scalar -> String in
       if scalar.value == 9 { return "  " }
       return CharacterSet.controlCharacters.contains(scalar) ? " " : String(scalar)
     }.joined()
-    guard sanitized.count > maximumLength else { return sanitized }
-    return String(sanitized.prefix(maximumLength)) + "…"
+    guard cellWidth(of: sanitized) > maximumLength else { return sanitized }
+    var used = 0
+    var visible = ""
+    for character in sanitized {
+      let cells = cellWidth(of: String(character))
+      guard used + cells < maximumLength else { break }
+      visible.append(character)
+      used += cells
+    }
+    return visible + "…"
+  }
+
+  /// Terminal columns a string occupies: wide and emoji characters take two,
+  /// combining marks none.
+  static func cellWidth(of value: String) -> Int {
+    value.reduce(into: 0) { width, character in
+      let scalars = character.unicodeScalars
+      if scalars.allSatisfy({
+        switch $0.properties.generalCategory {
+        case .nonspacingMark, .enclosingMark, .format: true
+        default: false
+        }
+      }) {
+        return
+      }
+      let emojiPresentation =
+        scalars.contains { $0.properties.isEmojiPresentation }
+        || (scalars.contains { $0.value == 0xFE0F } && scalars.contains { $0.properties.isEmoji })
+      width += emojiPresentation || scalars.contains { isWide($0.value) } ? 2 : 1
+    }
+  }
+
+  private static func isWide(_ value: UInt32) -> Bool {
+    switch value {
+    case 0x1100...0x115F, 0x2329...0x232A, 0x2E80...0xA4CF, 0xAC00...0xD7A3,
+      0xF900...0xFAFF, 0xFE10...0xFE19, 0xFE30...0xFE6F, 0xFF00...0xFF60,
+      0xFFE0...0xFFE6, 0x1F200...0x1F251, 0x20000...0x3FFFD:
+      true
+    default:
+      false
+    }
   }
 }
 
