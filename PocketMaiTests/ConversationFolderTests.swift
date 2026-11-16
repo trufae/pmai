@@ -103,6 +103,8 @@ final class ConversationFolderTests: XCTestCase {
   }
 
   func testEmptyFoldersPersistAndRemainMoveDestinations() async throws {
+    let updatedAt = Date(timeIntervalSince1970: 1_700_000_000)
+    store.updateCurrentConversationSettings { $0.updatedAt = updatedAt }
     let conversation = try XCTUnwrap(store.currentConversation)
     let folder = try XCTUnwrap(store.createConversationFolder(named: "  Work\n"))
     XCTAssertEqual(folder.name, "Work")
@@ -115,11 +117,14 @@ final class ConversationFolderTests: XCTestCase {
 
     await store.moveConversation(id: conversation.id, to: folder.id)
     XCTAssertEqual(store.currentConversation?.folderID, folder.id)
+    XCTAssertEqual(store.currentConversation?.updatedAt, updatedAt)
     XCTAssertEqual(store.selectedConversationFolderID, folder.id)
     XCTAssertEqual(store.currentConversation?.messages, conversation.messages)
     XCTAssertEqual(store.currentConversation?.provider, conversation.provider)
     XCTAssertEqual(store.currentConversation?.modelID, conversation.modelID)
     XCTAssertEqual(store.currentConversation?.systemPromptID, conversation.systemPromptID)
+    try await waitUntil { persistence.loadConversation(id: conversation.id)?.folderID == folder.id }
+    XCTAssertEqual(persistence.loadConversation(id: conversation.id)?.updatedAt, updatedAt)
 
     store.renameConversationFolder(id: folder.id, to: "Projects")
     XCTAssertEqual(store.folderDisplayName(for: folder.id), "Projects")
@@ -129,9 +134,11 @@ final class ConversationFolderTests: XCTestCase {
 
     await store.moveConversations([conversation.id], to: folder.id)
     XCTAssertEqual(store.currentConversation?.folderID, folder.id)
+    XCTAssertEqual(store.currentConversation?.updatedAt, updatedAt)
     XCTAssertEqual(store.selectedConversationFolderID, folder.id)
     await store.deleteConversationFolder(id: folder.id)
     XCTAssertEqual(store.currentConversation?.folderID, ConversationFolder.defaultID)
+    XCTAssertEqual(store.currentConversation?.updatedAt, updatedAt)
     XCTAssertEqual(store.selectedConversationFolderID, ConversationFolder.defaultID)
     XCTAssertFalse(store.conversationFolders.contains { $0.id == folder.id })
     try await waitUntil {
