@@ -140,7 +140,8 @@ path.write_text(json.dumps(provider))
             output = run_engine(['/reset http.transport', 'Use the default HTTP engine.'])
             assert 'http.transport = auto' in output, output
             check_request('/local/v1', 'local-key', 'main-model')
-            assert not requests[-1][1].get('User-Agent', '').startswith('curl/'), requests[-1][1]
+            uses_curl = sys.platform.startswith('linux') and os.access('/usr/bin/curl', os.X_OK)
+            assert requests[-1][1].get('User-Agent', '').startswith('curl/') == uses_curl, requests[-1][1]
             assert 'httpTransport' not in json.loads(engine_config.read_text())['providers'][0]['options']
 
             # The welcome commands turn an empty config into a working keyed connection.

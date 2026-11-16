@@ -182,7 +182,7 @@ extension MaiCLI {
       }
       guard parts.count > 1 else {
         await listSettings(httpSettings(provider: session.profile.provider, configuration: draft), terminal: terminal)
-        await terminal.line("auto uses winhttp on Windows and urlsession elsewhere. curl uses the curl executable; winhttp is Windows-only. Saved for this provider; applies to the next request.")
+        await terminal.line("auto selects \(ProviderHTTPTransport.automatic.resolved.rawValue) on this system. curl uses the curl executable. winhttp is Windows-only. Changes apply to the next request.")
         return
       }
       guard parts.count == 2, let transport = ProviderHTTPTransport(rawValue: parts[1].lowercased()) else {

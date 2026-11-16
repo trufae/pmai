@@ -811,7 +811,10 @@ contain prompts, tool output, and other private data.
 OpenAI-compatible providers use native WinHTTP on Windows to avoid a
 FoundationNetworking upload stall when the request outgrows a socket send buffer
 ([Swift issue #5532](https://github.com/swiftlang/swift-corelibs-foundation/issues/5532)).
-Other platforms keep URLSession. The provider's `options.httpTransport` can be
+On Linux, OpenAI-compatible providers and ChatGPT subscription requests use
+`/usr/bin/curl` when it is executable to avoid a FoundationNetworking CPU spin
+while waiting for HTTP responses. They fall back to URLSession if curl is absent.
+OpenAI-compatible providers' `options.httpTransport` can be
 `auto` (the default), `winhttp`, `curl`, or `urlsession`. WinHTTP is Windows-only
 and uses the OS HTTP/TLS library directly, with no subprocess or temporary body
 files. Both WinHTTP and curl preserve live SSE replies, cancellation, and gzip

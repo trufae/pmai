@@ -92,8 +92,10 @@ HTTP responses: a 1.2 MB POST reproduced high CPU even in a standalone
 `URLSession.shared.data(for:)` program without pmai. A small POST on a fresh
 connection also reproduced it. Its libcurl
 socket wrapper creates write-ready dispatch sources but does not remove them
-when interest changes to read-only. The pmai status fix does not repair that
-runtime behavior. See the upstream
+when interest changes to read-only. The OpenAI-compatible and ChatGPT
+subscription providers bypass that loop with `/usr/bin/curl` when available.
+OpenAI-compatible providers can explicitly select URLSession with
+`/set http.transport urlsession`. See the upstream
 [`_SocketSources.createSources` implementation](https://github.com/swiftlang/swift-corelibs-foundation/blob/swift-6.4.0-RELEASE/Sources/FoundationNetworking/URLSession/libcurl/MultiHandle.swift).
 
 The local-server regression checks model catalogs, deadlines, cancellation,

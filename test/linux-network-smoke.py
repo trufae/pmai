@@ -151,12 +151,13 @@ def main():
                     (root / "sample.txt").write_text("one\ntwo\n")
                     tools = ["files_read_range", "files_grep", "run_shell", "context_rewrite"] if case.startswith("tool-") else []
                     config = root / "config.json"
-                    # The fixture emits direct calls and needs their schemas for normalization.
+                    # Exercise the linked networking library, including under QEMU.
                     config.write_text(json.dumps({
                         "version": 1, "defaultAgent": "smoke",
                         "providers": [{"id": "smoke", "kind": "openAICompatible",
                                        "baseURL": f"{'https' if tls else 'http'}://127.0.0.1:{server.server_port}/{case}/v1",
-                                       "apiKey": "smoke", "timeout": 5}],
+                                       "apiKey": "smoke", "timeout": 5,
+                                       "options": {"httpTransport": "urlsession"}}],
                         "toolSources": [{"id": "standard", "kind": "standard-tools", "options": {"tools": tools}}],
                         "agents": [{"id": "smoke", "provider": "smoke", "model": "smoke",
                                     "toolNames": tools, "toolCallingStrategy": case.removeprefix("tool-") if tools else "automatic",
