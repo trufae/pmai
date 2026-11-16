@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+  import FoundationNetworking
+#endif
 
 /// Fetches a configured provider's limits at a person's request and caches the
 /// answer, so the REPL, an ACP client, and a phone host all read the same one

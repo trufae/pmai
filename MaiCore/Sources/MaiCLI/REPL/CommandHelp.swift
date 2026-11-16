@@ -358,7 +358,6 @@ extension MaiCLI {
     /set [SETTING VALUE]   Show or change settings
     /skills                Manage or send skills
     /stats                 Show model usage and performance
-    /usage                 Show provider limits and local token usage
     /stop                  Interrupt the current turn
     /subagents [PID|main]  List or switch agent conversations
     /theme                 List, apply, or customize terminal themes
@@ -367,6 +366,7 @@ extension MaiCLI {
     /tools                 List tool groups for this agent; /tools full includes tools
     /unalias NAME          Unregister a global alias (/help alias for details)
     /unthen                Clear all pending /then actions
+    /usage                 Show provider limits and local token usage
     /vdb                   Index or search local documentation and code
     /version               Print the pmai version
     /view SOURCE           Read-only split in buffer mode; /help view
