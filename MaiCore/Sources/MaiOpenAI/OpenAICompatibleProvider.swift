@@ -156,7 +156,7 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
     request.httpBody = try JSONEncoder().encode(JSONValue.object(["model": .string(model)]))
     let (data, response) = try await withThrowingTaskGroup(of: (Data, URLResponse).self) { group in
-      group.addTask { [request] in try await self.data(for: request) }
+      group.addTask { [session, request] in try await session.providerData(for: request) }
       group.addTask { [request] in
         try await Task.sleep(for: .seconds(request.timeoutInterval))
         throw URLError(.timedOut)
@@ -212,7 +212,7 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
   ) async throws -> Data {
     let request = try makeSpeechRequest(
       input: input, voice: voice, responseFormat: responseFormat, model: model, speed: speed)
-    let (data, response) = try await data(for: request)
+    let (data, response) = try await session.providerData(for: request)
     try validate(response: response, data: data)
     guard !data.isEmpty else { throw OpenAICompatibleProviderError.emptyResponse }
     if let root = try? JSONDecoder().decode(JSONValue.self, from: data).objectValue {
@@ -347,7 +347,7 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
           contentType: response.mimeType ?? "application/octet-stream", stream: stream)
       }
     #endif
-    let (data, response) = try await data(for: request)
+    let (data, response) = try await session.providerData(for: request)
     try validate(response: response, data: data)
     guard !data.isEmpty else { throw OpenAICompatibleProviderError.emptyResponse }
     return AudioAPIResponse(
@@ -543,7 +543,7 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
     resolver: ToolNameResolver,
     emit: @escaping ProviderEventHandler
   ) async throws -> ProviderResponse {
-    let (data, response) = try await data(for: request)
+    let (data, response) = try await session.providerData(for: request)
     try validate(response: response, data: data)
     return try await decodedResponse(
       data, response: response as? HTTPURLResponse, resolver: resolver, emit: emit)
@@ -1084,11 +1084,6 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
     return error["message"]?.stringValue.map { OpenAICompatibleProviderError.providerFailure($0) }
   }
 
-  private func data(for request: URLRequest) async throws -> (Data, URLResponse) {
-    let delegate = ProviderRedirectDelegate(originalRequest: request)
-    return try await session.data(for: request, delegate: delegate)
-  }
-
   private func catalog(_ endpoint: String, afterID: String? = nil) async throws -> [String: JSONValue] {
     var url = try endpointURL(endpoint)
     if let afterID {
@@ -1117,7 +1112,7 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
       let (data, response) = try await withThrowingTaskGroup(
         of: (Data, URLResponse).self
       ) { group in
-        group.addTask { [request] in try await self.data(for: request) }
+        group.addTask { [session, request] in try await session.providerData(for: request) }
         group.addTask { [request] in
           try await Task.sleep(for: .seconds(request.timeoutInterval))
           throw URLError(.timedOut)

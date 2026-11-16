@@ -41,6 +41,16 @@ public struct URLSessionAsyncBytes: AsyncSequence, Sendable {
   public var task: URLSessionTask { lifetime.task }
   public var lines: Lines { Lines(bytes: self) }
 
+  func collectedData() async throws -> Data {
+    var data = Data()
+    for try await chunk in chunks {
+      try Task.checkCancellation()
+      data.append(chunk)
+    }
+    try Task.checkCancellation()
+    return data
+  }
+
   public struct Lines: AsyncSequence, Sendable {
     public typealias Element = String
     fileprivate let bytes: URLSessionAsyncBytes

@@ -38,8 +38,7 @@ public final class ChatGPTProvider: ChatProvider, @unchecked Sendable {
 
   public func availableModels() async throws -> [ModelDescriptor] {
     let request = try await authorizedRequest(path: "models")
-    let (data, response) = try await session.data(
-      for: request, delegate: ProviderRedirectDelegate(originalRequest: request))
+    let (data, response) = try await session.providerData(for: request)
     try validate(response, data: data)
     guard let root = try? JSONDecoder().decode([String: JSONValue].self, from: data),
       let models = root["models"]?.arrayValue
