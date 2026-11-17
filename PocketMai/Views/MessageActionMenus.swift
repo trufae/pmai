@@ -14,14 +14,20 @@ private struct MessageMenuRequest {
 
 private struct MessageActionsMenu: ViewModifier {
   let menu: () -> UIMenu
+  @Environment(\.isFullChatScreenshotRendering) private var isFullChatScreenshotRendering
   @State private var request: MessageMenuRequest?
 
+  @ViewBuilder
   func body(content: Content) -> some View {
-    content
-      .contentShape(.interaction, Rectangle())
-      .background(MessageMenuAnchor(request: request, menu: menu))
-      .gesture(MessageMenuLongPress { request = MessageMenuRequest(windowLocation: $0) })
-      .accessibilityAction(named: "Message actions") { request = MessageMenuRequest() }
+    if isFullChatScreenshotRendering {
+      content
+    } else {
+      content
+        .contentShape(.interaction, Rectangle())
+        .background(MessageMenuAnchor(request: request, menu: menu))
+        .gesture(MessageMenuLongPress { request = MessageMenuRequest(windowLocation: $0) })
+        .accessibilityAction(named: "Message actions") { request = MessageMenuRequest() }
+    }
   }
 }
 

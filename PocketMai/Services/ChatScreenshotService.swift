@@ -22,13 +22,16 @@ final class ChatScreenshotService: NSObject, ObservableObject, UIScreenshotServi
         Data?, Int, CGRect
       ) -> Void
   ) {
+    let systemColorScheme: ColorScheme =
+      screenshotService.windowScene?.traitCollection.userInterfaceStyle == .dark ? .dark : .light
     guard
       let store,
-      let document = FullChatScreenshotRenderer.makePDF(
+      let data = FullChatScreenshotRenderer.makePDF(
         conversation: store.currentConversation,
         showThinking: store.effectiveShowThinking(for: store.currentConversation),
         toolSettings: store.settings.toolSettings,
         appearance: store.settings.appearance,
+        colorScheme: store.settings.appearance.theme.colorScheme ?? systemColorScheme,
         renderMarkdown: store.settings.renderMarkdownInChat,
         renderImages: store.settings.renderMarkdownImagesInChat,
         streamingTextStore: store.streamingTextStore,
@@ -39,7 +42,7 @@ final class ChatScreenshotService: NSObject, ObservableObject, UIScreenshotServi
       return
     }
 
-    completionHandler(document.data, 0, .zero)
+    completionHandler(data, 0, .zero)
   }
 }
 
@@ -79,12 +82,8 @@ struct ChatScreenshotServiceInstaller: UIViewRepresentable {
   }
 }
 
-private struct FullChatScreenshotDocument {
-  let data: Data
-}
-
 @MainActor
-private enum FullChatScreenshotRenderer {
+enum FullChatScreenshotRenderer {
   fileprivate static let width: CGFloat = 430
 
   static func makePDF(
@@ -92,11 +91,12 @@ private enum FullChatScreenshotRenderer {
     showThinking: Bool,
     toolSettings: NativeToolSettings,
     appearance: AppearanceSettings,
+    colorScheme: ColorScheme,
     renderMarkdown: Bool,
     renderImages: Bool,
     streamingTextStore: StreamingTextStore,
     scale: CGFloat
-  ) -> FullChatScreenshotDocument? {
+  ) -> Data? {
     guard let conversation, !conversation.messages.isEmpty else { return nil }
 
     let content = FullChatScreenshotView(
@@ -109,6 +109,7 @@ private enum FullChatScreenshotRenderer {
       streamingTextStore: streamingTextStore
     )
     .frame(width: width)
+    .environment(\.colorScheme, colorScheme)
 
     let renderer = ImageRenderer(content: content)
     renderer.proposedSize = ProposedViewSize(width: width, height: nil)
@@ -129,8 +130,7 @@ private enum FullChatScreenshotRenderer {
       }
     }
 
-    guard let pdfData else { return nil }
-    return FullChatScreenshotDocument(data: pdfData)
+    return pdfData
   }
 }
 

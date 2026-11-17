@@ -31,6 +31,47 @@ func remoteHistoryCountsVisibleGroups() {
 
 final class ConversationMessageRenderingTests: XCTestCase {
   @MainActor
+  func testFullPageScreenshotRendersBothThemesWithoutMenuPlaceholders() throws {
+    var conversation = Conversation()
+    conversation.messages = [
+      ChatMessage(role: .user, text: "Hello"),
+      ChatMessage(role: .assistant, text: "**Hi!** 안녕하세요"),
+    ]
+    var appearance = AppearanceSettings.defaults
+    appearance.tint = .blue
+
+    for scheme in [ColorScheme.light, .dark] {
+      let data = try XCTUnwrap(FullChatScreenshotRenderer.makePDF(
+        conversation: conversation, showThinking: false, toolSettings: .defaults,
+        appearance: appearance, colorScheme: scheme, renderMarkdown: true, renderImages: false,
+        streamingTextStore: StreamingTextStore(), scale: 1))
+      let provider = try XCTUnwrap(CGDataProvider(data: data as CFData))
+      let pdf = try XCTUnwrap(CGPDFDocument(provider))
+      let page = try XCTUnwrap(pdf.page(at: 1))
+      let bounds = page.getBoxRect(.mediaBox)
+      let size = 128
+      let bitmap = try XCTUnwrap(CGContext(
+        data: nil, width: size, height: size, bitsPerComponent: 8, bytesPerRow: size * 4,
+        space: CGColorSpaceCreateDeviceRGB(),
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue))
+      bitmap.scaleBy(x: CGFloat(size) / bounds.width, y: CGFloat(size) / bounds.height)
+      bitmap.drawPDFPage(page)
+      let pixels = try XCTUnwrap(bitmap.data).assumingMemoryBound(to: UInt8.self)
+
+      XCTAssertEqual(pixels[3], 255)
+      if scheme == .dark {
+        XCTAssertLessThan(pixels[0], 64)
+      } else {
+        XCTAssertGreaterThan(pixels[0], 220)
+      }
+      let hasYellowPlaceholder = stride(from: 0, to: size * size * 4, by: 4).contains { i in
+        pixels[i] > 180 && pixels[i + 1] > 120 && pixels[i + 2] < 120
+      }
+      XCTAssertFalse(hasYellowPlaceholder)
+    }
+  }
+
+  @MainActor
   func testExpandedActivityFitsShortRunsAndScrollsLongRuns() async throws {
     // Long tool runs must remain reachable without filling the outer transcript;
     // short runs should not reserve an otherwise empty 320-point panel.
