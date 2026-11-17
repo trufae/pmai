@@ -327,6 +327,7 @@ extension MaiCLI {
     /exit                  Exit the REPL
     /export FORMAT [PATH]  Export this chat or a portable archive
     /fork [--empty] [TITLE] Fork into a child conversation and switch to it
+    /goal TASK             Work toward a goal through delegation and review
     /help [COMMAND]        List commands or show detailed help
     /help keys             Keyboard shortcuts
     /help shell            Input, shell commands, redirects, and agent messages
@@ -360,7 +361,6 @@ extension MaiCLI {
     /stats                 Show model usage and performance
     /stop                  Interrupt the current turn
     /subagents [PID|main]  List or switch agent conversations
-    /goal TASK            Work toward a goal through delegation and review
     /theme                 List, apply, or customize terminal themes
     /then [LINE]           Queue a prompt or command until all tasks finish; no args lists it
     /todo                  Show or edit the project's todo list
