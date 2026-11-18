@@ -19,8 +19,11 @@ extension MaiCLI {
       for task in AgentTask.allCases {
         let id = configuration?.taskAgents[task]
         let agent = configuration?.agents.first { $0.id == id }
+        let options = task.inferenceOptions(configured: agent?.options, caller: session.profile.options)
+        let inherited = task == .tool && agent != nil && agent?.options.reasoningEffort == nil
+        let effort = (options.reasoningEffort ?? "auto") + (inherited ? " (inherited)" : "")
         let detail = agent.map {
-          "\($0.id) — \($0.provider)::\($0.model), effort \($0.options.reasoningEffort ?? "auto")"
+          "\($0.id) — \($0.provider)::\($0.model), effort \(effort)"
         }
         plain.append("\(task.rawValue): \(detail ?? "current agent")")
         let title = switch task {
@@ -35,8 +38,7 @@ extension MaiCLI {
           title,
           agent.map { "\($0.provider)::\($0.model)" } ?? selection,
           agent?.id ?? "current agent",
-          agent.map { $0.options.reasoningEffort ?? "auto" }
-            ?? session.profile.options.reasoningEffort ?? "auto",
+          effort,
         ])
       }
       let table = (["| Task | Model | Agent | Effort |", "| --- | --- | --- | --- |"]
@@ -123,6 +125,9 @@ extension MaiCLI {
       String.init)
     guard let first = fields.first?.lowercased() else {
       await terminal.line(effortDescription(session.profile.options))
+      if let detail = toolEffortDescription(profile: session.profile, configuration: configuration) {
+        await terminal.line(detail)
+      }
       return
     }
     let guidance = fields.count > 1 ? fields[1].trimmingCharacters(in: .whitespacesAndNewlines) : ""
@@ -161,7 +166,20 @@ extension MaiCLI {
       terminal: terminal)
     {
       await terminal.line("Set \(summary) for agent '\(session.profile.agentID)'.")
+      if let detail = toolEffortDescription(profile: session.profile, configuration: configuration) {
+        await terminal.line(detail)
+      }
     }
+  }
+
+  private static func toolEffortDescription(profile: SessionProfile, configuration: MaiConfiguration?)
+    -> String?
+  {
+    guard let id = configuration?.taskAgents.tool,
+      let agent = configuration?.agents.first(where: { $0.id == id }) else { return nil }
+    let options = AgentTask.tool.inferenceOptions(configured: agent.options, caller: profile.options)
+    let source = agent.options.reasoningEffort == nil ? "inherited from chat" : "independent"
+    return "Tool agent '\(id)': \(effortDescription(options)) (\(source)). /agent effort \(id) LEVEL sets it independently."
   }
 
   /// `effort = high — Check every edge case.`, or `effort = off`.

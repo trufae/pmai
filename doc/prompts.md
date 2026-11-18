@@ -96,6 +96,12 @@ automatically, keeping custom text and agent IDs. Existing unrelated prompt
 names are preserved; a numeric suffix resolves collisions. `/edit compact`
 edits the separate compaction template.
 
+Tool-selection agents inherit the current chat's reasoning effort and guidance
+when their effort is unset. `/agent effort ID LEVEL` gives one an independent
+level; `auto` explicitly selects the automatic policy. `/set effort` reports the
+effective tool effort, and `/model` marks inherited effort. Compaction defaults
+to off unless its dedicated agent explicitly selects an effort.
+
 ## User prompts, builtin prompts, and `$NAME`
 
 A **user prompt** is a message sent by name: text you send often, kept under

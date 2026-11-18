@@ -59,15 +59,15 @@ public enum ReasoningEffort: String, Codable, CaseIterable, Identifiable, Sendab
     case .disabled: "Answer directly without a thinking block or extended deliberation."
     case .minimal: "Use only the minimum reasoning needed to answer accurately."
     case .low:
-      "Answer directly and briefly. Do not deliberate over alternatives or edge cases unless the task is ambiguous or a mistake would be costly."
+      "Use a short, direct approach. Resolve the specific question or change with the evidence needed for accuracy, then finish. Avoid unrelated investigation and repeated verification unless new evidence requires it."
     case .medium:
       "Think briefly before answering: plan the steps, check the main assumptions, and keep the reasoning proportionate to the task."
     case .high:
       "Think the problem through before answering: consider the alternatives, work through the tricky cases and the edge cases, and verify the result before presenting it."
     case .xhigh:
-      "Reason thoroughly before answering: explore the alternatives, question your assumptions, work through every edge case, and double-check each conclusion. Thoroughness matters more than speed."
+      "Reason thoroughly before answering: examine relevant alternatives, question consequential assumptions, work through significant edge cases, and verify material conclusions. Keep the investigation within the user's requested scope."
     case .max:
-      "Take all the reasoning the task needs: examine every alternative, test each assumption, verify each step and the final result, and revisit earlier conclusions when something does not fit. Correctness matters more than speed or brevity."
+      "Take all the reasoning the task needs: examine relevant alternatives, test consequential assumptions, verify the result, and revisit conclusions when new evidence does not fit. Correctness matters more than speed or brevity; stop when the requested work is supported by sufficient evidence."
     }
   }
 
@@ -199,8 +199,7 @@ public enum ReasoningEffort: String, Codable, CaseIterable, Identifiable, Sendab
         "thinking": .object(["type": .string(enabled ? "enabled" : "disabled")])
       ]
       if enabled {
-        fields["reasoning_effort"] = .string(
-          self == .max ? "max" : self == .low || self == .minimal ? "low" : "high")
+        fields["reasoning_effort"] = .string(deepSeekEffort)
       }
       return fields
     case .qwen:
@@ -211,6 +210,12 @@ public enum ReasoningEffort: String, Codable, CaseIterable, Identifiable, Sendab
       if enabled { fields["thinking_budget"] = .integer(thinkingBudget) }
       return fields
     case .ollama:
+      if model.lowercased().contains("deepseek") && Self.isDeepSeekFlash(model) {
+        return [
+          "think": enabled ? .string(deepSeekEffort) : .bool(false),
+          "reasoning_effort": .string(enabled ? deepSeekEffort : "none"),
+        ]
+      }
       let effort = self == .disabled || self == .minimal ? "low" : effortName(allowingXHigh: false)
       if model.lowercased().contains("gpt-oss") {
         return ["think": .string(effort), "reasoning_effort": .string(effort)]
@@ -241,6 +246,11 @@ public enum ReasoningEffort: String, Codable, CaseIterable, Identifiable, Sendab
     case .generic:
       return ["reasoning_effort": .string(effortName(allowingXHigh: false))]
     }
+  }
+
+  /// DeepSeek's named tiers differ from the OpenAI low/medium/high scale.
+  private var deepSeekEffort: String {
+    self == .max ? "max" : self == .low || self == .minimal ? "low" : "high"
   }
 
   /// The `reasoning_effort` value: `low`, `medium`, `high`, and `xhigh` where

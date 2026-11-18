@@ -51,6 +51,20 @@ def main():
         assert '/model -chat MODEL' in redirected, redirected
         assert '/model-' not in run(['/help']), 'removed commands still appear in help'
         original = config.read_bytes()
+        # An unset tool effort follows /set effort; explicit choices,
+        # including auto, stay independent and visible in the UI.
+        output = run(['/model -tool hello::inherit', '/set effort high', '/model', '/set effort'])
+        selected = json.loads(config.read_text())
+        selector = selected['taskAgents']['tool']
+        selector_agent = next(a for a in selected['agents'] if a['id'] == selector)
+        assert selector_agent['options'].get('reasoningEffort') is None, selector_agent
+        assert f"Tool agent '{selector}': effort = high (inherited from chat)" in output, output
+        assert 'effort high (inherited)' in output, output
+        output = run([f'/agent effort {selector} low', '/set effort high'])
+        assert f"Tool agent '{selector}': effort = low (independent)" in output, output
+        output = run([f'/agent effort {selector} auto', '/set effort high'])
+        assert f"Tool agent '{selector}': effort = automatic (independent)" in output, output
+        config.write_bytes(original)
         # Startup selection must use the requested agent without changing the default.
         for flag in ('-a', '--agent'):
             for agent, model in [('bare', 'hello::original'), ('cheap', 'local::org/small:latest')]:

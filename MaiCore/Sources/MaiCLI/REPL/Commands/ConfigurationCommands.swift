@@ -233,7 +233,8 @@ extension MaiCLI {
         "agent": .string(id ?? profile.agentID),
         "provider": .string(agent?.provider.rawValue ?? profile.provider.rawValue),
         "model": .string(agent?.model ?? profile.model),
-        "options": try DebugDiagnostics.value(agent?.options ?? profile.options),
+        "options": try DebugDiagnostics.value(
+          task.inferenceOptions(configured: agent?.options, caller: profile.options)),
       ])
     }
     return DebugDiagnostics.sanitize(.object([

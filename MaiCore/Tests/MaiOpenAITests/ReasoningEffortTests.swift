@@ -300,8 +300,16 @@ func deepSeekFlashAutomaticRequest(ollama: Bool) throws {
     ? .bool(false) : .object(["type": .string("disabled")])))
   let low = try body(options: GenerationOptions(reasoningEffort: "low"))
   #expect(low[ollama ? "think" : "thinking"] == (ollama
-    ? .bool(true) : .object(["type": .string("enabled")])))
+    ? .string("low") : .object(["type": .string("enabled")])))
   #expect(low["reasoning_effort"] == .string("low"))
+  for (level, expected) in [
+    ("minimal", "low"), ("medium", "high"), ("high", "high"),
+    ("xhigh", "high"), ("max", "max"),
+  ] {
+    let mapped = try body(options: GenerationOptions(reasoningEffort: level))
+    #expect(mapped["reasoning_effort"] == .string(expected))
+    if ollama { #expect(mapped["think"] == .string(expected)) }
+  }
   #expect(
     try body(options: GenerationOptions(additional: [
       "thinking": .object(["type": .string("enabled")])
@@ -314,6 +322,34 @@ func deepSeekFlashAutomaticRequest(ollama: Bool) throws {
   ]))
   #expect(customEffort["thinking"] == nil)
   #expect(customEffort["reasoning_effort"] == .string("low"))
+}
+
+@Test("Ollama tool continuation replays reasoning under the provider's field")
+func ollamaReasoningHistory() throws {
+  let model = "deepseek-v4.1-flash:1017"
+  let provider = OpenAICompatibleProvider(
+    configuration: .init(baseURL: URL(string: "https://ollama.com/v1")!))
+  let tool = ToolDefinition(name: "lookup", description: "Look up a value")
+  let request = try provider.makeURLRequest(
+    ProviderRequest(
+      model: model,
+      messages: [
+        .user("Explain the result"),
+        AgentMessage(role: .assistant, content: [
+          .reasoning("Inspect the requested function"),
+          .toolCall(ToolCall(id: "lookup-1", name: "lookup", arguments: .object([:]))),
+        ]),
+        AgentMessage(role: .tool, content: [
+          .toolResult(ToolResult(callID: "lookup-1", text: "Function body"))
+        ]),
+      ], tools: [tool], options: .init(reasoningEffort: "low"), stream: false), model: model)
+  let body = try JSONDecoder().decode(JSONValue.self, from: try #require(request.httpBody))
+  let sent = try #require(body.objectValue?["messages"]?.arrayValue?.first {
+    $0.objectValue?["role"] == .string("assistant")
+  }?.objectValue)
+  #expect(sent["reasoning"] == .string("Inspect the requested function"))
+  #expect(sent["reasoning_content"] == nil)
+  #expect(sent["tool_calls"]?.arrayValue?.count == 1)
 }
 
 @Test("DeepSeek reasoning history is sent only with tools")

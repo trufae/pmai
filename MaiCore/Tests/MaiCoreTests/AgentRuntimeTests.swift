@@ -374,6 +374,32 @@ func sessionIDReachesProviderRequests() async throws {
   #expect(requests.map(\.sessionID) == ["chat-1"])
 }
 
+@Test("Custom prompts retain execution guidance in native and fallback tool requests",
+  arguments: [ToolCallingStrategy.native, .json])
+func customPromptRetainsExecutionGuidance(strategy: ToolCallingStrategy) async throws {
+  let provider = ScriptedProvider(responses: [
+    ProviderResponse(message: .assistant("The function translates coordinates."), stopReason: .stop)
+  ])
+  let runtime = AgentRuntime()
+  try await runtime.register(provider)
+  try await runtime.register(
+    tool: ClosureTool(definition: ToolDefinition(name: "read", description: "Read code")) { _, _ in
+      Issue.record("The answer is already available in the conversation")
+      return ToolOutput(text: "Code")
+    })
+  let task = AgentMessage.user("Explain this function; do not change code.")
+  let result = try await runtime.run(AgentRequest(
+    provider: "scripted", model: "fixture", messages: [.system("Respond briefly."), task],
+    toolNames: ["read"], toolCallingStrategy: strategy))
+  #expect(result.toolCalls == 0)
+  let sent = try #require(await provider.requests.first)
+  #expect(sent.messages.first?.text == "Respond briefly.")
+  #expect(sent.messages.contains {
+    $0.role == .system && $0.text == AgentToolLoopPolicy.executionInstructions
+  })
+  #expect(sent.messages.last == task)
+}
+
 @Test("Tool result previews show the text first, bound lines and length, and strip control characters")
 func toolResultPreview() {
   let result = ToolResult(

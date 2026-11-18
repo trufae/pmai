@@ -30,6 +30,15 @@ public enum AgentToolLoopDecision: Sendable {
 public enum AgentToolLoopPolicy {
   public static let responseToolName = "respond"
 
+  /// Execution guidance also applies to agents with a custom system prompt.
+  public static let executionInstructions = """
+    Keep tool use focused on the user's current request and latest corrections. Reuse relevant results already in the conversation; completed earlier tasks do not need to be restarted or reverified. Before another lookup, identify the specific missing fact it will resolve. Once the evidence is sufficient, answer.
+
+    For an explanation or recommendation, inspect the named code and relevant callers, then explain the behavior. Expand the investigation only to resolve a concrete uncertainty that affects the answer. For a requested change, preserve unrelated work and use the smallest meaningful verification. When asked for a patch file, generate a diff from original and modified copies rather than hand-counting hunks or temporarily editing the working tree.
+
+    Read enough surrounding code to understand a result; prefer a function or coherent range over many tiny overlapping reads. Batch independent lookups when the protocol supports it. Repeat a check only when inputs changed, an earlier result was incomplete, or fresh state is needed. Reasoning effort controls the depth of analysis, not the scope of the task or a requirement to perform more tool calls.
+    """
+
   public static let nativeToolInstructions = """
     Use the available tools to perform actions, then answer from their results. Only call tools whose arguments are already known. If a call needs another tool's result, wait for that result before calling it; never use placeholders for unseen results. Pass argument values directly, without extra wrapping quotes or double escaping. Omit optional arguments unless needed.
     """

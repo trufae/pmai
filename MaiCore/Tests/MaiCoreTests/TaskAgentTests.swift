@@ -274,6 +274,29 @@ func taskAgentManualCompaction() async throws {
   #expect(fallback.options.reasoningEffort == "disabled")
 }
 
+@Test("Tool selection inherits unset effort and preserves explicit task controls",
+  arguments: [nil, "low", "automatic"] as [String?])
+func taskAgentToolEffort(level: String?) async throws {
+  let runtime = AgentRuntime()
+  let configured = GenerationOptions(
+    maxOutputTokens: 1234, reasoningEffort: level, additional: ["seed": .integer(7)])
+  try await runtime.register(agent: AgentDefinition(
+    id: "selector", provider: "other", model: "small", options: configured))
+  await runtime.configureTaskAgents(.init(tool: "selector"))
+  var original = AgentRequest(
+    provider: "primary", model: "large", messages: [.user("Explain the function")],
+    options: .init(reasoningEffort: "high", reasoningGuidance: "Check relevant assumptions."))
+  let first = try await runtime.taskRequest(.tool, from: original)
+  #expect(first.options.reasoningEffort == (level ?? "high"))
+  #expect(first.options.reasoningGuidance == (level == nil ? original.options.reasoningGuidance : nil))
+  #expect(first.options.maxOutputTokens == 1234)
+  #expect(first.options.additional == configured.additional)
+  original.options.reasoningEffort = "disabled"
+  let changed = try await runtime.taskRequest(.tool, from: original)
+  #expect(changed.options.reasoningEffort == (level ?? "disabled"))
+  #expect(await runtime.availableAgents().first { $0.id == "selector" }?.options == configured)
+}
+
 @Test("A primary without native tools can continue after a native specialist")
 func taskAgentPrimaryNeedsNoNativeTools() async throws {
   let primary = TaskFixtureProvider(

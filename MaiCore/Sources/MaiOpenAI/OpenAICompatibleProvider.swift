@@ -862,7 +862,9 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
       if family == .minimax {
         object["content"] = .string(ReasoningText.render(message.content))
       } else {
-        object["reasoning_content"] = .string(message.reasoning)
+        // Ollama reads `reasoning`, matching its response field. Sending
+        // DeepSeek's field here silently drops tool-loop reasoning history.
+        object[family == .ollama ? "reasoning" : "reasoning_content"] = .string(message.reasoning)
       }
     }
     if !message.toolCalls.isEmpty {

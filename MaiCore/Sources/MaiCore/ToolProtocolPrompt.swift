@@ -45,7 +45,7 @@ extension AgentTooling {
 
       \(toolCalling)
 
-      After a `<tool_run>`, decide if the result is enough. If it is enough, give the final answer. If another missing fact remains, emit one more tool call in the next reply. You may call the same tool again with different arguments, but never repeat a tool call with identical arguments.
+      After a `<tool_run>`, decide if the result is enough. If it is enough, give the final answer. If another missing fact remains, emit one more tool call in the next reply. Reuse previous results; repeat a call only when inputs changed, its earlier result was incomplete, or fresh state is needed.
       """
   }
 

@@ -257,12 +257,24 @@ func fileWorkspaceSearchUsesCodingFriendlyDefaults() async throws {
 
   let normalGrep = try await call(grep, ["query": .string("needle")])
   #expect(normalGrep.structuredContent?.objectValue?["scannedFiles"] == .integer(2))
+  let literalAlternatives = try await call(grep, ["query": .string("needle|other")])
+  #expect(literalAlternatives.structuredContent?.objectValue?["matches"] == .array([]))
+  #expect(literalAlternatives.text.contains("literal text"))
+  #expect(literalAlternatives.text.contains("regex=true"))
+  let alternatives = try await call(grep, [
+    "query": .string("needle|other"), "regex": .bool(true),
+  ])
+  let alternativePaths = Set(
+    alternatives.structuredContent?.objectValue?["matches"]?.arrayValue?.compactMap {
+      $0.objectValue?["path"]?.stringValue
+    } ?? [])
+  #expect(alternativePaths == ["Sources/Needle.swift", "Sources/Nested/Needle.swift"])
 
   // A search that stops at the match limit says so in the text the model reads.
   try Data(String(repeating: "needle here\n", count: 150).utf8)
     .write(to: root.appendingPathComponent("Sources/Many.swift"))
   let capped = try await call(grep, ["query": .string("needle")])
-  #expect(capped.text.contains("Stopped after 100 matching lines; more exist."))
+  #expect(capped.text.contains("100 matching lines; more may exist."))
   #expect(capped.structuredContent?.objectValue?["truncated"] == .bool(true))
 }
 
@@ -289,6 +301,12 @@ func fileWorkspaceFindReportsTruncation(entryCount: Int) async throws {
     #expect(missing.text.contains("No matches found in the scanned portion."))
     #expect(missing.text.contains("Search incomplete:"))
     #expect(!missing.text.contains("No files matched"))
+    let grep = try await call(tool(tools, .grep), ["query": .string("absent")])
+    #expect(grep.structuredContent?.objectValue?["matches"] == .array([]))
+    #expect(grep.structuredContent?.objectValue?["truncated"] == .bool(true))
+    #expect(grep.text.contains("Search incomplete:"))
+    #expect(grep.text.contains("0 matching lines"))
+    #expect(!grep.text.contains("100 matching lines"))
   } else {
     #expect(matches.text.contains("Truncated: showing 100 of 101 matches"))
     let missing = try await call(find, ["query": .string("absent.txt")])
@@ -472,6 +490,22 @@ func fileWorkspaceToolsSupportAdvancedSourceNavigation() async throws {
     tool(tools, .readRange),
     ["path": .string("example.swift"), "start_line": .integer(2), "end_line": .integer(2)])
   #expect(range.text.contains("2:   func hello() {}"))
+
+  // A range passed to files_read must not silently return the whole file,
+  // including when the runtime supplies its usual byte-output suggestion.
+  for limit in [nil, 1024] as [Int?] {
+    let rangedRead = try await call(tool(tools, .read), [
+      "path": .string("example.swift"), "start_line": .integer(2), "end_line": .integer(2),
+    ], suggestedOutputBytes: limit)
+    #expect(!rangedRead.isError)
+    #expect(rangedRead.text == range.text)
+  }
+  for paging in ["offset", "max_bytes"] {
+    let mixed = try await call(tool(tools, .read), [
+      "path": .string("example.swift"), "start_line": .integer(2), paging: .integer(10),
+    ])
+    #expect(mixed.isError)
+  }
 
   for start in [Int.max, Int.min, 0] {
     let invalid = try await call(tool(tools, .readRange), [
@@ -718,7 +752,8 @@ private func tool(
 
 private func call(
   _ tool: MaiFileWorkspaceTool,
-  _ arguments: [String: JSONValue]
+  _ arguments: [String: JSONValue],
+  suggestedOutputBytes: Int? = nil
 ) async throws -> ToolOutput {
   try await tool.call(
     arguments: .object(arguments),
@@ -728,7 +763,7 @@ private func call(
         parentRunID: nil,
         agentID: "files-test",
         depth: 0),
-      modelTurn: 1))
+      modelTurn: 1, suggestedOutputBytes: suggestedOutputBytes))
 }
 
 @Test("Shared Files tools require overwrite to replace an existing file")

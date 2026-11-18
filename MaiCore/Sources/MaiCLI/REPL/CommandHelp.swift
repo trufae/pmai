@@ -463,6 +463,9 @@ extension MaiCLI {
                                  defaults to off because its provider default is high
       /set effort off            Disable thinking where supported (also /nothink)
 
+    Tool agents inherit chat effort when unset. /agent effort ID LEVEL overrides it;
+    /agent effort ID auto selects an independent automatic policy. /model shows each task.
+
     Examples:
       /set effort high
       /set effort max Check every edge case and verify the result before answering

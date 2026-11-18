@@ -120,6 +120,9 @@ extension AgentRuntime {
     let promptContext = AgentPromptContext(
       messages: inference.messages, activeTaskID: state.activeTaskID)
     var providerMessages = promptContext.messages()
+    if !definitions.isEmpty && !deciding {
+      insertSystem(AgentToolLoopPolicy.executionInstructions, into: &providerMessages)
+    }
     if inference.isGoalWorker == true {
       insertSystem(AgentGoalPrompt.worker(effort: inference.options.reasoningEffort),
         into: &providerMessages)

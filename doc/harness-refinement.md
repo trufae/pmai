@@ -180,6 +180,54 @@ Useful next steps after collecting evidence:
 Keep procedural lessons separate from `AgentMemory`, which represents user
 preferences. Recheck workspace-specific facts before applying lessons elsewhere.
 
+## Diagnose a slow tool loop
+
+Inspect the exported chat's messages, `debug.configuration`, and tool definitions
+before attributing a slow run to inference effort. An export records configured
+effort, not proof that an endpoint honored it, and command durations alone do not
+measure model latency. Check the serialized provider request as well.
+
+One audited CLI conversation used DeepSeek Flash through Ollama. Its main agent
+was set to **low**, but its separate tool-selection agent had **unset** effort,
+so tool turns followed the automatic policy instead.
+A read-only follow-up made 42 tool calls and eventually answered an earlier task;
+a later explanation made 18 calls without reaching an answer in the export.
+The actionable failures were:
+
+- `files_read` silently ignored `start_line`/`end_line`, returning entire source
+  files. Both arguments now select a numbered line range; mixing line and byte
+  paging returns an error. `files_read_range` remains supported.
+- A literal `files_grep` query used `|` as if regex mode were enabled. The
+  description now shows `regex=true`, and an empty literal search containing
+  `|` explains the distinction.
+- A search that reached the file scan limit claimed it found 100 matching lines
+  and that more existed. Scan-limit and match-limit messages now describe the
+  actual partial result. Discovery can fall back to a filtered filesystem walk
+  when VCS enumeration is unavailable; ignore coverage is described accordingly.
+- A custom short-answer system prompt replaced the default execution guidance.
+  The runtime now supplies shared guidance about current task scope, reusing
+  evidence, coherent reads, patch generation from copies, and stopping after
+  sufficient verification, for both native and fallback tools.
+- The main effort setting did not reach a tool-selection agent with unset effort.
+  It now inherits the caller's effort and guidance. An explicit task level,
+  including `automatic`, stays independent. `/set effort`, `/model`, and debug
+  exports report the effective task options; saved agent definitions are unchanged.
+- Ollama reasoning replay used `reasoning_content`, which Ollama does not read;
+  it now uses `reasoning`. DeepSeek Flash effort also uses its named tiers through
+  Ollama: minimal/low → low, medium/high/xhigh → high, max → max, off → none.
+  Previously max was reduced to high. Automatic Flash thinking remains off.
+
+The wire changes follow [Ollama's compatibility protocol](https://docs.ollama.com/api/openai-compatibility)
+and [DeepSeek's effort tiers](https://api-docs.deepseek.com/guides/thinking_mode/).
+Low effort remains an appropriate starting point for a narrow explanation or
+small edit; raising it is not a remedy for ignored arguments or lost protocol
+state. The highest effort guidance still calls for relevant, bounded analysis.
+
+These fixes have deterministic regression coverage for requested file ranges,
+partial search results, custom-prompt wiring, effort fields, and tool-continuation
+reasoning. They do not establish a measured live-model speedup. Use the comparison
+workflow above to measure task success, tokens, and latency before claiming one.
+
 The deterministic comparison tests run with:
 
 ```sh

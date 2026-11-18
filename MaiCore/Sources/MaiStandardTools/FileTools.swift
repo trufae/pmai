@@ -144,7 +144,8 @@ public struct MaiFileWorkspaceTool: AgentTool {
 
   public func call(arguments: JSONValue, context: ToolExecutionContext) async throws -> ToolOutput {
     var arguments = arguments.objectValue ?? [:]
-    if operation == .read, arguments["max_bytes"] == nil, let limit = context.suggestedOutputBytes {
+    if operation == .read, arguments["start_line"] == nil, arguments["end_line"] == nil,
+      arguments["max_bytes"] == nil, let limit = context.suggestedOutputBytes {
       arguments["max_bytes"] = .integer(max(4, limit))
     }
     #if os(macOS) || os(iOS)
@@ -251,7 +252,7 @@ public struct MaiFileWorkspaceTool: AgentTool {
       return ToolDefinition(
         name: operation.rawValue,
         description:
-          "Locate unknown file or folder paths by approximate name or glob. If a path is already given, use files_read or files_list directly. Set path to the narrowest known folder; searches stop after 10000 entries and return at most 100 matches. Skips ignored, hidden, build, and dependency paths; does not descend through directory symlinks. An optional filter keeps only paths containing that literal text.",
+          "Locate unknown file or folder paths by approximate name or glob. If a path is already given, use files_read or files_list directly. Set path to the narrowest known folder; searches stop after 10000 entries and return at most 100 matches. Skips hidden and common build/dependency paths, and uses VCS ignore rules when available; does not descend through directory symlinks. An optional filter keeps only paths containing that literal text.",
         parameters: [
           ToolParameterDef(
             name: "query",
@@ -275,7 +276,7 @@ public struct MaiFileWorkspaceTool: AgentTool {
       return ToolDefinition(
         name: operation.rawValue,
         description:
-          "Search text in a known file or folder; set path to the narrowest relevant location and glob to limit files. Prefer this for a targeted text lookup instead of a shell pipeline. Returns up to 100 matching lines; skips ignored and hidden files. Case-insensitive unless query contains uppercase. For large repository-wide searches when run_shell is available, prefer git grep -n --untracked in Git worktrees, then rg -n if Git is unsuitable or unavailable. Use recursive grep only when neither is available.",
+          "Search text in a known file or folder; set path to the narrowest relevant location and glob to limit files. Scans at most 10000 files and returns up to 100 matching lines. Skips hidden and common build/dependency paths, and uses VCS ignore rules when available. Case-insensitive unless query contains uppercase. Use regex=true for alternatives such as nameA|nameB. Read a matching function with files_get_function or surrounding lines with files_read. For shell searches, prefer rg -n, then git grep -n --untracked in Git worktrees if rg is unavailable. Avoid recursive grep over build outputs.",
         parameters: [
           ToolParameterDef(
             name: "query",
@@ -304,9 +305,17 @@ public struct MaiFileWorkspaceTool: AgentTool {
     case .read:
       return ToolDefinition(
         name: operation.rawValue,
-        description: "Read a known file directly by path; prefer this over shell cat, head, or sed. No preliminary listing or search is needed when the path is given. Results are bounded; continue with offset and the same format, or use files_read_range for specific lines. PDF, DOCX and EPUB convert to Markdown; images use OCR. Use format=markdown to convert HTML too, or format=text for original UTF-8 source. For large source files, use files_grep or files_read_index first, then read a range/function.",
+        description: "Read a known file directly by path; no preliminary listing or search is needed. Use start_line/end_line for an inclusive line range, or offset/max_bytes for byte paging; do not mix the two. Line reads include line numbers and return up to 1000 lines. Read a coherent range or function rather than many tiny overlapping sections. PDF, DOCX and EPUB convert to Markdown; images use OCR. Use format=markdown to convert HTML too, or format=text for original UTF-8 source. For large source files, locate the relevant section with files_grep or files_read_index, or use files_get_function for a known function.",
         parameters: [
           path,
+          ToolParameterDef(
+            name: "start_line", type: "integer",
+            description: "First line, 1-based. Omit for line 1 when end_line is given. Do not combine with offset or max_bytes.",
+            required: false),
+          ToolParameterDef(
+            name: "end_line", type: "integer",
+            description: "Absolute last line, inclusive, at least start_line. Omit to read up to 200 lines from start_line.",
+            required: false),
           ToolParameterDef(
             name: "format",
             type: "string",
@@ -315,7 +324,7 @@ public struct MaiFileWorkspaceTool: AgentTool {
           ToolParameterDef(
             name: "max_bytes",
             type: "integer",
-            description: "Maximum bytes to return, up to 500000. Default: up to 120000, reduced to fit the runtime's context budget.",
+            description: "Byte paging only: maximum bytes to return, up to 500000. Default: up to 120000, reduced to fit the runtime's context budget.",
             required: false),
           ToolParameterDef(
             name: "offset",
@@ -975,10 +984,17 @@ struct MaiFileWorkspace: Sendable {
     if rendered.isEmpty, scannedFiles == 0, !globs.isEmpty {
       text += " No file matched \(globs.map { "'\($0.pattern)'" }.joined(separator: " and "))."
     }
+    if rendered.isEmpty, !useRegex, query.contains("|") {
+      text += " The query was treated as literal text. For alternatives separated by |, set regex=true."
+    }
     if hitLimit {
-      // Without this line a model counts what it sees and reports it as the total.
-      text +=
-        "\nStopped after \(limit) matching lines; more exist. Narrow the query, or count with run_shell (grep -c)."
+      // File discovery and matching have separate limits. Reaching a scan
+      // limit does not prove that more matches exist (or that 100 were found).
+      if rows.count >= limit {
+        text += "\nSearch incomplete: stopped after \(limit) matching lines; more may exist. Narrow the query."
+      } else {
+        text += "\nSearch incomplete: file discovery or scanning reached its limit after \(scannedFiles) files (\(rows.count) matching lines). Narrow path or glob before searching again."
+      }
     }
     return ToolOutput(content: [.text(text)], structuredContent: .object(structured))
   }
@@ -988,6 +1004,10 @@ struct MaiFileWorkspace: Sendable {
   }
 
   func read(_ arguments: [String: JSONValue], ocrProvider: (any OCRProvider)?) async throws -> ToolOutput {
+    let lineRead = arguments["start_line"] != nil || arguments["end_line"] != nil
+    if lineRead && (arguments["offset"] != nil || arguments["max_bytes"] != nil) {
+      throw MaiFileWorkspaceError.mixedReadWindows
+    }
     guard let formatName = (arguments["format"] ?? .string("auto")).stringValue,
       let format = ReadFormat(rawValue: formatName)
     else { throw MaiFileWorkspaceError.invalidReadFormat }
@@ -1011,6 +1031,12 @@ struct MaiFileWorkspace: Sendable {
       data = try readData(at: file)
     }
     guard !looksBinary(data) else { throw MaiFileWorkspaceError.binary(displayPath(rawPath)) }
+    if lineRead {
+      guard let text = String(data: data, encoding: .utf8) else {
+        throw MaiFileWorkspaceError.invalidUTF8(displayPath(rawPath))
+      }
+      return try readLines(text, path: rawPath, arguments: arguments)
+    }
     let window = try textWindow(data, arguments: arguments, path: rawPath)
     var metadata: [String: JSONValue] = [
       "path": .string(displayPath(rawPath)),
@@ -1232,6 +1258,12 @@ struct MaiFileWorkspace: Sendable {
     default:
       text = try plainText(at: file, path: rawPath)
     }
+    return try readLines(text, path: rawPath, arguments: arguments)
+  }
+
+  private func readLines(_ text: String, path: String, arguments: [String: JSONValue]) throws
+    -> ToolOutput
+  {
     let lines = Self.documentLines(text)
     let start = arguments["start_line"]?.intValue ?? 1
     guard start >= 1 else { throw MaiFileWorkspaceError.invalidReadStartLine(start) }
@@ -1244,7 +1276,7 @@ struct MaiFileWorkspace: Sendable {
     let rendered = (start...finalEnd).map { "\($0): \(lines[$0 - 1])" }
     return ToolOutput(content: [
       .text(
-        (["File: \(displayPath(rawPath)), lines \(start)-\(finalEnd) of \(lines.count)"] + rendered)
+        (["File: \(displayPath(path)), lines \(start)-\(finalEnd) of \(lines.count)"] + rendered)
           .joined(separator: "\n"))
     ])
   }
@@ -2255,6 +2287,7 @@ private enum MaiFileWorkspaceError: LocalizedError {
   case binary(String)
   case invalidUTF8(String)
   case invalidReadFormat
+  case mixedReadWindows
   case alreadyExists(String)
   case fileAlreadyExists(String)
   case recursiveRequired(String)
@@ -2288,6 +2321,8 @@ private enum MaiFileWorkspaceError: LocalizedError {
     case .binary(let path): "'\(path)' appears to be binary; text files only."
     case .invalidUTF8(let path): "'\(path)' is not valid UTF-8 text."
     case .invalidReadFormat: "format must be auto, markdown, or text."
+    case .mixedReadWindows:
+      "Use start_line/end_line for a line range or offset/max_bytes for byte paging, not both."
     case .alreadyExists(let path): "'\(path)' already exists."
     case .fileAlreadyExists(let path):
       "'\(path)' already exists. Use mode: .append to add to the end, or mode: .overwrite to replace the whole file; use files_patch to edit part of it."
@@ -2297,9 +2332,9 @@ private enum MaiFileWorkspaceError: LocalizedError {
     case .fileTooLarge(let limit):
       "The file is larger than \(limit) bytes; use files_read with offsets instead."
     case .invalidReadStartLine(let start):
-      "start_line=\(start) is invalid: files_read_range requires start_line >= 1."
+      "start_line=\(start) is invalid: line reads require start_line >= 1."
     case .invalidReadLineRange(let start, let end):
-      "end_line=\(end) is before start_line=\(start). files_read_range requires end_line >= start_line. end_line is an absolute, inclusive line number. To read N lines, use end_line=start_line+N-1, or omit end_line to read up to 200 lines."
+      "end_line=\(end) is before start_line=\(start). Line reads require end_line >= start_line. end_line is an absolute, inclusive line number. To read N lines, use end_line=start_line+N-1, or omit end_line to read up to 200 lines."
     case .invalidLineRange:
       "Line ranges must be 1-based and inclusive. Use end_line=start_line-1 to insert."
     case .lineOutOfRange(let line, let count): "Line \(line) is outside this file's \(count) lines."

@@ -61,6 +61,24 @@ public enum AgentTask: String, CaseIterable, Codable, Sendable {
       """
     }
   }
+
+  /// Resolve the options used for inference, without rewriting saved agents.
+  /// Tool selection follows the caller's effort unless independently set;
+  /// compaction stays cheap unless its dedicated agent explicitly opts in.
+  public func inferenceOptions(configured: GenerationOptions?, caller: GenerationOptions)
+    -> GenerationOptions
+  {
+    var options = configured ?? caller
+    if self == .tool, options.reasoningEffort == nil {
+      options.reasoningEffort = caller.reasoningEffort
+      options.reasoningGuidance = options.reasoningGuidance ?? caller.reasoningGuidance
+    }
+    if self == .compact, configured?.reasoningEffort == nil {
+      options.reasoningEffort = ReasoningEffort.disabled.rawValue
+      if configured == nil { options.reasoningGuidance = nil }
+    }
+    return options
+  }
 }
 
 /// Installation-wide assignments. Nil means the agent running the conversation.
