@@ -51,7 +51,24 @@ extension AgentRuntime {
     if let configured = options.contextWindowTokens {
       return min(configured, learned ?? configured)
     }
-    return learned
+    let catalog = catalogContextWindows[provider]?[model]
+    return learned ?? catalog
+  }
+
+  /// Only discover automatically when an unknown window would otherwise cause
+  /// a reduction. Small tool loops need no catalog round trip. Failed/empty
+  /// discovery is remembered; an explicit model listing can refresh it later.
+  func discoverContextWindows(provider: ProviderID) async throws {
+    guard catalogContextWindows[provider] == nil else { return }
+    catalogContextWindows[provider] = [:]
+    do {
+      _ = try await availableModels(provider: provider)
+    } catch let error where error is CancellationError || error is RunDeadlineExceeded {
+      throw error
+    } catch {
+      await debugLog?.record("context.catalogUnavailable", provider: provider.rawValue,
+        value: "Using the unknown-window context budget.")
+    }
   }
 
   /// Account for UTF-8 text, tool schemas, message framing and reply space.

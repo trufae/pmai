@@ -23,6 +23,10 @@ public actor AgentRuntime {
   var pendingReconfigurations: [AgentPID: AgentRequest] = [:]
   /// Limits learned from rejected requests are scoped to the exact backend and model.
   var contextWindows: [ProviderID: [String: Int]] = [:]
+  /// Catalog limits are hints; explicit settings and backend rejections take precedence.
+  /// An empty entry also remembers an unsuccessful automatic discovery attempt.
+  var catalogContextWindows: [ProviderID: [String: Int]] = [:]
+  var providerRevisions: [ProviderID: UUID] = [:]
   var registeredMCPs: [String: RegisteredMCP] = [:]
   var mcpToolOwners: [String: String] = [:]
   var cachedToolDefinitions: [ToolDefinition]?

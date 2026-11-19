@@ -149,29 +149,68 @@ func adaptiveDefersCompactionDuringToolWork() async throws {
   #expect(requests.allSatisfy { $0.messages.contains(oldEvidence) })
 }
 
-@Test("Adaptive does not retry a failed summary for a small new result")
-func adaptiveWaitsForMoreEvidenceAfterFailedSummary() async throws {
-  let calls = ["small", "large"].map { id in
+@Test("Working context reuses a weak brief or failed attempt across small tool results",
+  arguments: [AgentContextMode.smart, .adaptive], [false, true])
+func smartContextWaitsForMoreEvidence(mode: AgentContextMode, failed: Bool) async throws {
+  let calls = ["first", "second", "third"].map { id in
     ToolCall(id: id, name: "read", arguments: .object(["file": .string(id)]))
   }
   let primary = SmartContextProvider(id: "primary", responses: calls.map { call in
     .init(message: AgentMessage(role: .assistant, content: [.toolCall(call)]))
   } + [.init(message: .assistant("done"))])
-  let compact = SmartContextProvider(id: "compact", responses: [])
+  let compact = SmartContextProvider(id: "compact", responses: failed ? [] : [
+    .init(message: .assistant("Saved earlier findings")),
+  ])
   let runtime = try await smartRuntime(primary, compact)
   try await runtime.register(tool: ClosureTool(definition: .init(
-    name: "read", description: "Read code", annotations: .init(approval: .automatic))) { args, _ in
-      ToolOutput(text: args.objectValue?["file"]?.stringValue == "large"
-        ? String(repeating: "source ", count: 5_000) : "small result")
+    // Schemas alone can exceed the unknown-window trigger. A new small result
+    // must not cause another summary that cannot reduce this fixed overhead.
+    name: "read", description: String(repeating: "schema ", count: 15_000),
+    annotations: .init(approval: .automatic))) { args, _ in
+      ToolOutput(text: "Exact result: " + (args.objectValue?["file"]?.stringValue ?? ""))
     })
-  let oldEvidence = AgentMessage.assistant(String(repeating: "evidence ", count: 12_000))
+  let oldEvidence = AgentMessage.assistant(String(repeating: "evidence ", count: 4_500))
+  // Fill the recent tail so a small next result moves only a small older
+  // exchange into the selection. Otherwise the unchanged-selection guard
+  // alone would conceal the repeated-summary regression.
+  let smallExchanges = (0..<2).flatMap { index -> [AgentMessage] in
+    let call = ToolCall(id: "earlier-\(index)", name: "read", arguments: .object([:]))
+    return [AgentMessage(role: .assistant, content: [.toolCall(call)]),
+      AgentMessage(role: .tool, content: [.toolResult(.init(callID: call.id,
+        text: String(repeating: "x", count: 122)))])]
+  }
+  let tailCharacters = mode == .smart ? 16_000 : 32_000
+  let original = [AgentMessage.user("Earlier task"), oldEvidence, .user("Continue")]
+    + smallExchanges + [.assistant(String(repeating: "r", count: tailCharacters - 256))]
   let result = try await runtime.run(AgentRequest(
     provider: "primary", model: "frontier",
-    messages: [.user("Earlier task"), oldEvidence, .user("Continue")], toolNames: ["read"],
-    retry: .none))
+    messages: original, toolNames: ["read"],
+    retry: .none, context: mode))
   #expect(result.response.text == "done")
-  #expect(result.toolCalls == 2)
+  #expect(result.toolCalls == 3)
   #expect(await compact.requests.count == 1)
+  let requests = await primary.requests
+  try #require(requests.count == 4)
+  for (index, id) in ["first", "second", "third"].enumerated() {
+    #expect(requests[index + 1].messages.flatMap(\.toolResults).contains { $0.text == "Exact result: " + id })
+  }
+  #expect(Array(result.transcript.prefix(original.count)) == original)
+}
+
+@Test("Unknown-window pressure discovers a larger catalog window before summarizing",
+  arguments: [AgentContextMode.smart, .adaptive])
+func smartContextDiscoversWindow(mode: AgentContextMode) async throws {
+  let primary = SmartContextProvider(id: "primary", responses: [.init(message: .assistant("done"))],
+    models: [.init(id: "frontier", contextWindow: 131_072)])
+  let compact = SmartContextProvider(id: "compact", responses: [])
+  let runtime = try await smartRuntime(primary, compact)
+  let messages = [AgentMessage.user("Earlier task"),
+    .assistant(String(repeating: "evidence ", count: 12_000)), .user("Continue")]
+  let result = try await runtime.run(AgentRequest(
+    provider: "primary", model: "frontier", messages: messages, retry: .none, context: mode))
+  #expect(result.response.text == "done")
+  #expect(await compact.requests.isEmpty)
+  #expect(await primary.requests.first?.messages.contains(messages[1]) == true)
 }
 
 @Test("Smart context still compacts the full growing transcript")
@@ -536,13 +575,17 @@ private func smartRuntime(_ primary: SmartContextProvider, _ compact: SmartConte
 private actor SmartContextProvider: ChatProvider {
   nonisolated let descriptor: ProviderDescriptor
   var responses: [ProviderResponse]
+  let models: [ModelDescriptor]
   private(set) var requests: [ProviderRequest] = []
 
-  init(id: ProviderID, responses: [ProviderResponse]) {
+  init(id: ProviderID, responses: [ProviderResponse], models: [ModelDescriptor] = []) {
     descriptor = ProviderDescriptor(
       id: id, displayName: id.rawValue, capabilities: [.nativeToolCalling])
     self.responses = responses
+    self.models = models
   }
+
+  func availableModels() async throws -> [ModelDescriptor] { models }
 
   func complete(_ request: ProviderRequest, emit: @escaping ProviderEventHandler) async throws
     -> ProviderResponse

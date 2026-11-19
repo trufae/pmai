@@ -30,8 +30,16 @@ model's reasoning effort and of the durable compaction threshold.
 
 ## Smart: preserve evidence until there is pressure
 
-Smart uses the model window configured with `/set ctx.window`, or a smaller
-window learned from a provider context-limit error. Before deciding to reduce,
+Smart uses the model window configured with `/set ctx.window`, a limit learned
+from a provider context-limit error, or the exact model's advertised catalog
+window. Explicit settings override catalog hints; a provider rejection can
+tighten an explicit setting. Model listings populate the runtime's window cache.
+If the window is still unknown when a request reaches the fallback trigger,
+the runtime attempts catalog discovery once per connection before reducing.
+Small requests do not wait for discovery; failed or empty automatic discovery
+is remembered until an explicit listing refreshes it. Replacing or removing a
+connection clears its limits, and an older in-flight catalog cannot repopulate
+the replacement's cache. Before deciding to reduce,
 the runtime assembles the request with its runtime instructions and tool
 schemas. It reserves reply space and a safety margin:
 
@@ -68,9 +76,11 @@ model view. Summarization cannot guarantee perfect retention of older facts.
 
 Adaptive starts at 90% of the available input budget, or 32,000 estimated
 tokens when the window is unknown. It can include older user messages in a
-brief. If the request remains above the trigger after a summary attempt, it
-waits for more eligible evidence before trying again. At the input budget or
-after a provider context rejection, it can reduce immediately.
+brief. Both smart and adaptive wait for `min(4000, trigger / 8)` new eligible
+tokens after an attempt before rebuilding a brief that remains over the soft
+trigger. This also applies after a failed or non-shrinking summary: one more
+small shell result must not repeatedly summarize the same history. At the
+input budget or after a provider context rejection, reduction can run immediately.
 
 Smart and adaptive use `/model -compact` and `prompts.smart` (`/edit smart`).
 Without a compact assignment they use the current model. Preparation calls
@@ -142,6 +152,15 @@ file ranges and paging. A non-shrinking or impossible reduction can still end
 with a context error; it must not silently discard unread evidence.
 
 ## Inspecting, resetting and editing context
+
+With `/set debug true`, each attempted smart/adaptive reduction writes a
+`context.reduction` record to the debug log (`/set debugfile` shows its path).
+It records the strategy, exact model, known window, input budget, trigger,
+estimated tokens before/after, fixed instruction/schema overhead, selected
+message count, and whether the summary was applied, unchanged, or failed.
+Unknown windows/budgets are null. These are estimates, not provider token
+measurements. If fixed overhead is already near the trigger, repeated summaries
+of conversation evidence cannot solve the underlying capacity problem.
 
 `/chat context` lists the active messages and estimates their size before runtime
 instructions and tool schemas. `/export --context json context.json` exports that

@@ -267,11 +267,15 @@ func smallContextOverflowRespectsKeep() async throws {
 }
 
 @Test("Working context scales reduction to the model window and preserves saved evidence",
-  arguments: [8_192, 131_072], [AgentContextMode.smart, .adaptive])
-func workingContextWindow(window: Int, mode: AgentContextMode) async throws {
-  let provider = SmallContextProvider(window: window)
+  arguments: [8_192, 131_072], [AgentContextMode.smart, .adaptive].flatMap { mode in
+    [false, true].map { (mode, $0) }
+  })
+func workingContextWindow(window: Int, fixture: (AgentContextMode, Bool)) async throws {
+  let (mode, fromCatalog) = fixture
+  let provider = SmallContextProvider(window: window, advertisesWindow: fromCatalog)
   let runtime = AgentRuntime()
   try await runtime.register(provider)
+  if fromCatalog { _ = try await runtime.availableModels(provider: "small") }
   let messages: [AgentMessage] = [
     .system("Keep this exact rule."), .user("Old task"),
     .assistant("KEEP-1 " + String(repeating: "evidence ", count: 4_000)),
@@ -279,7 +283,7 @@ func workingContextWindow(window: Int, mode: AgentContextMode) async throws {
   ]
   let result = try await runtime.run(AgentRequest(
     provider: "small", model: "fixture", messages: messages,
-    options: .init(contextWindowTokens: window), context: mode))
+    options: .init(contextWindowTokens: fromCatalog ? nil : window), context: mode))
   #expect(result.response.text == "done")
   #expect(Array(result.transcript.prefix(messages.count)) == messages)
   #expect(await provider.rejections == 0)
@@ -326,17 +330,23 @@ private actor SmallContextProvider: ChatProvider {
   let truncatesSummary: Bool
   let reasoningOnly: Bool
   let minimumSummaryOutput: Int
+  let advertisesWindow: Bool
   private(set) var requests: [ProviderRequest] = []
   private(set) var rejections = 0
 
   init(
     window: Int, truncatesSummary: Bool = false, reasoningOnly: Bool = false,
-    minimumSummaryOutput: Int = 0
+    minimumSummaryOutput: Int = 0, advertisesWindow: Bool = false
   ) {
     self.window = window
     self.truncatesSummary = truncatesSummary
     self.reasoningOnly = reasoningOnly
     self.minimumSummaryOutput = minimumSummaryOutput
+    self.advertisesWindow = advertisesWindow
+  }
+
+  func availableModels() async throws -> [ModelDescriptor] {
+    advertisesWindow ? [.init(id: "fixture", contextWindow: window)] : []
   }
 
   func complete(_ request: ProviderRequest, emit: @escaping ProviderEventHandler) async throws

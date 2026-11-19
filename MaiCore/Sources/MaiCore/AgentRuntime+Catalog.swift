@@ -66,6 +66,9 @@ extension AgentRuntime {
       throw AgentRuntimeError.providerAlreadyRegistered(descriptor.id)
     }
     providers[descriptor.id] = provider
+    providerRevisions[descriptor.id] = UUID()
+    contextWindows[descriptor.id] = nil
+    catalogContextWindows[descriptor.id] = nil
     cachedToolModes = nil
   }
 
@@ -74,6 +77,8 @@ extension AgentRuntime {
   public func unregister(providerID: ProviderID) -> Bool {
     cachedToolModes = nil
     contextWindows[providerID] = nil
+    catalogContextWindows[providerID] = nil
+    providerRevisions[providerID] = nil
     return providers.removeValue(forKey: providerID) != nil
   }
 
@@ -85,6 +90,9 @@ extension AgentRuntime {
     guard newID != id else { return }
     try register(provider)
     providers.removeValue(forKey: id)
+    contextWindows[id] = nil
+    catalogContextWindows[id] = nil
+    providerRevisions[id] = nil
     for key in Array(agents.keys) where agents[key]?.provider == id {
       agents[key]?.provider = newID
     }
@@ -198,9 +206,18 @@ extension AgentRuntime {
     guard let provider = providers[id] else {
       throw AgentRuntimeError.providerNotRegistered(id)
     }
-    return try await provider.availableModels().sorted {
+    let revision = providerRevisions[id]
+    let models = try await provider.availableModels().sorted {
       $0.id.localizedStandardCompare($1.id) == .orderedAscending
     }
+    // Discovery can finish after the connection was replaced during this await.
+    if providerRevisions[id] == revision {
+      catalogContextWindows[id] = Dictionary(
+        models.compactMap { model in
+          model.contextWindow.flatMap { $0 > 0 ? (model.id, $0) : nil }
+        }, uniquingKeysWith: min)
+    }
+    return models
   }
 
   public func availableTools() -> [ToolDefinition] {

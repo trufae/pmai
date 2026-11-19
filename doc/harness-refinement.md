@@ -53,6 +53,64 @@ Use `--repeat 1` for a small wiring check. Such a report is provisional and
 retains the baseline. Dry-run only reads the spec and prompts: it creates no
 output directory and does not resolve a binary or contact a provider.
 
+## Investigating repeated context preparation
+
+A November 2026 logo-editing debug export exposed a useful failure case: the
+primary agent explicitly used `context: smart`, had durable compaction disabled,
+and had no configured context window. Its exported catalog contained 53 tool
+definitions (44,339 bytes of compact JSON), while recorded reasoning contained
+41,552 UTF-8 bytes, including one 28,066-byte message. No child agents were
+recorded. Those are stored/exported sizes, not exact wire sizes or token counts.
+The export does not include disposable briefs or enough model-call telemetry
+to establish how often preparation actually ran.
+
+Two harness problems explained how excessive reductions could occur. The
+runtime discarded window metadata returned by model discovery and fell back
+to a 16k trigger for smart mode. Tool schemas and instructions could consume
+most of that trigger before conversation evidence was counted. Unlike adaptive,
+smart also had no minimum growth between attempts: a failed or weak brief left
+the request over the trigger, and each newly eligible small tool exchange made
+another attempt possible. Summaries cannot shrink fixed schemas/instructions.
+
+The runtime now retains catalog windows and tries discovery once when an
+unknown window first causes reduction pressure. Smart and adaptive both wait
+for meaningful new eligible evidence between attempts, except at a known input
+budget or after rejection. Context debug records expose the trigger, fixed
+overhead, before/after estimates and outcome. Existing saved `smart` settings
+remain explicit; `/reset ctx.strategy` selects the adaptive default.
+
+Comparison with upstream implementations, checked November 2026:
+
+| Technique | Upstream evidence | Application to pmai |
+| --- | --- | --- |
+| Model-specific limits and reply headroom | [Codex model metadata](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs) derives automatic compaction from 90% of the resolved window, bounded by configuration. | Honor exact provider/model metadata and explicit settings. Reserve output space; learn smaller limits from actual rejections. Raising a local setting cannot expand a server's window. |
+| Retain recent evidence and avoid needless prefix rewrites | [OpenCode compaction](https://github.com/anomalyco/opencode/blob/dev/packages/core/src/session/compaction.ts) reserves window space, keeps a recent tail, and holds background summaries until needed. | Keep fresh results verbatim and reuse a brief. The new minimum-growth rule prevents repeated attempts after small shell calls. Background preparation remains a separate possible optimization. |
+| Separate worker contexts | [Codex spawning](https://github.com/openai/codex/blob/main/codex-rs/core/src/tools/handlers/multi_agents_spec.rs) supports full-history or empty-history children; [OpenCode agents](https://opencode.ai/docs/agents) provides focused subagents. | Existing `agent_start` workers receive a focused brief and return their answer. Pass paths/URLs/source IDs and a precise question; keep raw exploration in the worker. |
+
+For a logo change, a parent can edit the SVG directly and delegate a substantial
+independent asset/pipeline investigation if one is needed. A worker per shell
+command would add model calls and lose useful continuity. The current
+`agent_start` description already makes this distinction, so no automatic
+per-command delegation is needed. Copying a full growing parent history to
+every child would defeat context isolation.
+
+The export also had the tool proxy disabled. Restricting tools to the current
+task, or enabling `/set tool.proxy true`, can reduce schema overhead. The proxy
+loads exact schemas on demand, so it trades some extra discovery calls for a
+smaller initial catalog. Large command output belongs in files or paged reads;
+the existing run tools expose output files and output budgets. Reasoning is a
+separate contributor: some tool-calling providers need it replayed, so removing
+it blindly can break protocol compatibility.
+
+Next candidates should be measured independently: provider-count anchors plus
+estimated new text, provider-aware wire-size accounting, safe brief reuse
+across runs, and background summaries. Each needs task-success and evidence
+retention checks alongside preparation-call counts, input/output usage and
+cache reuse. An unknown model should not be assigned a huge guessed window.
+Use the opt-in refinement workflow for model comparisons; deterministic local
+regressions cover summary reuse, advertised windows, fresh results and overflow
+recovery without making live providers a CI dependency.
+
 ## Describe a candidate
 
 Write a JSON spec, for example:

@@ -208,35 +208,61 @@ extension AgentRuntime {
     if state.request.context == .smart || state.request.context == .adaptive,
       !managesToolLoop, !deciding
     {
+      let adaptive = state.request.context == .adaptive
+      let fallback = adaptive ? AgentSmartContext.adaptiveThresholdTokens : AgentSmartContext.thresholdTokens
+      if contextWindow(provider: inference.provider, model: inference.model, options: inference.options) == nil,
+        Self.contextTokens(providerRequest) >= fallback
+      {
+        try await discoverContextWindows(provider: inference.provider)
+      }
       let window = contextWindow(
         provider: inference.provider, model: inference.model, options: inference.options)
-      let adaptive = state.request.context == .adaptive
       let budget = window.map { Self.inputTokenBudget(window: $0, options: inference.options) }
       let threshold = max(1, min(state.adaptiveThreshold ?? Int.max, budget.map {
         adaptive ? $0 - $0 / 10 : $0 * 3 / 4
-      } ?? (adaptive ? AgentSmartContext.adaptiveThresholdTokens : AgentSmartContext.thresholdTokens)))
+      } ?? fallback))
       var context = promptContext
       context.instructions = providerRequest.messages.filter(AgentPromptContext.isInstruction)
       if let evidence = state.smartContext.pending(
         in: context, activeTaskID: state.activeTaskID,
         thresholdTokens: threshold, recentTokens: min(8_000, threshold / 4),
         request: providerRequest, preserveUserMessages: !adaptive,
-        minimumNewEvidenceTokens: adaptive ? min(4_000, threshold / 8) : 0,
+        minimumNewEvidenceTokens: min(4_000, threshold / 8),
         requiredAtTokens: state.rejectedContextTokens == nil ? budget : threshold)
       {
         await state.emit(.compactionStarted(state.context, estimatedTokens: evidence.inputTokens))
         await supervisor.note(state.pid, activity: "preparing context")
+        var outcome = "failed"
         do {
           let template = smartContextTemplate
           let brief = try await compactText(
             source: AgentSmartContext.transcript(for: evidence.messages, in: context),
             render: { AgentSmartContextPrompt.render(transcript: $0, template: template) },
             state: &state, outputLimit: min(8_000, max(2_048, threshold / 8)))
-          state.smartContext.store(brief, for: evidence.messages)
+          outcome = state.smartContext.store(brief, for: evidence.messages) ? "applied" : "unchanged"
         } catch let error where error is CancellationError || error is RunDeadlineExceeded {
           throw error
         } catch {
           await state.emit(.compactionFailed(state.context, error.localizedDescription))
+        }
+        if let debugLog {
+          var reduced = providerRequest
+          reduced.messages = state.smartContext.messages(from: context)
+          var fixed = providerRequest
+          fixed.messages = context.instructions
+          await debugLog.record("context.reduction", context: state.context,
+            provider: inference.provider.rawValue, value: JSONValue.object([
+              "strategy": .string(state.request.context.rawValue),
+              "model": .string(inference.model),
+              "window": window.map(JSONValue.integer) ?? .null,
+              "inputBudget": budget.map(JSONValue.integer) ?? .null,
+              "threshold": .integer(threshold),
+              "beforeTokens": .integer(evidence.inputTokens),
+              "afterTokens": .integer(Self.contextTokens(reduced)),
+              "fixedTokens": .integer(Self.contextTokens(fixed)),
+              "selectedMessages": .integer(evidence.messages.count),
+              "outcome": .string(outcome),
+            ]))
         }
       }
       providerRequest.messages = state.smartContext.messages(from: context)

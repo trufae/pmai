@@ -46,3 +46,29 @@ func modelCatalogFalseCapabilities() throws {
   #expect(model.inputModalities == ["text"])
   #expect(model.features == [.tools, .reasoning])
 }
+
+@Test("Catalog windows respect overrides and replaced connections")
+func modelCatalogRuntimeWindows() async throws {
+  let runtime = AgentRuntime()
+  try await runtime.register(ContextCatalogProvider(window: 131_072))
+  _ = try await runtime.availableModels(provider: "catalog")
+  #expect(await runtime.contextWindow(provider: "catalog", model: "model", options: .init()) == 131_072)
+  #expect(await runtime.contextWindow(provider: "catalog", model: "other", options: .init()) == nil)
+  #expect(await runtime.contextWindow(provider: "catalog", model: "model",
+    options: .init(contextWindowTokens: 32_768)) == 32_768)
+  try await runtime.register(ContextCatalogProvider(window: 8_192), replacingExisting: true)
+  #expect(await runtime.contextWindow(provider: "catalog", model: "model", options: .init()) == nil)
+  _ = try await runtime.availableModels(provider: "catalog")
+  #expect(await runtime.contextWindow(provider: "catalog", model: "model", options: .init()) == 8_192)
+}
+
+private struct ContextCatalogProvider: ChatProvider {
+  let window: Int
+  let descriptor = ProviderDescriptor(id: "catalog", displayName: "Context catalog fixture")
+  func availableModels() async throws -> [ModelDescriptor] {
+    [.init(id: "model", contextWindow: window)]
+  }
+  func complete(_ request: ProviderRequest, emit: @escaping ProviderEventHandler) async throws -> ProviderResponse {
+    .init(message: .assistant("done"))
+  }
+}

@@ -149,15 +149,17 @@ struct AgentSmartContext {
     return (evidence, tokens)
   }
 
-  mutating func store(_ brief: String, for evidence: [AgentMessage]) {
+  @discardableResult
+  mutating func store(_ brief: String, for evidence: [AgentMessage]) -> Bool {
     let brief = brief.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !brief.isEmpty else { return }
+    guard !brief.isEmpty else { return false }
     let attachments = evidence.flatMap { $0.content.flatMap(AgentSmartContextPrompt.binaryAttachments) }
     let replacement = AgentMessage(role: .user, content: [.text("Earlier task context:\n" + brief)] + attachments)
     guard AgentTranscriptEditor.characterCount(of: replacement)
-      < AgentTranscriptEditor.characterCount(of: evidence) else { return }
+      < AgentTranscriptEditor.characterCount(of: evidence) else { return false }
     summarized = evidence
     summary = replacement
+    return true
   }
 
   func messages(from context: AgentPromptContext) -> [AgentMessage] {
