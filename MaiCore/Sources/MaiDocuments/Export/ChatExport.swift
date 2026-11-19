@@ -70,6 +70,7 @@ public struct ChatExportDebug: Codable, Equatable, Sendable {
   /// Child agents of this chat's runs, parents before children, each with
   /// its transcript.
   public var subagents: [ChatExportSubagent]
+  public var diagnostics: AgentDiagnosticSnapshot?
 
   public init(
     provider: String,
@@ -77,7 +78,8 @@ public struct ChatExportDebug: Codable, Equatable, Sendable {
     toolDefinitions: [ToolDefinition] = [],
     settings: [String: String] = [:],
     subagents: [ChatExportSubagent] = [],
-    configuration: JSONValue? = nil
+    configuration: JSONValue? = nil,
+    diagnostics: AgentDiagnosticSnapshot? = nil
   ) {
     self.provider = provider
     self.providerDisplayName = providerDisplayName
@@ -85,6 +87,7 @@ public struct ChatExportDebug: Codable, Equatable, Sendable {
     self.settings = settings
     self.configuration = configuration.map(DebugDiagnostics.sanitize)
     self.subagents = subagents
+    self.diagnostics = diagnostics
   }
 
   /// Exports written before subagents were recorded still decode.
@@ -97,6 +100,7 @@ public struct ChatExportDebug: Codable, Equatable, Sendable {
     settings = try container.decodeIfPresent([String: String].self, forKey: .settings) ?? [:]
     configuration = try container.decodeIfPresent(JSONValue.self, forKey: .configuration)
     subagents = try container.decodeIfPresent([ChatExportSubagent].self, forKey: .subagents) ?? []
+    diagnostics = try container.decodeIfPresent(AgentDiagnosticSnapshot.self, forKey: .diagnostics)
   }
 }
 
@@ -248,8 +252,10 @@ public enum ChatExport {
       let encoder = JSONEncoder()
       encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
       encoder.dateEncodingStrategy = .iso8601
+      var details = debug ?? ChatExportDebug(provider: chat.primaryAgent.provider.rawValue)
+      details.diagnostics = AgentDiagnosticSnapshot(records: chat.diagnostics)
       let envelope = ChatExportEnvelope(
-        chat: chat, generator: generator, debug: format == .debug ? debug : nil)
+        chat: chat, generator: generator, debug: format == .debug ? details : nil)
       return try encoder.encode(envelope)
     case .html:
       return HTMLExport.data(for: exportDocument())

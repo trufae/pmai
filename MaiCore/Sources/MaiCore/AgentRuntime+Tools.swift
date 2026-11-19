@@ -96,7 +96,7 @@ extension AgentRuntime {
           additionalInstructions: taskAgents.approval.flatMap { agents[$0]?.instructions } ?? "")
         let call = try await complete(
           providerRequest, with: provider, retry: inference.retry,
-          budget: budget, context: approval.run, pid: pid, emit: emit
+          budget: budget, context: approval.run, pid: pid, purpose: "approval", emit: emit
         ) { _ in }
         let usage = call.usage(for: providerRequest)
         await budget.recordApproval(usage)

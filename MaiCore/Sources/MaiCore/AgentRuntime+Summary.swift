@@ -44,8 +44,34 @@ extension AgentRuntime {
   /// removed from the durable transcript until every call has succeeded.
   func compactText(
     source: String, render: @escaping @Sendable (String) -> String,
-    state: inout RunState, inputLimit: Int? = nil, depth: Int = 0, outputLimit: Int? = nil
+    state: inout RunState, inputLimit: Int? = nil, depth: Int = 0, outputLimit: Int? = nil,
+    purpose: String = "manual-summary", operationID: UUID? = nil
   ) async throws -> String {
+    if AgentDiagnosticScope.current == nil {
+      return try await AgentDiagnosticScope.$current.withValue(
+        .init(operationID: operationID ?? UUID(), purpose: purpose)
+      ) {
+        noteDiagnostic("compaction.started", context: state.context,
+          sessionID: state.request.sessionID, value: .object([
+            "sourceBytes": .integer(source.utf8.count),
+            "activeTaskID": state.activeTaskID.map(JSONValue.string) ?? .null,
+          ]))
+        do {
+          let text = try await compactText(source: source, render: render, state: &state,
+            inputLimit: inputLimit, depth: depth, outputLimit: outputLimit)
+          noteDiagnostic("compaction.completed", context: state.context,
+            sessionID: state.request.sessionID, value: .object([
+              "summaryCharacters": .integer(text.count),
+            ]))
+          return text
+        } catch {
+          noteDiagnostic(error is CancellationError ? "compaction.cancelled" : "compaction.failed",
+            context: state.context, sessionID: state.request.sessionID,
+            value: .object(["error": .string(error.localizedDescription)]))
+          throw error
+        }
+      }
+    }
     try Task.checkCancellation()
     guard depth < 12 else { throw SummaryError.cannotReduce }
     if let interruption = await state.budget.exhausted() {
@@ -80,6 +106,13 @@ extension AgentRuntime {
       model: inference.model, messages: messages, tools: [], toolChoice: .none,
       responseFormat: .text, options: inference.options, stream: false,
       sessionID: state.request.sessionID)
+    noteDiagnostic("compaction.prepared", context: state.context, sessionID: state.request.sessionID,
+      value: .object([
+        "depth": .integer(depth), "sourceBytes": .integer(source.utf8.count),
+        "inputBudget": .integer(budget), "window": .integer(window),
+        "outputLimit": .integer(inference.options.maxOutputTokens ?? 0),
+        "estimatedInputTokens": .integer(Self.contextTokens(providerRequest)),
+      ]))
     if Self.contextTokens(providerRequest) <= budget {
       do {
         let call = try await complete(
@@ -95,6 +128,9 @@ extension AgentRuntime {
           .trimmingCharacters(in: .whitespacesAndNewlines)
         let allowance = inference.options.maxOutputTokens ?? 2_048
         if (call.response.stopReason == .length || text.isEmpty), allowance < maximumOutput {
+          noteDiagnostic("compaction.outputRetry", context: state.context, sessionID: state.request.sessionID,
+            value: .object(["reason": .string(text.isEmpty ? "empty-summary" : "output-limit"),
+              "nextOutputLimit": .integer(min(maximumOutput, allowance * 2))]))
           // This is a changed request, not a blind transport retry. Recompute
           // the input budget too: more reply space may require smaller chunks.
           return try await compactText(
@@ -105,6 +141,8 @@ extension AgentRuntime {
         guard !text.isEmpty else { throw SummaryError.empty }
         return text
       } catch is ProviderContextLimitError {
+        noteDiagnostic("compaction.overflowRetry", context: state.context, sessionID: state.request.sessionID,
+          value: .object(["depth": .integer(depth)]))
         // A conservative character estimate still cannot know every tokenizer.
         // Tighten the next request instead of resending the rejected payload.
         return try await compactText(
@@ -131,6 +169,9 @@ extension AgentRuntime {
     guard chunkBytes >= 256 else { throw SummaryError.instructionsTooLarge }
     let chunks = Self.summaryChunks(source, maxBytes: chunkBytes)
     guard chunks.count > 1 else { throw SummaryError.cannotReduce }
+    noteDiagnostic("compaction.split", context: state.context, sessionID: state.request.sessionID,
+      value: .object(["depth": .integer(depth), "chunks": .integer(chunks.count),
+        "chunkBytes": .integer(chunkBytes)]))
     var partials: [String] = []
     for chunk in chunks {
       partials.append(

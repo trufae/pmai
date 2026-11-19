@@ -109,6 +109,7 @@ extension MaiCLI {
         // A fresh session for the same chat: a backend that meters by session
         // sees a new one from the next message on, and nothing else changes.
         session.commands = runtime.commandHistory.records(sessionID: session.sessionID, saved: session.commands)
+        session.diagnostics = runtime.diagnosticHistory.records(sessionID: session.sessionID, saved: session.diagnostics)
         session.sessionID = ChatSession.newID()
         session.touch()
         workspace.upsert(session.chat, selecting: true)

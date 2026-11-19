@@ -61,8 +61,10 @@ and had no configured context window. Its exported catalog contained 53 tool
 definitions (44,339 bytes of compact JSON), while recorded reasoning contained
 41,552 UTF-8 bytes, including one 28,066-byte message. No child agents were
 recorded. Those are stored/exported sizes, not exact wire sizes or token counts.
-The export does not include disposable briefs or enough model-call telemetry
-to establish how often preparation actually ran.
+That older export did not include disposable briefs or enough model-call
+telemetry to establish how often preparation actually ran. New debug exports
+include the saved runtime timeline described in [Context strategies](context.md),
+including all recorded summary attempts, their output and reduction outcomes.
 
 Two harness problems explained how excessive reductions could occur. The
 runtime discarded window metadata returned by model discovery and fell back

@@ -19,7 +19,8 @@ class Provider(JSONProvider):
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
         requests.append(body)
-        answer = 'WORKING BRIEF' if body['model'] == 'tiny' else 'MAIN ANSWER'
+        answer = ('WORKING BRIEF' if body['model'] == 'tiny'
+                  else 'MAIN ANSWER: reviewed the parser and preserved its public API.')
         self.respond({'choices': [{'message': {'role': 'assistant', 'content': answer},
                                    'finish_reason': 'stop'}]})
 
@@ -93,6 +94,21 @@ def main():
             assert 'ORIGINAL RULES' not in str(preparation['messages'])
             assert 'WORKING BRIEF' in str(requests[-1]['messages'])
             assert 'Now review the parser' in str(requests[-1]['messages'])
+            # Auxiliary calls are retained with debug logging off, including
+            # after reopening the saved chat in another process.
+            run(['/export debug trace.json'], resume=True)
+            trace = json.loads((root / 'trace.json').read_text())['debug']['diagnostics']
+            assert trace['counts']['model.request'] == len(requests), trace
+            assert trace['counts']['compactionAttempts'] == 1, trace
+            assert trace['counts']['compactionOperations'] == 1, trace
+            summary = next(r for r in trace['records']
+                           if r['kind'] == 'model.response' and r.get('purpose') == 'working-context')
+            assert summary['value']['summary'] == 'WORKING BRIEF', summary
+            assert summary['value']['usageEstimated'] is True, summary
+            assert any(r['kind'] == 'context.reduction' and r['operationID'] == summary['operationID']
+                       and r['value']['outcome'] == 'applied'
+                       for r in trace['records']), trace
+            assert 'earlier unrecorded calls' in trace['coverage'], trace
             output = run(['/set ctx.strategy=cache', '/set ctx.strategy'], resume=True)
             assert 'ctx.strategy = cache' in output, output
             assert json.loads(config.read_text())['agents'][0]['context'] == 'cache'

@@ -472,6 +472,7 @@ extension MaiCLI {
           agentID: session.profile.agentID, task: session.title)
         await runtime.restoreConversations(session.subagents, under: oneShotProcess!, sessionID: session.sessionID)
         runtime.commandHistory.restore(session.commands)
+        runtime.diagnosticHistory.restore(session.diagnostics)
         pmaiBridge.sync(
           session: session,
           configuration: configuration,
@@ -511,6 +512,7 @@ extension MaiCLI {
           }
         }
         session.commands = runtime.commandHistory.records(sessionID: session.sessionID, saved: session.commands)
+        session.diagnostics = runtime.diagnosticHistory.records(sessionID: session.sessionID, saved: session.diagnostics)
         session.touch()
         workspace.upsert(session.chat, selecting: true)
         try store.commit(&workspace)

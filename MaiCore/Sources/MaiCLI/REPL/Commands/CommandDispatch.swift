@@ -185,6 +185,7 @@ extension MaiCLI {
         to: .standardError)
     case "/ps":
       runtime.commandHistory.restore(session.commands)
+      runtime.diagnosticHistory.restore(session.diagnostics)
       await handlePSCommand(
         argument, session: session, runtime: runtime, chatProcess: chatProcess, terminal: terminal)
     case "/exit", "/quit":

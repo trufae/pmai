@@ -38,6 +38,7 @@ extension MaiCLI {
     var chat = session.chat
     if contextOnly { chat.messages = AgentConversationContext.messages(from: chat.messages) }
     chat.commands = runtime.commandHistory.records(sessionID: session.sessionID, saved: session.commands)
+    chat.diagnostics = runtime.diagnosticHistory.records(sessionID: session.sessionID, saved: session.diagnostics)
     // The agents of this chat's runs as they stand: what the process table
     // holds now, live or finished, over what was saved with the chat.
     if chat.hasConversation, let process {
@@ -261,6 +262,7 @@ extension MaiCLI {
           chat.id = UUID()
           chat.sessionID = ChatSession.newID()
           chat.commands = chat.commands.map { $0.copied(to: chat.sessionID) }
+          chat.diagnostics = chat.diagnostics.map { $0.copied(to: chat.sessionID) }
         }
         while !existingIDs.insert(chat.id).inserted { chat.id = UUID() }
         workspace.upsert(chat)

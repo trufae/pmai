@@ -21,6 +21,29 @@ func exportsPreserveCompactedHistory() throws {
   #expect(AgentConversationContext.messages(from: AgentConversationContext.rebuilt(restored.messages)) == original)
 }
 
+@Test("Debug exports preserve diagnostic calls, summaries and coverage across saved chats")
+func exportsRuntimeDiagnostics() throws {
+  var chat = sampleChat()
+  var record = AgentDiagnosticRecord(sessionID: chat.sessionID,
+    context: .init(runID: UUID(), parentRunID: nil, agentID: "hello", depth: 0),
+    kind: "model.response", purpose: "working-context", callID: UUID(), operationID: UUID(),
+    value: .object(["summary": .string("Keep the API stable."), "apiKey": .string("do-not-export")]))
+  record.timestamp = Date(timeIntervalSince1970: 1_700_000_000)
+  chat.diagnostics = [record]
+  let saved = try JSONDecoder().decode(AgentChat.self, from: JSONEncoder().encode(chat))
+  #expect(saved.diagnostics == [record])
+  let data = try ChatExport.data(for: saved, format: .debug)
+  let decoder = JSONDecoder()
+  decoder.dateDecodingStrategy = .iso8601
+  let exported = try decoder.decode(ChatExportEnvelope.self, from: data)
+  #expect(exported.debug?.diagnostics?.records == [record])
+  #expect(exported.debug?.diagnostics?.counts["model.response"] == 1)
+  #expect(exported.debug?.diagnostics?.coverage.contains("unavailable") == true)
+  #expect(!String(decoding: data, as: UTF8.self).contains("do-not-export"))
+  let legacy = try decoder.decode(ChatExportDebug.self, from: Data(#"{"provider":"hello"}"#.utf8))
+  #expect(legacy.diagnostics == nil)
+}
+
 @Test("The block parser covers headings, paragraphs, quotes, lists, fences, tables, rules and footnotes")
 func blockParserCoversCommonBlocks() {
   let text = """

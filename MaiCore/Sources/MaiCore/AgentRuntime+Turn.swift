@@ -56,7 +56,7 @@ extension AgentRuntime {
           let summaries = try await compactText(
             source: AgentToolResultContext.transcript(for: candidates),
             render: { AgentToolResultContext.prompt(outputs: $0, in: transcript) },
-            state: &state)
+            state: &state, purpose: "tool-results")
           state.toolContext.store(summaries, for: candidates)
         } catch let error where error is CancellationError || error is RunDeadlineExceeded {
           throw error
@@ -223,13 +223,26 @@ extension AgentRuntime {
       } ?? fallback))
       var context = promptContext
       context.instructions = providerRequest.messages.filter(AgentPromptContext.isInstruction)
-      if let evidence = state.smartContext.pending(
+      let reductionID = UUID()
+      let evidence = state.smartContext.pending(
         in: context, activeTaskID: state.activeTaskID,
         thresholdTokens: threshold, recentTokens: min(8_000, threshold / 4),
         request: providerRequest, preserveUserMessages: !adaptive,
         minimumNewEvidenceTokens: min(4_000, threshold / 8),
         requiredAtTokens: state.rejectedContextTokens == nil ? budget : threshold)
-      {
+      var projected = providerRequest
+      projected.messages = state.smartContext.messages(from: context)
+      noteDiagnostic("context.decision", context: state.context, sessionID: state.request.sessionID,
+        purpose: "working-context", operationID: reductionID, value: .object([
+          "strategy": .string(state.request.context.rawValue),
+          "reason": .string(state.smartContext.decisionReason),
+          "estimatedInputTokens": .integer(Self.contextTokens(projected)),
+          "window": window.map(JSONValue.integer) ?? .null,
+          "inputBudget": budget.map(JSONValue.integer) ?? .null,
+          "threshold": .integer(threshold),
+          "selectedMessageIDs": .array((evidence?.messages ?? []).map { .string($0.id) }),
+        ]))
+      if let evidence {
         await state.emit(.compactionStarted(state.context, estimatedTokens: evidence.inputTokens))
         await supervisor.note(state.pid, activity: "preparing context")
         var outcome = "failed"
@@ -238,20 +251,20 @@ extension AgentRuntime {
           let brief = try await compactText(
             source: AgentSmartContext.transcript(for: evidence.messages, in: context),
             render: { AgentSmartContextPrompt.render(transcript: $0, template: template) },
-            state: &state, outputLimit: min(8_000, max(2_048, threshold / 8)))
+            state: &state, outputLimit: min(8_000, max(2_048, threshold / 8)),
+            purpose: "working-context", operationID: reductionID)
           outcome = state.smartContext.store(brief, for: evidence.messages) ? "applied" : "unchanged"
         } catch let error where error is CancellationError || error is RunDeadlineExceeded {
           throw error
         } catch {
           await state.emit(.compactionFailed(state.context, error.localizedDescription))
         }
-        if let debugLog {
+        do {
           var reduced = providerRequest
           reduced.messages = state.smartContext.messages(from: context)
           var fixed = providerRequest
           fixed.messages = context.instructions
-          await debugLog.record("context.reduction", context: state.context,
-            provider: inference.provider.rawValue, value: JSONValue.object([
+          let details = JSONValue.object([
               "strategy": .string(state.request.context.rawValue),
               "model": .string(inference.model),
               "window": window.map(JSONValue.integer) ?? .null,
@@ -261,8 +274,13 @@ extension AgentRuntime {
               "afterTokens": .integer(Self.contextTokens(reduced)),
               "fixedTokens": .integer(Self.contextTokens(fixed)),
               "selectedMessages": .integer(evidence.messages.count),
+              "selectedMessageIDs": .array(evidence.messages.map { .string($0.id) }),
               "outcome": .string(outcome),
-            ]))
+            ])
+          noteDiagnostic("context.reduction", context: state.context, sessionID: state.request.sessionID,
+            purpose: "working-context", operationID: reductionID, value: details)
+          await debugLog?.record("context.reduction", context: state.context,
+            provider: inference.provider.rawValue, value: details)
         }
       }
       providerRequest.messages = state.smartContext.messages(from: context)

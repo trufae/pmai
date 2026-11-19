@@ -77,6 +77,7 @@ public actor AgentRuntime {
   /// follow its events for notifications, and stop subtrees through it.
   public nonisolated let supervisor: AgentSupervisor
   public nonisolated let commandHistory = AgentCommandHistory()
+  public nonisolated let diagnosticHistory = AgentDiagnosticHistory()
 
   public init(
     approvalHandler: any ApprovalHandler = DenyInteractiveApprovals(),
@@ -142,14 +143,16 @@ public actor AgentRuntime {
         task: task,
         depth: 0)
     }
+    let info = await supervisor.info(pid)
+    let parentRunID: UUID?
+    if let parent = info?.parent {
+      parentRunID = await supervisor.info(parent)?.runID
+    } else {
+      parentRunID = nil
+    }
+    let diagnosticContext = AgentEventContext(runID: runID, parentRunID: parentRunID,
+      agentID: request.agentID, depth: info?.depth ?? 0, pid: pid)
     do {
-      let info = await supervisor.info(pid)
-      let parentRunID: UUID?
-      if let parent = info?.parent {
-        parentRunID = await supervisor.info(parent)?.runID
-      } else {
-        parentRunID = nil
-      }
       let redactor = contentRedactor(sessionID: request.sessionID ?? "process:\(pid.rawValue)")
       let result = try await ContentRedactor.$current.withValue(redactor) {
         try await runInternal(
@@ -165,11 +168,14 @@ public actor AgentRuntime {
       await supervisor.finish(pid, result: result, announce: deliverToParent, deliver: deliverToParent)
       return result
     } catch is CancellationError {
+      noteDiagnostic("run.cancelled", context: diagnosticContext, sessionID: request.sessionID)
       await supervisor.fail(
         pid, state: .cancelled, message: "Cancelled", announce: deliverToParent, deliver: deliverToParent)
       await debugLog?.record("run.cancelled", value: runID)
       throw CancellationError()
     } catch {
+      noteDiagnostic("run.error", context: diagnosticContext, sessionID: request.sessionID,
+        value: .object(["error": .string(error.localizedDescription)]))
       await supervisor.fail(
         pid, state: .failed, message: error.localizedDescription,
         announce: deliverToParent, deliver: deliverToParent)

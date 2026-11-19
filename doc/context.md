@@ -153,20 +153,52 @@ with a context error; it must not silently discard unread evidence.
 
 ## Inspecting, resetting and editing context
 
-With `/set debug true`, each attempted smart/adaptive reduction writes a
-`context.reduction` record to the debug log (`/set debugfile` shows its path).
-It records the strategy, exact model, known window, input budget, trigger,
-estimated tokens before/after, fixed instruction/schema overhead, selected
-message count, and whether the summary was applied, unchanged, or failed.
-Unknown windows/budgets are null. These are estimates, not provider token
-measurements. If fixed overhead is already near the trigger, repeated summaries
-of conversation evidence cannot solve the underlying capacity problem.
+Pmai saves a diagnostic timeline with the chat even when `/set debug` is off.
+`/export debug trace.json` includes it in `debug.diagnostics`, with a version,
+coverage description, event counts, and chronological records. The records
+survive restarting pmai, changing provider sessions, and reopening the chat.
+Older chats have no retroactive call history; empty diagnostics cannot establish
+that no compaction occurred before recording was available.
+
+The timeline includes:
+
+- Every runtime provider attempt, including conversation, tool-selection,
+  approval, manual summary, working-context, tool-result, and durable compaction
+  calls. Retries share a call ID; chunks and consolidation calls share a summary
+  operation ID. Run/parent IDs identify child work.
+- Request sizes, schema and reasoning sizes, generation options, output limits,
+  provider/model, transport events, elapsed time, reported or estimated usage,
+  stop reasons, errors, cancellations, and retries.
+- Summary output, chunk splits, output-limit recovery, provider overflow
+  recovery, and whether each summary operation completed or failed.
+- Smart/adaptive decisions to retain or reduce context, including the reason,
+  window, budget, trigger, selected message IDs, before/after estimates, fixed
+  instruction/schema overhead, and applied/unchanged/failed outcomes.
+- Run and tool lifecycle metadata and transcript edits, alongside the chat's
+  original messages, command records, and saved child-agent transcripts.
+
+`compactionAttempts` counts actual provider attempts for summary operations;
+`compactionOperations` counts the outer operations. One operation can make
+several calls because it splits input or recovers from truncation. These counts
+cover recorded work, not unavailable older history or a remote agent provider's
+internal calls.
+
+Routine diagnostics record request metadata rather than copying full prompts
+and tool output into every event. Summary text is retained so a disposable brief
+can be inspected after the run. `/set debug true` additionally writes the verbose
+request/response log (`/set debugfile` shows its path). Configuration-shaped
+diagnostic values are sanitized; chat content and summary text remain evidence.
+Unknown windows/budgets are null. Request sizes and context counts remain
+estimates unless explicitly identified as provider-reported usage. If fixed
+overhead is already near the trigger, repeated summaries cannot solve the
+underlying capacity problem.
 
 `/chat context` lists the active messages and estimates their size before runtime
 instructions and tool schemas. `/export --context json context.json` exports that
 working transcript; `/export json history.json` keeps originals and alternatives.
-Smart/tool briefs are disposable per-run projections and are not included in
-this saved working-context export.
+Smart/tool briefs are disposable per-run projections and are not inserted into
+this saved working-context transcript. Their calls and output are available in
+the debug diagnostic timeline.
 
 `/chat context reset` excludes conversation messages while keeping configured
 instructions and saved history. `/chat context rebuild` restores original evidence

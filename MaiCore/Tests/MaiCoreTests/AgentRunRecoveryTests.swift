@@ -275,7 +275,7 @@ func retryRepeatsFailedCalls() async throws {
       provider: "recovery",
       model: "fixture",
       messages: [.user("flaky")],
-      retry: AgentRetryPolicy(attempts: 2, delaySeconds: 0))
+      retry: AgentRetryPolicy(attempts: 2, delaySeconds: 0), sessionID: "retry-diagnostics")
   ) { event in
     await recorder.append(event)
   }
@@ -290,6 +290,12 @@ func retryRepeatsFailedCalls() async throws {
   #expect(retries.map(\.0) == [1, 2])
   #expect(retries.map(\.1) == [2, 2])
   #expect(retries.first?.2.contains("flaky") == true)
+  let diagnostics = runtime.diagnosticHistory.records(sessionID: "retry-diagnostics")
+  let attempts = diagnostics.filter { $0.kind == "model.request" }
+  #expect(attempts.compactMap { $0.value.objectValue?["attempt"]?.intValue } == [1, 2, 3])
+  #expect(Set(attempts.compactMap(\.callID)).count == 1)
+  #expect(diagnostics.filter { $0.kind == "model.error" }.count == 2)
+  #expect(diagnostics.filter { $0.kind == "model.response" }.count == 1)
 
   // One failure too many is the provider's error, not a limit.
   let stubborn = RecoveryProvider(responses: [textReply("ok")], failuresBeforeSuccess: 2)

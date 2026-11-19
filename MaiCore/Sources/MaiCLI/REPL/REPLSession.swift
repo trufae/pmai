@@ -31,6 +31,7 @@ struct REPLSession: Sendable {
   /// reopened, so `/jobs tree` and `/jobs log` outlive the session.
   var subagents: [AgentProcessRecord]
   var commands: [AgentCommandRecord]
+  var diagnostics: [AgentDiagnosticRecord]
   var runtimeConfiguration: AgentChatConfiguration?
   var redactor: ContentRedactor?
   var goal: AgentGoal? = nil
@@ -57,6 +58,7 @@ struct REPLSession: Sendable {
     isPinned = false
     subagents = []
     commands = []
+    diagnostics = []
     redactor = nil
   }
 
@@ -76,6 +78,7 @@ struct REPLSession: Sendable {
     isPinned = chat.isPinned
     subagents = chat.subagents
     commands = chat.commands
+    diagnostics = chat.diagnostics
     runtimeConfiguration = chat.runtimeConfiguration
     goal = chat.goal
     redactor = nil
@@ -96,6 +99,7 @@ struct REPLSession: Sendable {
       sessionID: sessionID,
       subagents: redactor?.unredact(subagents) ?? subagents,
       commands: commands,
+      diagnostics: diagnostics,
       runtimeConfiguration: runtimeConfiguration,
       historyWindow: historyWindow)
     result.historyChanges = historyChanges

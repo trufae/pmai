@@ -52,7 +52,7 @@ func smallContextChunkedSummary() async throws {
     source,
     request: AgentRequest(
       provider: "small", model: "fixture",
-      messages: [], options: .init(contextWindowTokens: 4_096)),
+      messages: [], options: .init(contextWindowTokens: 4_096), sessionID: "chunked-summary"),
     renderPrompt: { "CUSTOM preserve all KEEP identifiers and focus.\nTranscript:\n\($0)" })
   for index in 0..<3 { #expect(result.contains("KEEP-\(index)")) }
   let requests = await provider.requests
@@ -61,6 +61,12 @@ func smallContextChunkedSummary() async throws {
   #expect(requests.allSatisfy { $0.messages.last?.text.hasPrefix("CUSTOM preserve") == true })
   #expect(requests.allSatisfy { $0.tools.isEmpty && $0.toolChoice == .none && !$0.stream })
   #expect(requests.allSatisfy { ($0.options.maxOutputTokens ?? 0) <= 2_048 })
+  let diagnostics = runtime.diagnosticHistory.records(sessionID: "chunked-summary")
+  #expect(diagnostics.filter { $0.kind == "compaction.started" }.count == 1)
+  let attempts = diagnostics.filter { $0.kind == "model.request" }
+  #expect(attempts.count == requests.count)
+  #expect(Set(attempts.compactMap(\.operationID)).count == 1)
+  #expect(diagnostics.contains { $0.kind == "compaction.split" })
 }
 
 @Test("Compaction recovers truncated or reasoning-only output with room for a complete summary",

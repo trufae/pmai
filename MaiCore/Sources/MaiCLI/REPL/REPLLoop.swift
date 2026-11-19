@@ -442,6 +442,7 @@ extension MaiCLI {
         session.history = AgentTranscript(messages: chat.messages)
         session.subagents = chat.subagents
         session.commands = chat.commands
+        session.diagnostics = chat.diagnostics
         session.historyWindow = nil
         session.historyContextSize = nil
         session.historyChanges = chat.historyChanges
@@ -839,6 +840,11 @@ extension MaiCLI {
         session.commands = commands
         session.touch()
       }
+      let diagnostics = runtime.diagnosticHistory.records(sessionID: session.sessionID, saved: session.diagnostics)
+      if diagnostics != session.diagnostics {
+        session.diagnostics = diagnostics
+        session.touch()
+      }
       fileAccessLogs[session.id] = session.fileAccessLog
       for (id, log) in fileAccessLogs where id != session.id {
         if var chat = workspace.chats.first(where: { $0.id == id }), chat.accessedFiles != log.snapshot() {
@@ -867,9 +873,11 @@ extension MaiCLI {
         } else if var chat = workspace.chats.first(where: { $0.id == chatID }) {
           let records = AgentProcessRecord.merging(saved: chat.subagents, current: current)
           let commands = runtime.commandHistory.records(sessionID: chat.sessionID, saved: chat.commands)
-          if records != chat.subagents || commands != chat.commands {
+          let diagnostics = runtime.diagnosticHistory.records(sessionID: chat.sessionID, saved: chat.diagnostics)
+          if records != chat.subagents || commands != chat.commands || diagnostics != chat.diagnostics {
             chat.subagents = records
             chat.commands = commands
+            chat.diagnostics = diagnostics
             chat.touch()
             workspace.upsert(chat)
           }
@@ -926,6 +934,7 @@ extension MaiCLI {
     /// show what earlier runs started before the chat's next turn.
     func restoreSavedSubagents() async {
       runtime.commandHistory.restore(session.commands)
+      runtime.diagnosticHistory.restore(session.diagnostics)
       guard restoredChatIDs.insert(session.id).inserted, !session.subagents.isEmpty else {
         return
       }

@@ -102,6 +102,7 @@ struct AgentSmartContext {
   private var summary: AgentMessage?
   private var attempted: [AgentMessage] = []
   private var task: AgentMessage?
+  private(set) var decisionReason = "below-threshold"
 
   mutating func pending(
     in context: AgentPromptContext, activeTaskID: String?,
@@ -124,8 +125,10 @@ struct AgentSmartContext {
     projected?.messages = messages(from: context)
     let tokens = projected.map(AgentRuntime.contextTokens)
       ?? AgentAutocompaction.estimatedTokens(of: messages(from: context), lastUsage: nil)
-    guard tokens >= thresholdTokens,
-      let selection = AgentAutocompaction.selection(
+    decisionReason = "below-threshold"
+    guard tokens >= thresholdTokens else { return nil }
+    decisionReason = "no-eligible-history"
+    guard let selection = AgentAutocompaction.selection(
         in: context.conversation, preservingRecentTokens: recentTokens,
         activeTaskID: activeTaskID)
     else { return nil }
@@ -134,6 +137,7 @@ struct AgentSmartContext {
       selected.contains($0.id) && (!preserveUserMessages || $0.role != .user)
     }
     guard !evidence.isEmpty else { return nil }
+    decisionReason = "unchanged-selection"
     guard evidence != attempted else { return nil }
     // A weak or failed brief can leave us above the trigger. Wait for useful
     // new evidence before spending another model call, unless space is needed now.
@@ -142,9 +146,11 @@ struct AgentSmartContext {
     {
       let prior = Set(attempted.map(\.id))
       let fresh = evidence.filter { !prior.contains($0.id) }
+      decisionReason = "waiting-for-new-evidence"
       guard AgentAutocompaction.estimatedTokens(of: fresh, lastUsage: nil) >= minimumNewEvidenceTokens
       else { return nil }
     }
+    decisionReason = "reduce"
     attempted = evidence
     return (evidence, tokens)
   }

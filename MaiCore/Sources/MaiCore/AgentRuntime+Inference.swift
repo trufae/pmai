@@ -12,6 +12,38 @@ extension AgentRuntime {
   }
 
   func recordDebugEvent(_ event: AgentEvent) async {
+    // Retain useful metadata independently of the optional verbose file log.
+    switch event {
+    case .started(let context, let provider):
+      noteDiagnostic("run.started", context: context, value: .object([
+        "provider": .string(provider.id.rawValue),
+      ]))
+    case .toolStarted(let context, let call):
+      noteDiagnostic("tool.started", context: context, value: .object([
+        "tool": .string(call.name), "toolCallID": .string(call.id),
+      ]))
+    case .toolFinished(let context, let result):
+      noteDiagnostic("tool.finished", context: context, value: .object([
+        "toolCallID": .string(result.callID), "isError": .bool(result.isError),
+        "outputCharacters": .integer(result.text.count),
+      ]))
+    case .transcriptEdited(let context, let report):
+      noteDiagnostic("context.edited", context: context, value: .object([
+        "report": .string(report.summary), "beforeCharacters": .integer(report.charactersBefore),
+        "afterCharacters": .integer(report.charactersAfter),
+      ]))
+    case .childStarted(let context, let child), .childQueued(let context, let child):
+      noteDiagnostic("child.scheduled", context: context,
+        value: (try? DebugDiagnostics.value(child)) ?? .null)
+    case .finished(let context, let result):
+      noteDiagnostic("run.finished", context: context, value: .object([
+        "modelTurns": .integer(result.modelTurns), "toolCalls": .integer(result.toolCalls),
+        "usage": (try? DebugDiagnostics.value(result.usage)) ?? .null,
+        "stopReason": .string(result.stopReason.rawValue),
+        "interruption": result.interruption.map { .string($0.summary) } ?? .null,
+      ]))
+    default: break
+    }
     guard let debugLog else { return }
     switch event {
     case .started(let context, let provider):
@@ -159,10 +191,13 @@ extension AgentRuntime {
     pid: AgentPID,
     retriesEmptyReply: Bool = true,
     systemContext: Bool? = nil,
+    purpose: String = "conversation",
     emit: @escaping AgentEventHandler,
     onEvent: @escaping ProviderEventHandler
   ) async throws -> ProviderCall {
     var attempt = 0
+    let callID = UUID()
+    let callPurpose = AgentDiagnosticScope.current?.purpose ?? purpose
     var lastTransportError: ProviderTransportError?
     while true {
       var outbound = providerRequest
@@ -181,6 +216,11 @@ extension AgentRuntime {
       let display = ContentRedactor.current.map { RedactionStream($0) }
       await provider.configureInternetAccess(internetAccess)
       let timing = StreamTimingRecorder()
+      var requestDetails = Self.diagnosticRequest(outgoingRequest)
+      requestDetails["attempt"] = .integer(attempt + 1)
+      requestDetails["provider"] = .string(provider.descriptor.id.rawValue)
+      noteDiagnostic("model.request", context: context, sessionID: outgoingRequest.sessionID,
+        purpose: callPurpose, callID: callID, value: .object(requestDetails))
       await debugLog?.record(
         "model.request", context: context, provider: provider.descriptor.id.rawValue,
         attempt: attempt + 1, value: outgoingRequest)
@@ -189,7 +229,8 @@ extension AgentRuntime {
         supervisor: supervisor, context: context, provider: provider.descriptor.id, emit: emit,
         diagnostic: { phase, details in
           await self.recordTransportDiagnostic(phase, details: details, context: context,
-            provider: provider.descriptor.id, attempt: attemptNumber)
+            provider: provider.descriptor.id, attempt: attemptNumber,
+            callID: callID, purpose: callPurpose, sessionID: outgoingRequest.sessionID)
         })
       do {
         let response = try await withDeadline(budget) {
@@ -223,21 +264,55 @@ extension AgentRuntime {
         await debugLog?.record(
           "model.response", context: context, provider: provider.descriptor.id.rawValue,
           attempt: attempt + 1, value: response)
+        let usage = response.usage ?? .estimated(
+          inputTokens: Self.contextTokens(outgoingRequest),
+          outputTokens: ModelCallStats.estimatedTokenCount(
+            forCharacterCount: AgentTranscriptEditor.characterCount(of: response.message)))
+        var details: [String: JSONValue] = [
+          "attempt": .integer(attempt + 1), "provider": .string(provider.descriptor.id.rawValue),
+          "model": .string(outgoingRequest.model),
+          "durationMs": .integer(Int(Date().timeIntervalSince(timing.observation.requestStart) * 1000)),
+          "usage": (try? DebugDiagnostics.value(usage)) ?? .null,
+          "usageEstimated": .bool(usage.isEstimated),
+          "stopReason": (try? DebugDiagnostics.value(response.stopReason)) ?? .null,
+          "responseCharacters": .integer(response.message.text.count),
+          "reasoningCharacters": .integer(response.message.reasoning.count),
+          "toolCalls": .integer(response.message.toolCalls.count),
+        ]
+        if AgentDiagnosticScope.current != nil {
+          details["summary"] = .string(MessageContentFilter.textWithoutReasoning(from: response.message.text))
+        }
+        noteDiagnostic("model.response", context: context, sessionID: outgoingRequest.sessionID,
+          purpose: callPurpose, callID: callID, value: .object(details))
         return ProviderCall(response: response, timing: timing.observation, ended: Date())
       } catch is CancellationError {
+        noteDiagnostic("model.cancelled", context: context, sessionID: outgoingRequest.sessionID,
+          purpose: callPurpose, callID: callID, value: .object(["attempt": .integer(attempt + 1)]))
         await debugLog?.record("model.cancelled", context: context, value: "cancelled")
         throw CancellationError()
       } catch is RunDeadlineExceeded {
+        noteDiagnostic("model.deadline", context: context, sessionID: outgoingRequest.sessionID,
+          purpose: callPurpose, callID: callID, value: .object(["attempt": .integer(attempt + 1)]))
         await debugLog?.record("model.deadline", context: context, value: "deadline exceeded")
         throw RunDeadlineExceeded()
       } catch let error as any ProviderEmptyResponseError where !retriesEmptyReply {
+        noteDiagnostic("model.error", context: context, sessionID: outgoingRequest.sessionID,
+          purpose: callPurpose, callID: callID,
+          value: .object(["attempt": .integer(attempt + 1), "error": .string(error.localizedDescription)]))
         await debugLog?.record("model.empty", context: context, value: error.localizedDescription)
         throw ProviderEmptyReply()
       } catch let error as ToolApprovalUnavailable {
+        noteDiagnostic("model.error", context: context, sessionID: outgoingRequest.sessionID,
+          purpose: callPurpose, callID: callID, value: .object(["attempt": .integer(attempt + 1), "error": .string(error.localizedDescription)]))
         throw error
       } catch let error as any ProviderToolCallError where error.toolCallRepairMessage != nil {
+        noteDiagnostic("model.error", context: context, sessionID: outgoingRequest.sessionID,
+          purpose: callPurpose, callID: callID, value: .object(["attempt": .integer(attempt + 1), "error": .string(error.localizedDescription)]))
         throw error
       } catch {
+        noteDiagnostic("model.error", context: context, sessionID: outgoingRequest.sessionID,
+          purpose: callPurpose, callID: callID,
+          value: .object(["attempt": .integer(attempt + 1), "error": .string(error.localizedDescription)]))
         await debugLog?.record(
           "model.error", context: context, provider: provider.descriptor.id.rawValue,
           attempt: attempt + 1, value: error.localizedDescription)
@@ -260,6 +335,11 @@ extension AgentRuntime {
         let policy = liveRequests[pid]?.retry ?? retry
         guard attempt < policy.attempts else { throw error }
         attempt += 1
+        noteDiagnostic("model.retry", context: context, sessionID: outgoingRequest.sessionID,
+          purpose: callPurpose, callID: callID, value: .object([
+            "attempt": .integer(attempt + 1), "limit": .integer(policy.attempts),
+            "delaySeconds": .number(policy.delaySeconds), "error": .string(error.localizedDescription),
+          ]))
         await emit(
           .retrying(
             context, attempt: attempt, limit: policy.attempts, delaySeconds: policy.delaySeconds,
@@ -280,8 +360,11 @@ extension AgentRuntime {
 
   private func recordTransportDiagnostic(
     _ phase: String, details: [String: JSONValue], context: AgentEventContext,
-    provider: ProviderID, attempt: Int
+    provider: ProviderID, attempt: Int, callID: UUID, purpose: String, sessionID: String?
   ) async {
+    noteDiagnostic("model.transport.\(phase)", context: context, sessionID: sessionID,
+      purpose: purpose, callID: callID,
+      value: .object(details.merging(["attempt": .integer(attempt)]) { _, latest in latest }))
     await debugLog?.record("model.transport.\(phase)", context: context,
       provider: provider.rawValue, attempt: attempt, value: DebugDiagnostics.sanitize(.object(details)))
   }
@@ -335,7 +418,8 @@ extension AgentRuntime {
         try await complete(
           turn.request, with: turn.provider, retry: turn.retry, budget: state.budget,
           context: context, pid: state.pid, retriesEmptyReply: !repairsEmptyReply,
-          systemContext: state.request.systemContext, emit: emit
+          systemContext: state.request.systemContext,
+          purpose: turn.selectingTools ? "tool-selection" : "conversation", emit: emit
         ) { event in
           if turn.selectingTools {
             switch event {

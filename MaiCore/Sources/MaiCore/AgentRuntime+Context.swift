@@ -43,7 +43,8 @@ extension AgentRuntime {
   /// Asks the model for a summary of `selection`, accounts for the call, and
   /// returns the text, for autocompact and for a compaction the agent left to
   /// the runtime. An empty answer is an error: the run goes on uncompacted.
-  func summaryText(of selection: [String], focus: String, state: inout RunState) async throws
+  func summaryText(of selection: [String], focus: String, state: inout RunState,
+    purpose: String = "requested-compaction") async throws
     -> String
   {
     let selected = Set(selection)
@@ -56,7 +57,7 @@ extension AgentRuntime {
       source: source,
       render: {
         AgentCompactionPrompt.render(transcript: $0, focus: focus, template: template)
-      }, state: &state)
+      }, state: &state, purpose: purpose)
   }
 
   func applyPendingInput(to state: inout RunState) async throws {
@@ -241,7 +242,7 @@ extension AgentRuntime {
         do {
           let text = try await summaryText(
             of: selection, focus: AgentCompactionPrompt.automaticFocus,
-            state: &state)
+            state: &state, purpose: "automatic-compaction")
           let applied = AgentTranscriptEditor.applyToContext(
             [.compact(messageIDs: selection, summary: text)], to: state.transcript,
             activeTaskID: state.activeTaskID)

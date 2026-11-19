@@ -58,6 +58,7 @@ public struct AgentChat: PagedStoredChat, Equatable {
   /// bring these up to date from the supervisor as runs end.
   public var subagents: [AgentProcessRecord]
   public var commands: [AgentCommandRecord]
+  public var diagnostics: [AgentDiagnosticRecord]
   public var runtimeConfiguration: AgentChatConfiguration?
   public var goal: AgentGoal? = nil
 
@@ -75,6 +76,7 @@ public struct AgentChat: PagedStoredChat, Equatable {
     sessionID: String? = nil,
     subagents: [AgentProcessRecord] = [],
     commands: [AgentCommandRecord] = [],
+    diagnostics: [AgentDiagnosticRecord] = [],
     runtimeConfiguration: AgentChatConfiguration? = nil,
     historyWindow: ChatHistoryWindow? = nil
   ) {
@@ -92,13 +94,14 @@ public struct AgentChat: PagedStoredChat, Equatable {
     self.sessionID = sessionID ?? ChatSession.newID()
     self.subagents = subagents
     self.commands = commands
+    self.diagnostics = diagnostics
     self.runtimeConfiguration = runtimeConfiguration
   }
 
   private enum CodingKeys: String, CodingKey {
     case id, title, primaryAgent, messages, pendingContent, createdAt, updatedAt, isArchived
     case sessionID, subagents, commands, runtimeConfiguration, accessedFiles, isPinned
-    case goal
+    case goal, diagnostics
   }
 
   public init(from decoder: Decoder) throws {
@@ -135,6 +138,7 @@ public struct AgentChat: PagedStoredChat, Equatable {
     runtimeConfiguration = try container.decodeIfPresent(
       AgentChatConfiguration.self, forKey: .runtimeConfiguration)
     goal = try container.decodeIfPresent(AgentGoal.self, forKey: .goal)
+    diagnostics = try container.decodeIfPresent([AgentDiagnosticRecord].self, forKey: .diagnostics) ?? []
   }
 
   public func encode(to encoder: Encoder) throws {
@@ -155,6 +159,7 @@ public struct AgentChat: PagedStoredChat, Equatable {
     try container.encode(accessedFiles, forKey: .accessedFiles)
     try container.encodeIfPresent(runtimeConfiguration, forKey: .runtimeConfiguration)
     try container.encodeIfPresent(goal, forKey: .goal)
+    if !diagnostics.isEmpty { try container.encode(diagnostics, forKey: .diagnostics) }
   }
 
   public var historyMessageCount: Int { messages.count }
@@ -265,6 +270,7 @@ public struct AgentChat: PagedStoredChat, Equatable {
     chat.id = UUID()
     chat.sessionID = ChatSession.newID()
     chat.commands = commands.map { $0.copied(to: chat.sessionID) }
+    chat.diagnostics = diagnostics.map { $0.copied(to: chat.sessionID) }
     let title = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     chat.title = title.isEmpty ? "\(displayTitle) (fork)" : title
     chat.createdAt = date

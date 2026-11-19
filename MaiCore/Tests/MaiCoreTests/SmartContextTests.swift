@@ -87,7 +87,7 @@ func smartContextLargeHistory(mode: AgentContextMode) async throws {
     .init(message: .assistant("Concrete finding")),
   ])
   let compact = SmartContextProvider(id: "compact", responses: [
-    .init(message: .assistant("Earlier evidence brief")),
+    .init(message: .assistant("Earlier evidence brief"), usage: .estimated(inputTokens: 20, outputTokens: 5)),
   ])
   let runtime = try await smartRuntime(primary, compact)
   await runtime.configureSmartContext(prompt: "SMART TEMPLATE\n{{transcript}}")
@@ -102,7 +102,7 @@ func smartContextLargeHistory(mode: AgentContextMode) async throws {
   ]
   let result = try await runtime.run(AgentRequest(
     provider: "primary", model: "frontier", messages: original, toolNames: ["read"],
-    retry: .none, autocompact: .init(tokens: 0), context: mode))
+    retry: .none, autocompact: .init(tokens: 0), context: mode, sessionID: "large-history"))
   #expect(result.response.text == "Concrete finding")
   #expect(Array(result.transcript.prefix(original.count)) == original)
   let preparations = await compact.requests
@@ -122,6 +122,15 @@ func smartContextLargeHistory(mode: AgentContextMode) async throws {
   #expect(!requests[0].messages.contains(original[3]))
   #expect(requests[1].messages.flatMap(\.toolCalls) == [call])
   #expect(requests[1].messages.flatMap(\.toolResults).first?.text == evidence)
+  let diagnostics = runtime.diagnosticHistory.records(sessionID: "large-history")
+  #expect(diagnostics.filter { $0.kind == "model.request" }.count == 3)
+  let summary = try #require(diagnostics.first { $0.kind == "model.response" && $0.purpose == "working-context" })
+  #expect(summary.value.objectValue?["summary"] == .string("Earlier evidence brief"))
+  #expect(summary.value.objectValue?["usageEstimated"] == .bool(true))
+  let reduction = try #require(diagnostics.first { $0.kind == "context.reduction" })
+  #expect(reduction.operationID == summary.operationID)
+  #expect(reduction.value.objectValue?["outcome"] == .string("applied"))
+  #expect(diagnostics.contains { $0.kind == "compaction.completed" && $0.operationID == summary.operationID })
 }
 
 @Test("Adaptive keeps medium histories intact when the context window is unknown")
@@ -185,7 +194,7 @@ func smartContextWaitsForMoreEvidence(mode: AgentContextMode, failed: Bool) asyn
   let result = try await runtime.run(AgentRequest(
     provider: "primary", model: "frontier",
     messages: original, toolNames: ["read"],
-    retry: .none, context: mode))
+    retry: .none, context: mode, sessionID: "summary-attempt"))
   #expect(result.response.text == "done")
   #expect(result.toolCalls == 3)
   #expect(await compact.requests.count == 1)
@@ -195,6 +204,11 @@ func smartContextWaitsForMoreEvidence(mode: AgentContextMode, failed: Bool) asyn
     #expect(requests[index + 1].messages.flatMap(\.toolResults).contains { $0.text == "Exact result: " + id })
   }
   #expect(Array(result.transcript.prefix(original.count)) == original)
+  let diagnostics = runtime.diagnosticHistory.records(sessionID: "summary-attempt")
+  #expect(diagnostics.contains { $0.kind == "compaction.failed" } == failed)
+  #expect(diagnostics.contains { $0.kind == "model.error" && $0.purpose == "working-context" } == failed)
+  #expect(diagnostics.contains { $0.kind == "context.decision"
+    && $0.value.objectValue?["reason"] == .string("waiting-for-new-evidence") })
 }
 
 @Test("Unknown-window pressure discovers a larger catalog window before summarizing",
