@@ -402,6 +402,7 @@ public enum AgentContextPruning {
     }
     guard ["files_read", "files_read_range", "files_get_function"].contains(name),
       arguments.objectValue?["path"]?.stringValue != nil
+        || (name == "files_read" && arguments.objectValue?["reads"]?.arrayValue?.isEmpty == false)
     else { return nil }
     return "[Earlier file read removed from context; call \(name) with \(arguments.compactJSONString) to read it again.]"
   }

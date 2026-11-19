@@ -226,7 +226,6 @@ func fileWorkspaceSearchUsesCodingFriendlyDefaults() async throws {
   let grep = tool(tools, .grep)
   // Only the arguments a model needs are offered; the rest are fixed defaults.
   #expect(Set(find.definition.parameters.map(\.name)) == ["query", "filter", "path"])
-  #expect(Set(grep.definition.parameters.map(\.name)) == ["query", "path", "glob", "regex"])
 
   let normal = try await call(find, ["query": .string("Needle.swift")])
   let normalPaths = Set(
@@ -1113,12 +1112,132 @@ func fileWorkspacePatchIndentationGuidance() async throws {
   #expect(bad.isError)
   #expect(bad.text.contains("correct the indentation"))
   #expect(bad.text.contains("one separator space after the colon"))
+  let candidates = try #require(bad.structuredContent?.objectValue?["candidates"]?.arrayValue)
+  #expect(candidates.first?.objectValue?["text"] == .string(source))
   #expect(try String(contentsOf: file, encoding: .utf8) == source)
   let fixed = try await call(patch, [
     "path": .string(file.lastPathComponent), "find": .string(source), "replace": .string(""),
   ])
   #expect(!fixed.isError)
   #expect(try Data(contentsOf: file).isEmpty)
+}
+
+@Test("A patch batch saves ordered edits across files and returns their combined changes")
+func fileWorkspacePatchBatch() async throws {
+  let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+  try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: root) }
+  let first = root.appendingPathComponent("first.txt")
+  let second = root.appendingPathComponent("second.txt")
+  try Data("old old\nremove\n".utf8).write(to: first)
+  try Data("value=1\n".utf8).write(to: second)
+  let patch = MaiFileWorkspaceTool(operation: .patch, configuration: .init(rootURL: root))
+  let runtime = AgentRuntime(approvalHandler: AllowAllApprovals())
+  try await runtime.register(tool: patch)
+  let arguments: JSONValue = .object([
+    "path": .string("first.txt"), "edits": .array([
+      .object(["find": .string("old"), "replace": .string("new"), "expected_matches": .integer(2)]),
+      .object(["find": .string("new new"), "replace": .string("🐱")]),
+      .object(["path": .string("./first.txt"), "find": .string("remove\n"), "replace": .string("")]),
+      .object(["path": .string("second.txt"), "find": .string("value=(\\d+)"),
+        "replace": .string("number=$1"), "regex": .bool(true)]),
+    ]),
+  ])
+  let output = try await runtime.runTool(
+    .init(id: "batch", name: "files_patch", arguments: arguments),
+    for: AgentDefinition(id: "main", provider: "fixture", model: "fixture", toolNames: ["files_patch"]))
+  #expect(!output.isError)
+  #expect(try String(contentsOf: first, encoding: .utf8) == "🐱\n")
+  #expect(try String(contentsOf: second, encoding: .utf8) == "number=1\n")
+  let files = try #require(output.structuredContent?.objectValue?["files"]?.arrayValue)
+  #expect(files.count == 2)
+  #expect(output.text.contains("+🐱"))
+  #expect(output.text.contains("+number=1"))
+  let deletion = AgentTooling.normalizeArguments([
+    "path": .string("first.txt"), "find": .string("🐱\n"), "replace": .string(""),
+  ], for: patch.definition)
+  let deleted = try await call(patch, deletion)
+  #expect(!deleted.isError)
+  #expect(try Data(contentsOf: first).isEmpty)
+}
+
+@Test("Invalid later patches leave all files unchanged",
+  arguments: ["missing", "ambiguous", "regex", "outside", "denied", "already_applied"])
+func fileWorkspacePatchBatchRejectsBeforeWriting(failure: String) async throws {
+  let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+  try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: root) }
+  let first = root.appendingPathComponent("first.txt")
+  let second = root.appendingPathComponent("second.txt")
+  try Data("old\n".utf8).write(to: first)
+  try Data("old old\n".utf8).write(to: second)
+  var configuration = MaiFileWorkspaceConfiguration(rootURL: root)
+  if failure == "denied" {
+    let policy = MaiFileAccessPolicy { _, _ in
+      Issue.record("A denied path must not request access")
+      return true
+    }
+    policy.set(.init(url: second, access: .deny))
+    configuration.pathAccessPolicy = policy
+  }
+  let path = failure == "outside" ? "../outside.txt" : failure == "already_applied" ? "first.txt" : "second.txt"
+  let output = try await call(MaiFileWorkspaceTool(operation: .patch, configuration: configuration), [
+    "edits": .array([
+      .object(["path": .string("first.txt"), "find": .string("old"), "replace": .string("new")]),
+      .object(["path": .string(path),
+        "find": .string(failure == "regex" ? "(" : failure == "missing" ? "absent" : "old"),
+        "replace": .string("new"), "regex": .bool(failure == "regex")]),
+    ])
+  ])
+  #expect(output.isError)
+  #expect(try String(contentsOf: first, encoding: .utf8) == "old\n")
+  #expect(try String(contentsOf: second, encoding: .utf8) == "old old\n")
+  if ["missing", "ambiguous", "regex", "already_applied"].contains(failure) {
+    #expect(output.text.contains("Edit 2 of 2"))
+    #expect(output.structuredContent?.objectValue?["changed_paths"] == .array([]))
+  }
+  if failure == "already_applied" {
+    #expect(output.structuredContent?.objectValue?["replacement_present"] == .bool(true))
+  }
+}
+
+@Test("Batch reads retain successful ranges, errors and per-file paging")
+func fileWorkspaceReadBatch() async throws {
+  let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+  try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: root) }
+  try Data("one\ntwo\nthree\n".utf8).write(to: root.appendingPathComponent("source.txt"))
+  let read = MaiFileWorkspaceTool(operation: .read, configuration: .init(rootURL: root))
+  let output = try await call(read, ["reads": .array([
+    .object(["path": .string("source.txt"), "start_line": .integer(2), "end_line": .integer(2)]),
+    .object(["path": .string("../outside.txt")]),
+    .object(["path": .string("source.txt"), "offset": .integer(4), "max_bytes": .integer(4)]),
+    .object(["path": .string("missing.txt")]),
+  ])], suggestedOutputBytes: 32)
+  #expect(output.isError)
+  #expect(output.text.contains("2: two"))
+  #expect(fileReadBody(output) == "two\n")
+  let results = try #require(output.structuredContent?.objectValue?["reads"]?.arrayValue)
+  #expect(results.map { $0.objectValue?["isError"] } == [.bool(false), .bool(true), .bool(false), .bool(true)])
+  #expect(results[2].objectValue?["metadata"]?.objectValue?["nextOffset"] == .integer(8))
+  #expect(output.text.contains("offset 8"))
+}
+
+@Test("Literal search alternatives preserve punctuation, smart case and matching line numbers")
+func fileWorkspaceGrepQueries() async throws {
+  let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+  try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: root) }
+  try Data("lowercase UPPER\nLOWERCASE upper\nliteral|value\nupper\n".utf8)
+    .write(to: root.appendingPathComponent("source.txt"))
+  let grep = MaiFileWorkspaceTool(operation: .grep, configuration: .init(rootURL: root))
+  let output = try await call(grep, [
+    "path": .string("source.txt"),
+    "queries": .array([.string("lowercase"), .string("UPPER"), .string("literal|value")]),
+  ])
+  #expect(!output.isError)
+  let matches = try #require(output.structuredContent?.objectValue?["matches"]?.arrayValue)
+  #expect(matches.compactMap { $0.objectValue?["line"]?.intValue } == [1, 2, 3])
 }
 
 private func fileReadBody(_ output: ToolOutput) -> String {

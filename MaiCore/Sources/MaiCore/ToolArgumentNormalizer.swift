@@ -140,6 +140,7 @@ extension AgentTooling {
       }
       // Empty file bodies and whitespace sent to a terminal are meaningful.
       let preservesWhitespace = name == "content" && ["files_write", "remote_files"].contains(tool.name)
+        || name == "replace" && tool.name == "files_patch"
         || name == "text" && tool.name == "remote_terminal"
       if !preservesWhitespace, !parameter.required, isDefaultOptionalValue(normalized, for: parameter) {
         continue

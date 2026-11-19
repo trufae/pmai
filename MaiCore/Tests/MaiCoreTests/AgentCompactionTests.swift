@@ -132,6 +132,7 @@ func pruningIncludesPlainTextFileReads() throws {
     "path": .string("src/file.cpp"), "start_line": .integer(12), "end_line": .integer(811),
   ])
   let function: JSONValue = .object(["path": .string("src/file.cpp"), "name": .string("main")])
+  let batch: JSONValue = .object(["reads": .array([range])])
   func exchange(_ id: String, _ name: String, _ arguments: JSONValue) -> [AgentMessage] {
     [
       AgentMessage(role: .assistant, content: [.toolCall(ToolCall(id: id, name: name, arguments: arguments))]),
@@ -145,27 +146,29 @@ func pruningIncludesPlainTextFileReads() throws {
   messages += exchange("proxy", ToolProxy.callName, .object([
     "name": .string("files_read_range"), "arguments": range,
   ]))
+  messages += exchange("batch", "files_read", batch)
   messages += [.assistant("Inspected."), .user("Next task.")]
   messages += exchange("current", "files_read_range", range)
   let before = AgentTranscriptEditor.characterCount(of: messages)
   let report = try #require(AgentContextPruning.prune(&messages))
-  #expect(report.pruned == 3)
+  #expect(report.pruned == 4)
   #expect(report.rewritten == 0)
   #expect(!report.isEmpty)
-  #expect(report.summary.hasPrefix("pruned 3 old read results ("))
+  #expect(report.summary.hasPrefix("pruned 4 old read results ("))
   #expect(report.charactersBefore == before)
   #expect(report.charactersAfter == AgentTranscriptEditor.characterCount(of: messages))
   #expect(report.charactersAfter < before / 3)
   let results = messages.flatMap(\.toolResults)
-  for result in results.prefix(3) {
+  for result in results.prefix(4) {
     #expect(result.text.contains("Earlier file read removed"))
     #expect(result.structuredContent == metadata)
   }
   #expect(results[0].text.contains("files_read_range with \(range.compactJSONString)"))
   #expect(results[1].text.contains("files_get_function with \(function.compactJSONString)"))
   #expect(results[2].text == results[0].text)
-  #expect(results[3].text == body)
-  #expect(messages.flatMap(\.toolCalls).map(\.id) == ["range", "function", "proxy", "current"])
+  #expect(results[3].text.contains("files_read with \(batch.compactJSONString)"))
+  #expect(results[4].text == body)
+  #expect(messages.flatMap(\.toolCalls).map(\.id) == ["range", "function", "proxy", "batch", "current"])
   #expect(AgentContextPruning.prune(&messages) == nil)
 }
 

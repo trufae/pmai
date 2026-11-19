@@ -159,7 +159,7 @@ public struct MaiStandardToolFactory: ConfiguredToolFactory {
           + "files_set_function, files_patch, and files_write change it; files_mkdir creates directories "
           + "including missing parents, files_rename moves entries, and files_delete removes files or "
           + "directories (recursive=true for non-empty folders). files_zip and files_unzip pack and extract ZIP/XDC archives without a shell. Read before editing. Prefer literal files_patch replacements for small "
-          + "edits, with enough surrounding text to match exactly once; use files_set_function for "
+          + "edits, with enough surrounding text to match exactly once. Batch related changes with files_patch edits:[{path,find,replace},…] instead of one call per replacement; all matches are validated before writing. Use short unique literals for renames to avoid copying indentation. Use files_set_function for "
           + "complete function bodies. With file changes disallowed the group is read-only.",
         toolNames: Set(MaiFileWorkspaceTool.toolNames),
         options: [

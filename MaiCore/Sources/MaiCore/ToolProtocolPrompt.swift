@@ -242,7 +242,12 @@ extension AgentTooling {
   private static func exampleArguments(
     for tool: ToolDefinition
   ) -> [String: AgentToolArgumentValue] {
-    Dictionary(
+    if let example = tool.inputSchema.objectValue?["examples"]?.arrayValue?.first,
+      let arguments = example.objectValue,
+      ToolSchemaValidator.validate(arguments: example, definition: tool) == nil {
+      return arguments
+    }
+    return Dictionary(
       uniqueKeysWithValues: tool.parameters
         .filter(\.required)
         .map { ($0.name, exampleArgumentValue(for: $0)) })
@@ -272,7 +277,9 @@ extension AgentTooling {
   }
 
   /// Suggest an enabled tool and its fields without guessing which call to execute.
-  static func unavailableToolError(name: String, tools: [ToolDefinition]) -> String {
+  static func unavailableToolError(
+    name: String, tools: [ToolDefinition], arguments: JSONValue? = nil
+  ) -> String {
     let preview =
       name.prefix(120).replacingOccurrences(of: "\n", with: "\\n")
       .replacingOccurrences(of: "\r", with: "\\r").replacingOccurrences(of: "\t", with: "\\t")
@@ -281,8 +288,18 @@ extension AgentTooling {
     guard !tools.isEmpty else { return message }
     let resolver = AgentToolNameResolver(tools: tools)
     let requested = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    let fields = arguments?.objectValue ?? [:]
+    let suggestedName: String?
+    if fields["find"] != nil && fields["replace"] != nil || fields["edits"] != nil {
+      suggestedName = "files_patch"
+    } else if ["bash", "shell", "exec", "exec_command"].contains(requested)
+      || fields["script"] != nil || fields["command"] != nil {
+      suggestedName = "run_shell"
+    } else {
+      suggestedName = nil
+    }
     let related = tools.filter { tool in
-      [tool.name, resolver.apiName(for: tool.name)].contains { candidate in
+      tool.name == suggestedName || [tool.name, resolver.apiName(for: tool.name)].contains { candidate in
         let candidate = candidate.lowercased()
         return requested.hasPrefix(candidate + "_") || requested.hasPrefix(candidate + "<")
       }

@@ -284,7 +284,7 @@ func malformedToolNamesHaveRepairHints() async throws {
   #expect(results.allSatisfy { $0.isError && $0.text.contains("Retry with an exact tool name") })
   #expect(results.prefix(2).allSatisfy { $0.text.contains("run_shell:") && $0.text.contains("script (string)") })
   #expect(results.last?.text.contains("files_read:") == true)
-  #expect(results.last?.text.contains("path (string, required)") == true)
+  #expect(results.last?.text.contains("path (string)") == true)
   #expect(await recorder.events.allSatisfy {
     if case .approvalRequested = $0 { return false }
     return true
@@ -294,6 +294,15 @@ func malformedToolNamesHaveRepairHints() async throws {
     tools: [MaiRunTool(configuration: MaiRunConfiguration()).definition])
   #expect(bounded.count < 1_000)
   #expect(!bounded.contains("\n"))
+  let patch = MaiFileWorkspaceTool(operation: .patch, configuration: .init(rootURL: FileManager.default.temporaryDirectory))
+  let wrongTool = AgentTooling.unavailableToolError(
+    name: "bash", tools: [read.definition, patch.definition],
+    arguments: .object(["path": .string("x"), "find": .string("x"), "replace": .string("x")]))
+  #expect(wrongTool.contains("files_patch:"))
+  #expect(wrongTool.contains("edits (array)"))
+  let shell = AgentTooling.unavailableToolError(
+    name: "bash", tools: [MaiRunTool(configuration: MaiRunConfiguration()).definition])
+  #expect(shell.contains("run_shell:"))
 }
 
 @Test("Recovered native names are approved and executed with their canonical name")

@@ -23,7 +23,8 @@ extension AgentRuntime {
     else {
       return ToolResult(
         callID: call.id,
-        text: AgentTooling.unavailableToolError(name: call.name, tools: definitions),
+        text: AgentTooling.unavailableToolError(
+          name: call.name, tools: definitions, arguments: call.arguments),
         isError: true)
     }
     guard internetAccess.allows(definition, in: availableToolGroups()) else {
@@ -187,7 +188,8 @@ extension AgentRuntime {
       let result = ToolResult(
         callID: resolvedCall.id,
         text: AgentTooling.unavailableToolError(
-          name: resolvedCall.name, tools: listedDefinitions(in: definitions, request: request)),
+          name: resolvedCall.name, tools: listedDefinitions(in: definitions, request: request),
+          arguments: resolvedCall.arguments),
         isError: true)
       await emit(.toolFinished(context, result))
       return result

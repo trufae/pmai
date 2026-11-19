@@ -144,7 +144,8 @@ public struct MaiFileWorkspaceTool: AgentTool {
 
   public func call(arguments: JSONValue, context: ToolExecutionContext) async throws -> ToolOutput {
     var arguments = arguments.objectValue ?? [:]
-    if operation == .read, arguments["start_line"] == nil, arguments["end_line"] == nil,
+    if operation == .read, arguments["reads"] == nil,
+      arguments["start_line"] == nil, arguments["end_line"] == nil,
       arguments["max_bytes"] == nil, let limit = context.suggestedOutputBytes {
       arguments["max_bytes"] = .integer(max(4, limit))
     }
@@ -158,9 +159,14 @@ public struct MaiFileWorkspaceTool: AgentTool {
     #endif
     do {
       try Task.checkCancellation()
+      if operation == .read, arguments["reads"] != nil {
+        return try await readBatch(arguments, context: context)
+      }
       var path = arguments["path"]?.stringValue ?? "."
       if operation == .list, let split = MaiGlob.splitPath(path) { path = split.directory }
       var paths = [path]
+      let edits = operation == .patch ? try Self.patchEdits(arguments) : []
+      if operation == .patch { paths = try edits.map { try Self.patchPath($0) } }
       if [.rename, .zip, .unzip].contains(operation),
         let destination = arguments[operation == .rename ? "new_path" : "destination"]?.stringValue
       {
@@ -200,7 +206,7 @@ public struct MaiFileWorkspaceTool: AgentTool {
       case .replaceRange:
         return try workspace.replaceRange(arguments)
       case .patch:
-        return try workspace.patch(arguments)
+        return try workspace.patch(edits, batch: arguments["edits"] != nil)
       case .mkdir:
         return try workspace.createDirectory(arguments)
       case .write:
@@ -214,6 +220,10 @@ public struct MaiFileWorkspaceTool: AgentTool {
       }
     } catch is CancellationError {
       throw CancellationError()
+    } catch let error as MaiFilePatchError {
+      return ToolOutput(
+        content: [.text("Error: " + error.localizedDescription)],
+        structuredContent: .object(error.details), isError: true)
     } catch let error as MaiFileWorkspaceError {
       let root =
         configuration.followsProcessWorkingDirectory
@@ -222,6 +232,60 @@ public struct MaiFileWorkspaceTool: AgentTool {
         text: "Error: \(error.localizedDescription)\(error.pathHint(root: root))", isError: true)
     } catch {
       return ToolOutput(text: "Error: \(error.localizedDescription)", isError: true)
+    }
+  }
+
+  private func readBatch(_ arguments: [String: JSONValue], context: ToolExecutionContext) async throws
+    -> ToolOutput
+  {
+    guard let reads = arguments["reads"]?.arrayValue, (1...20).contains(reads.count),
+      arguments.keys.allSatisfy({ $0 == "reads" })
+    else { throw MaiFileWorkspaceError.invalidArguments("Use reads:[{path,…},…] with 1-20 reads and no top-level file arguments.") }
+    var childContext = context
+    childContext.suggestedOutputBytes = max(4, (context.suggestedOutputBytes ?? 120_000) / reads.count)
+    var content: [ContentPart] = []
+    var results: [JSONValue] = []
+    var isError = false
+    for (index, value) in reads.enumerated() {
+      try Task.checkCancellation()
+      guard let read = value.objectValue, read["reads"] == nil else {
+        throw MaiFileWorkspaceError.invalidArguments("Read \(index + 1) must be a file request, without nested reads.")
+      }
+      // Each request uses the ordinary path policy, conversion and paging path.
+      let output = try await call(arguments: .object(read), context: childContext)
+      content.append(.text("Read \(index + 1): \(read["path"]?.compactJSONString ?? "(missing path)")"))
+      content += output.content
+      results.append(.object([
+        "path": read["path"] ?? .null, "isError": .bool(output.isError),
+        "metadata": output.structuredContent ?? .null,
+      ]))
+      isError = isError || output.isError
+    }
+    return ToolOutput(content: content, structuredContent: .object(["reads": .array(results)]), isError: isError)
+  }
+
+  private static func patchPath(_ edit: [String: JSONValue]) throws -> String {
+    guard let path = edit["path"]?.stringValue,
+      !path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    else { throw MaiFileWorkspaceError.missingArgument("path (on each edit or at the top level)") }
+    return path
+  }
+
+  private static func patchEdits(_ arguments: [String: JSONValue]) throws -> [[String: JSONValue]] {
+    guard let value = arguments["edits"] else { return [arguments] }
+    guard let edits = value.arrayValue, (1...100).contains(edits.count) else {
+      throw MaiFileWorkspaceError.invalidArguments("edits must be an array of 1-100 patch objects.")
+    }
+    guard ["find", "replace", "regex", "expected_matches"].allSatisfy({ arguments[$0] == nil }) else {
+      throw MaiFileWorkspaceError.invalidArguments("Use either edits or top-level find/replace/regex/expected_matches. Only path may be shared with edits.")
+    }
+    return try edits.enumerated().map { index, value in
+      guard var edit = value.objectValue else {
+        throw MaiFileWorkspaceError.invalidArguments("Edit \(index + 1) must be a patch object.")
+      }
+      if edit["path"] == nil { edit["path"] = arguments["path"] }
+      _ = try patchPath(edit)
+      return edit
     }
   }
 
@@ -273,17 +337,17 @@ public struct MaiFileWorkspaceTool: AgentTool {
         annotations: ToolAnnotations(
           readOnly: true, idempotent: true, openWorld: false, approval: .confirm))
     case .grep:
-      return ToolDefinition(
+      var definition = ToolDefinition(
         name: operation.rawValue,
         description:
-          "Search text in a known file or folder; set path to the narrowest relevant location and glob to limit files. Scans at most 10000 files and returns up to 100 matching lines. Skips hidden and common build/dependency paths, and uses VCS ignore rules when available. Case-insensitive unless query contains uppercase. Use regex=true for alternatives such as nameA|nameB. Read a matching function with files_get_function or surrounding lines with files_read. For shell searches, prefer rg -n, then git grep -n --untracked in Git worktrees if rg is unavailable. Avoid recursive grep over build outputs.",
+          "Search text in a known file or folder. Batch literal alternatives with queries:[\"nameA\",\"nameB\"] to scan once without regex escaping, or supply one query. A query containing | is literal unless regex=true. Set path to the narrowest relevant location and glob to limit files. Scans at most 10000 files and returns up to 100 matching lines. Skips hidden and common build/dependency paths, and uses VCS ignore rules when available. Each literal is case-insensitive unless it contains uppercase. Read a matching function with files_get_function or surrounding lines with files_read. For shell searches, prefer rg -n, then git grep -n --untracked in Git worktrees if rg is unavailable. Avoid recursive grep over build outputs.",
         parameters: [
           ToolParameterDef(
             name: "query",
             type: "string",
             description:
               "Text to find. When regex is true, write the regular expression here; backslashes must be double-escaped in the JSON string so one survives to the regex engine (e.g. '\\\\*' for a literal *, '\\\\(' for a literal parenthesis, '\\\\b' for a word boundary).",
-            required: true),
+            required: false),
           ToolParameterDef(
             name: "path",
             type: "string",
@@ -302,10 +366,22 @@ public struct MaiFileWorkspaceTool: AgentTool {
         ],
         annotations: ToolAnnotations(
           readOnly: true, idempotent: true, openWorld: false, approval: .confirm))
+      var schema = definition.inputSchema.objectValue ?? [:]
+      var properties = schema["properties"]?.objectValue ?? [:]
+      properties["queries"] = .object([
+        "type": .string("array"), "minItems": .integer(1), "maxItems": .integer(20),
+        "description": .string("Match any of these literal strings. Use instead of query; do not set regex=true."),
+        "items": .object(["type": .string("string")]),
+      ])
+      schema["properties"] = .object(properties)
+      schema["additionalProperties"] = .bool(false)
+      schema["examples"] = .array([.object(["query": .string("text")])])
+      definition.inputSchema = .object(schema)
+      return definition
     case .read:
-      return ToolDefinition(
+      var definition = ToolDefinition(
         name: operation.rawValue,
-        description: "Read a known file directly by path; no preliminary listing or search is needed. Use start_line/end_line for an inclusive line range, or offset/max_bytes for byte paging; do not mix the two. Line reads include line numbers and return up to 1000 lines. Read a coherent range or function rather than many tiny overlapping sections. PDF, DOCX and EPUB convert to Markdown; images use OCR. Use format=markdown to convert HTML too, or format=text for original UTF-8 source. For large source files, locate the relevant section with files_grep or files_read_index, or use files_get_function for a known function.",
+        description: "Read known files directly by path. Batch independent files or ranges with reads:[{path,start_line,end_line},…] (up to 20); each item accepts the single-read fields and reports its own errors and paging metadata. For a single read, use path directly. Use start_line/end_line for an inclusive line range, or offset/max_bytes for byte paging; do not mix the two. Line reads include line numbers and return up to 1000 lines. Read a coherent range or function rather than many tiny overlapping sections. PDF, DOCX and EPUB convert to Markdown; images use OCR. Use format=markdown to convert HTML too, or format=text for original UTF-8 source. For large source files, locate the relevant section with files_grep or files_read_index, or use files_get_function for a known function.",
         parameters: [
           path,
           ToolParameterDef(
@@ -334,6 +410,21 @@ public struct MaiFileWorkspaceTool: AgentTool {
         ],
         annotations: ToolAnnotations(
           readOnly: true, idempotent: true, openWorld: false, approval: .confirm))
+      var schema = definition.inputSchema.objectValue ?? [:]
+      var properties = schema["properties"]?.objectValue ?? [:]
+      var item = schema
+      item["additionalProperties"] = .bool(false)
+      properties["reads"] = .object([
+        "type": .string("array"), "minItems": .integer(1), "maxItems": .integer(20),
+        "description": .string("Independent file/range reads. Use instead of all top-level file arguments."),
+        "items": .object(item),
+      ])
+      schema["properties"] = .object(properties)
+      schema["required"] = .array([])
+      schema["additionalProperties"] = .bool(false)
+      schema["examples"] = .array([.object(["path": .string("source.txt")])])
+      definition.inputSchema = .object(schema)
+      return definition
     case .readIndex:
       return ToolDefinition(
         name: operation.rawValue,
@@ -429,10 +520,10 @@ public struct MaiFileWorkspaceTool: AgentTool {
           readOnly: false, idempotent: false, openWorld: false, approval: .confirm,
           resultImportance: .important))
     case .patch:
-      return ToolDefinition(
+      var definition = ToolDefinition(
         name: operation.rawValue,
         description:
-          "Edit a text file by replacing a literal string or regular-expression match; returns a unified diff. Prefer literal replacement for small edits, with enough surrounding text to match exactly once. Copy find from a fresh read of the same path, preserving whitespace and line endings. JSON-escape find and replace once; do not add extra backslashes before source quotes or newlines. If no match is found, reread that path and correct find before retrying.",
+          "Batch text changes with edits:[{path,find,replace},…], or use path/find/replace for one edit. A top-level path supplies the default for edits. Edits run in order against the staged result of earlier edits; all paths and matches are checked before any file is written. Returns one combined diff per file. For renames, prefer short unique literals without leading indentation. Otherwise copy find exactly from a fresh read, preserving whitespace and line endings. JSON-escape once. On mismatch, use the returned candidate text to correct the call. Disk write failures report any files already changed.",
         parameters: [
           path,
           ToolParameterDef(
@@ -454,6 +545,25 @@ public struct MaiFileWorkspaceTool: AgentTool {
         annotations: ToolAnnotations(
           readOnly: false, idempotent: false, openWorld: false, approval: .confirm,
           resultImportance: .important))
+      var schema = definition.inputSchema.objectValue ?? [:]
+      let properties = schema["properties"]?.objectValue ?? [:]
+      var editSchema = schema
+      editSchema["required"] = .array([.string("find"), .string("replace")])
+      editSchema["additionalProperties"] = .bool(false)
+      schema["properties"] = .object(properties.merging([
+        "edits": .object([
+          "type": .string("array"), "minItems": .integer(1), "maxItems": .integer(100),
+          "description": .string("Ordered patches, each with find and replace, plus optional path, regex and expected_matches. path defaults to the top-level path. Do not combine with top-level find/replace/regex/expected_matches."),
+          "items": .object(editSchema),
+        ])
+      ]) { _, new in new })
+      schema["required"] = .array([])
+      schema["additionalProperties"] = .bool(false)
+      schema["examples"] = .array([.object([
+        "path": .string("source.txt"), "find": .string("old_name"), "replace": .string("new_name"),
+      ])])
+      definition.inputSchema = .object(schema)
+      return definition
     case .mkdir:
       return ToolDefinition(
         name: operation.rawValue,
@@ -852,7 +962,23 @@ struct MaiFileWorkspace: Sendable {
   }
 
   func grep(_ arguments: [String: JSONValue]) async throws -> ToolOutput {
-    let query = try requiredText(arguments, key: "query")
+    let queries: [String]
+    if let value = arguments["queries"] {
+      guard let values = value.arrayValue, (1...20).contains(values.count),
+        arguments["query"] == nil, arguments["regex"]?.coercedBoolValue != true,
+        values.allSatisfy({ !($0.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true) })
+      else { throw MaiFileWorkspaceError.invalidArguments("queries must contain 1-20 nonempty literal strings; do not combine with query or regex=true.") }
+      queries = values.compactMap(\.stringValue)
+    } else {
+      queries = [try requiredText(arguments, key: "query")]
+    }
+    let query = queries.joined(separator: " | ")
+    let literals = queries.map { (text: $0, caseSensitive: $0.contains(where: \.isUppercase)) }
+    func containsLiteral(_ text: String) -> Bool {
+      literals.contains { literal in
+        literal.caseSensitive ? text.contains(literal.text) : text.localizedCaseInsensitiveContains(literal.text)
+      }
+    }
     var rawPath = arguments["path"]?.stringValue ?? ""
     var globs: [MaiGlob] = []
     if let split = MaiGlob.splitPath(rawPath) {
@@ -901,9 +1027,7 @@ struct MaiFileWorkspace: Sendable {
       // Most files do not match. Search them once rather than invoking the
       // literal matcher separately for every line.
       if expression == nil {
-        let containsQuery = caseSensitive
-          ? text.contains(query) : text.localizedCaseInsensitiveContains(query)
-        guard containsQuery else { return true }
+        guard containsLiteral(text) else { return true }
       }
       var start = text.startIndex
       var index = 0
@@ -921,10 +1045,8 @@ struct MaiFileWorkspace: Sendable {
             expression.firstMatch(
               in: line,
               range: NSRange(line.startIndex..<line.endIndex, in: line)) != nil
-        } else if caseSensitive {
-          matched = line.contains(query)
         } else {
-          matched = line.localizedCaseInsensitiveContains(query)
+          matched = containsLiteral(String(line))
         }
         if matched {
           let prefix = line.prefix(501)
@@ -980,12 +1102,13 @@ struct MaiFileWorkspace: Sendable {
       "truncated": .bool(hitLimit),
     ]
     if !globs.isEmpty { structured["glob"] = .array(globs.map { .string($0.pattern) }) }
+    if arguments["queries"] != nil { structured["queries"] = .array(queries.map(JSONValue.string)) }
     var text = rendered.isEmpty ? "No matching lines." : rendered.joined(separator: "\n")
     if rendered.isEmpty, scannedFiles == 0, !globs.isEmpty {
       text += " No file matched \(globs.map { "'\($0.pattern)'" }.joined(separator: " and "))."
     }
-    if rendered.isEmpty, !useRegex, query.contains("|") {
-      text += " The query was treated as literal text. For alternatives separated by |, set regex=true."
+    if rendered.isEmpty, !useRegex, arguments["queries"] == nil, query.contains("|") {
+      text += " The query was treated as literal text. For alternatives separated by |, set regex=true, or use queries:[\"nameA\",\"nameB\"] for literal alternatives without regex escaping."
     }
     if hitLimit {
       // File discovery and matching have separate limits. Reaching a scan
@@ -1310,18 +1433,119 @@ struct MaiFileWorkspace: Sendable {
       diff: MaiUnifiedDiff.render(old: text, new: edit.text, path: displayPath(rawPath)))
   }
 
-  func patch(_ arguments: [String: JSONValue]) throws -> ToolOutput {
+  private struct PatchedFile {
+    var url: URL
+    var path: String
+    var original: String
+    var text: String
+    var matches = 0
+  }
+
+  func patch(_ edits: [[String: JSONValue]], batch: Bool) throws -> ToolOutput {
     try requireWriteAccess()
+    var files: [PatchedFile] = []
+    var indices: [URL: Int] = [:]
+    var totalBytes = 0
+    for (index, edit) in edits.enumerated() {
+      try Task.checkCancellation()
+      do {
+        let rawPath = try requiredPath(edit, key: "path")
+        let file = try resolve(rawPath, allowRoot: false, mustExist: true)
+        let fileIndex: Int
+        if let existing = indices[file] {
+          fileIndex = existing
+        } else {
+          let text = try plainText(at: file, path: rawPath)
+          totalBytes += text.utf8.count
+          guard totalBytes <= 50_000_000 else {
+            throw MaiFileWorkspaceError.invalidArguments("A patch batch is limited to 50000000 total file bytes. Split the batch.")
+          }
+          fileIndex = files.count
+          indices[file] = fileIndex
+          files.append(PatchedFile(url: file, path: rawPath, original: text, text: text))
+        }
+        let result = try patchedText(files[fileIndex].text, arguments: edit)
+        totalBytes += max(0, result.text.utf8.count - files[fileIndex].text.utf8.count)
+        guard totalBytes <= 50_000_000 else {
+          throw MaiFileWorkspaceError.invalidArguments("A patch batch is limited to 50000000 total file bytes. Split the batch.")
+        }
+        files[fileIndex].text = result.text
+        files[fileIndex].matches += result.matches
+      } catch is CancellationError {
+        throw CancellationError()
+      } catch {
+        var details = (error as? MaiFilePatchError)?.details ?? [:]
+        details["changed"] = .bool(false)
+        details["changed_paths"] = .array([])
+        if batch { details["edit"] = .integer(index + 1) }
+        let prefix = batch ? "Edit \(index + 1) of \(edits.count): " : ""
+        throw MaiFilePatchError(
+          message: prefix + error.localizedDescription
+            + (batch ? " No files were changed; the entire batch was rejected. Candidates reflect earlier staged edits; correct the failing edit and resubmit the batch." : ""),
+          details: details)
+      }
+    }
+    // Verify the snapshots before committing. Individual file replacements are
+    // atomic; an I/O failure during commit must report earlier successful writes.
+    for file in files {
+      let current = try plainText(at: file.url, path: file.path)
+      guard current.utf8.elementsEqual(file.original.utf8) else {
+        throw MaiFilePatchError(
+          message: "'\(displayPath(file.path))' changed while preparing the patch. No files were changed. Read it again before retrying.",
+          details: ["path": .string(displayPath(file.path)), "changed": .bool(false), "changed_paths": .array([])])
+      }
+    }
+    try Task.checkCancellation()
+    var changed: [JSONValue] = []
+    var outputs: [ToolOutput] = []
+    for file in files {
+      let didChange = !file.original.utf8.elementsEqual(file.text.utf8)
+      do {
+        if didChange {
+          // Recheck policy and link resolution at the write boundary too.
+          guard try resolve(file.path, allowRoot: false, mustExist: true) == file.url else {
+            throw MaiFileWorkspaceError.invalidArguments("Path '\(displayPath(file.path))' changed while preparing the patch.")
+          }
+          guard try plainText(at: file.url, path: file.path).utf8.elementsEqual(file.original.utf8) else {
+            throw MaiFileWorkspaceError.invalidArguments("The file changed while preparing the patch; read it again before retrying.")
+          }
+          try Data(file.text.utf8).write(to: file.url, options: [.atomic])
+          changed.append(.string(displayPath(file.path)))
+        }
+      } catch {
+        let state = changed.isEmpty ? "No files were changed."
+          : "Files already changed: " + changed.map(\.compactJSONString).joined(separator: ", ") + ". Do not retry the entire batch."
+        throw MaiFilePatchError(
+          message: "Could not write '\(displayPath(file.path))': \(error.localizedDescription). \(state)",
+          details: ["path": .string(displayPath(file.path)), "changed": .bool(!changed.isEmpty),
+            "changed_paths": .array(changed)])
+      }
+      outputs.append(mutationOutput(
+        "Patched \(file.matches) match\(file.matches == 1 ? "" : "es") in \(displayPath(file.path)).",
+        path: file.path,
+        diff: MaiUnifiedDiff.render(old: file.original, new: file.text, path: displayPath(file.path)),
+        extra: ["matches": .integer(file.matches)]))
+    }
+    if !batch { return outputs[0] }
+    return ToolOutput(
+      content: [.text(outputs.map(\.text).joined(separator: "\n\n"))],
+      structuredContent: .object([
+        "edits": .integer(edits.count), "changed": .bool(!changed.isEmpty),
+        "changed_paths": .array(changed),
+        "files": .array(outputs.compactMap(\.structuredContent)),
+      ]))
+  }
+
+  private func patchedText(_ text: String, arguments: [String: JSONValue]) throws
+    -> (text: String, matches: Int)
+  {
     let rawPath = try requiredPath(arguments, key: "path")
-    let file = try resolve(rawPath, allowRoot: false, mustExist: true)
-    let text = try plainText(at: file, path: rawPath)
     let find = try requiredText(arguments, key: "find")
     guard let replacement = arguments["replace"]?.stringValue else {
       throw MaiFileWorkspaceError.missingArgument("replace")
     }
     let expected = arguments["expected_matches"]?.intValue ?? 1
     guard (1...100).contains(expected) else { throw MaiFileWorkspaceError.invalidMatchCount }
-
     let patched: String
     let matchCount: Int
     if arguments["regex"]?.coercedBoolValue == true {
@@ -1334,35 +1558,44 @@ struct MaiFileWorkspace: Sendable {
       matchCount = matches.count
       guard matchCount == expected else {
         throw patchMatchError(
-          expected: expected, actual: matchCount, path: rawPath, text: text, find: find, regex: true)
+          expected: expected, actual: matchCount, path: rawPath, text: text, find: find,
+          replacement: replacement, regex: true)
       }
-      patched = expression.stringByReplacingMatches(
-        in: text, range: range, withTemplate: replacement)
+      patched = expression.stringByReplacingMatches(in: text, range: range, withTemplate: replacement)
     } else {
       matchCount = text.components(separatedBy: find).count - 1
       guard matchCount == expected else {
         throw patchMatchError(
-          expected: expected, actual: matchCount, path: rawPath, text: text, find: find, regex: false)
+          expected: expected, actual: matchCount, path: rawPath, text: text, find: find,
+          replacement: replacement, regex: false)
       }
       patched = text.replacingOccurrences(of: find, with: replacement)
     }
-    let data = Data(patched.utf8)
-    guard data.count <= Self.maximumEditableFileBytes else {
+    guard patched.utf8.count <= Self.maximumEditableFileBytes else {
       throw MaiFileWorkspaceError.fileTooLarge(Self.maximumEditableFileBytes)
     }
-    try data.write(to: file, options: [.atomic])
-    return mutationOutput(
-      "Patched \(matchCount) match\(matchCount == 1 ? "" : "es") in \(displayPath(rawPath)).",
-      path: rawPath,
-      diff: MaiUnifiedDiff.render(old: text, new: patched, path: displayPath(rawPath)))
+    return (patched, matchCount)
   }
 
   private func patchMatchError(
-    expected: Int, actual: Int, path: String, text: String, find: String, regex: Bool
-  ) -> MaiFileWorkspaceError {
+    expected: Int, actual: Int, path: String, text: String, find: String,
+    replacement: String, regex: Bool
+  ) -> MaiFilePatchError {
     var hint = "No changes were made. "
+    var details: [String: JSONValue] = [
+      "path": .string(displayPath(path)), "expected_matches": .integer(expected),
+      "actual_matches": .integer(actual),
+    ]
     if actual == 0 {
       if !regex {
+        let unindentedText = text.replacingOccurrences(of: "\r\n", with: "\n")
+          .replacingOccurrences(of: #"(?m)^[ \t]+"#, with: "", options: .regularExpression)
+        let unindentedReplacement = replacement.replacingOccurrences(of: "\r\n", with: "\n")
+          .replacingOccurrences(of: #"(?m)^[ \t]+"#, with: "", options: .regularExpression)
+        if !unindentedReplacement.isEmpty, unindentedText.contains(unindentedReplacement) {
+          hint += "The replacement already occurs in the current/staged file (ignoring leading indentation). Check for an overlapping or already-applied edit. "
+          details["replacement_present"] = .bool(true)
+        }
         if ["\\n", "\\r", "\\t"].contains(where: { find.contains($0) }) {
           hint += "find contains literal backslash escape sequences. If you intended newlines or tabs, "
             + "encode them once in JSON (\\n, \\r, \\t), not twice (\\\\n, \\\\r, \\\\t). "
@@ -1388,12 +1621,66 @@ struct MaiFileWorkspace: Sendable {
       }
       hint += "Read this same path with files_read or files_read_range (use files_grep to locate the text), "
         + "then correct find to match the current content, including whitespace. Do not retry the identical call."
+      if !regex {
+        let candidates = patchCandidates(text: text, find: find)
+        if !candidates.isEmpty {
+          details["candidates"] = .array(candidates)
+          hint += "\nCurrent candidate text (JSON strings preserve exact whitespace; check replacement indentation too):"
+          for candidate in candidates {
+            if let row = candidate.objectValue {
+              let clipped = row["truncated"]?.boolValue == true ? " (truncated; read this range for the full text)" : ""
+              hint += "\nLine \(row["line"]?.intValue ?? 0)\(clipped): \(row["text"]?.compactJSONString ?? "")"
+            }
+          }
+        }
+      }
     } else if actual <= 100 {
       hint += "Make find more specific, or set expected_matches to \(actual) if you intend to replace every match (maximum 100)."
     } else {
       hint += "Make find more specific; expected_matches cannot exceed 100."
     }
-    return .patchMatchCount(expected, actual, displayPath(path), hint)
+    return MaiFilePatchError(
+      message: "Expected \(expected) patch matches, found \(actual) in '\(displayPath(path))'. \(hint)",
+      details: details)
+  }
+
+  /// Return a few actual source spans, never a fuzzy replacement. These let a
+  /// model repair whitespace or stale context without another file read.
+  private func patchCandidates(text: String, find: String) -> [JSONValue] {
+    let lines = text.components(separatedBy: "\n")
+    var sought = find.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")
+    let trailingNewline = sought.last == ""
+    if trailingNewline { sought.removeLast() }
+    guard !sought.isEmpty, sought.count <= 40, sought.count <= lines.count else { return [] }
+    func unindent(_ line: String) -> String {
+      String(line.drop(while: { $0 == " " || $0 == "\t" })).trimmingCharacters(in: .newlines)
+    }
+    let normalized = sought.map(unindent)
+    var starts: [Int] = []
+    for start in 0...(lines.count - sought.count) {
+      if normalized.indices.allSatisfy({ unindent(lines[start + $0]) == normalized[$0] }) {
+        starts.append(start)
+        if starts.count == 3 { break }
+      }
+    }
+    if starts.isEmpty {
+      // Stale lines often retain their beginning (e.g. an API call with a
+      // renamed argument). Require a meaningful prefix and label as candidates.
+      let anchor = normalized.max(by: { $0.count < $1.count }) ?? ""
+      let prefix = String(anchor.prefix(32))
+      if prefix.count >= 12 {
+        starts = Array(lines.indices.filter { unindent(lines[$0]).hasPrefix(prefix) }.prefix(3))
+      }
+    }
+    return starts.map { start in
+      let end = min(lines.count, start + sought.count)
+      let candidate = lines[start..<end].joined(separator: "\n")
+        + (trailingNewline && end < lines.count ? "\n" : "")
+      return .object([
+        "line": .integer(start + 1), "text": .string(String(candidate.prefix(2_000))),
+        "truncated": .bool(candidate.count > 2_000),
+      ])
+    }
   }
 
   func createDirectory(_ arguments: [String: JSONValue]) throws -> ToolOutput {
@@ -2276,7 +2563,14 @@ struct MaiFileWorkspace: Sendable {
   }
 }
 
+private struct MaiFilePatchError: LocalizedError {
+  var message: String
+  var details: [String: JSONValue]
+  var errorDescription: String? { message }
+}
+
 private enum MaiFileWorkspaceError: LocalizedError {
+  case invalidArguments(String)
   case invalidRoot(String)
   case missingArgument(String)
   case outsideWorkspace(String)
@@ -2302,7 +2596,6 @@ private enum MaiFileWorkspaceError: LocalizedError {
   case invalidGlob(String)
   case invalidMatchCount
   case emptyPatchMatch
-  case patchMatchCount(Int, Int, String, String)
   case invalidPath(String)
   case functionNotFound(String, String)
   case functionAmbiguous(String, [Int])
@@ -2311,6 +2604,7 @@ private enum MaiFileWorkspaceError: LocalizedError {
 
   var errorDescription: String? {
     switch self {
+    case .invalidArguments(let message): message
     case .invalidRoot(let path): "Files workspace '\(path)' is not an accessible directory."
     case .missingArgument(let name): "\(name) is required."
     case .outsideWorkspace(let path): "Path '\(path)' is outside the configured workspace."
@@ -2343,8 +2637,6 @@ private enum MaiFileWorkspaceError: LocalizedError {
     case .invalidGlob(let message): "Invalid pattern: \(message)"
     case .invalidMatchCount: "expected_matches must be between 1 and 100."
     case .emptyPatchMatch: "The regular expression must not match an empty range."
-    case .patchMatchCount(let expected, let actual, let path, let hint):
-      "Expected \(expected) patch matches, found \(actual) in '\(path)'. \(hint)"
     case .invalidPath(let path): "Could not change the current directory to '\(path)'."
     case .functionNotFound(let name, let path):
       "Could not find a complete function named '\(name)' in '\(path)'. Use files_read_index to inspect the available declarations."

@@ -1868,6 +1868,32 @@ The `files` group can list files, find approximate names, grep bounded UTF-8
 content, convert documents to readable text, write or append text, create folders,
 rename entries, and delete them. Existing files are edited in place with
 `files_patch` (unique literal or regex replacement), which returns a unified diff.
+For related edits, use one call with an `edits` array instead of a call per
+replacement. Each edit takes `path`, `find`, `replace`, and optional `regex` and
+`expected_matches`. A top-level `path` supplies the default for edits that omit it:
+
+```json
+{"path":"src/api.c","edits":[{"find":"old_name(","replace":"new_name("},{"path":"src/api.h","find":"old_name(","replace":"new_name("}]}
+```
+
+Up to 100 edits run in order against the staged results of earlier edits,
+including repeated paths. All paths and matches are checked before any writes;
+a mismatch rejects the batch without changing any files. Each file is written
+atomically and produces one combined diff. A disk error during writing reports
+any files already changed, so the model can continue without replaying edits.
+Strict match counts remain in effect. Indentation and stale-context failures
+include bounded candidate source text as JSON strings to help correct the call
+without another read; candidates are never applied automatically.
+
+`files_read` accepts `reads:[{path,start_line,end_line},…]` to read up to 20
+independent files or ranges. Each item supports the ordinary read fields,
+path permissions, conversion, and paging. Errors and continuation offsets are
+reported per item; successful reads remain available if another item fails.
+Default byte-page budgets are shared across the batch.
+`files_grep` accepts `queries:["nameA","nameB"]` for up to 20 literal alternatives
+in one scan, preserving punctuation without regex escaping. A single `query`
+remains literal unless `regex:true` is explicit.
+
 Prefer literal replacements for small edits, copying enough surrounding text
 from a fresh read to match exactly once. `files_replace_range` is excluded from
 the default catalog; custom hosts can opt in with
