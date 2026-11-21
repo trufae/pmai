@@ -100,3 +100,12 @@ func modelCatalogPricing() throws {
   let restored = try JSONDecoder().decode(ModelDescriptor.self, from: JSONEncoder().encode(model))
   #expect(restored.pricing == model.pricing)
 }
+
+@Test("A provider-specific deployment window can lower the model's advertised capacity")
+func providerDeploymentContextWindow() throws {
+  let model = try #require(ModelDescriptor.catalogEntry([
+    "id": .string("model"), "context_length": .integer(131072),
+    "top_provider": .object(["context_length": .integer(32768)]),
+  ]))
+  #expect(model.contextWindow == 32768)
+}

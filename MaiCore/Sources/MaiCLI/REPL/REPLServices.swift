@@ -216,3 +216,24 @@ final class MemoryState: @unchecked Sendable {
       .sorted { $0.updatedAt > $1.updatedAt }
   }
 }
+
+final class REPLQuotaMonitor {
+  private let store: ProviderStatusStore
+  private var checked: (provider: ConfiguredProvider, date: Date)?
+  private var task: Task<Void, Never>?
+
+  init(store: ProviderStatusStore) { self.store = store }
+  func cancel() { task?.cancel(); task = nil; checked = nil }
+
+  func refresh(provider: ConfiguredProvider, model: String, notify: @escaping @Sendable () -> Void) {
+    guard checked?.provider != provider || Date().timeIntervalSince(checked?.date ?? .distantPast) >= 60 else { return }
+    let changed = checked?.provider != provider
+    checked = (provider, Date())
+    task?.cancel()
+    let store = store
+    task = Task {
+      _ = try? await store.status(for: provider, model: model, refresh: changed)
+      if !Task.isCancelled { notify() }
+    }
+  }
+}

@@ -2864,3 +2864,14 @@ func globalToolsSwitch() async throws {
   #expect(try await runtime.visibleDefinitions(for: request).contains { $0.name == "fixture" })
   #expect(try await runtime.runTool(call, for: agent).text == "EXECUTED")
 }
+
+@Test("Finished processes retain prepared context occupancy instead of remeasuring raw history")
+func finishedContextOccupancy() async throws {
+  let snapshot = ContextUsage(usedTokens: 1200, windowTokens: 8192, isEstimated: false)
+  let provider = ScriptedProvider(responses: [.init(message: .assistant("done"), stopReason: .stop, contextUsage: snapshot)])
+  let runtime = AgentRuntime()
+  try await runtime.register(provider)
+  let pid = await runtime.allocateProcess(agentID: "main")
+  _ = try await runtime.run(.init(provider: "scripted", messages: [.user("task")]), process: pid)
+  #expect(await runtime.supervisor.info(pid)?.contextSize?.usage == snapshot)
+}

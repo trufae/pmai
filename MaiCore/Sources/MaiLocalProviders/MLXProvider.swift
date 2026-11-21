@@ -263,10 +263,11 @@ public actor MLXProvider: ChatProvider {
           }
           if let usage { await emit(.usage(usage)) }
           if let contextUsage { await emit(.contextUsage(contextUsage)) }
+          let outputLimit = usage.map { min(maxTokens, maxKVSize - $0.inputTokens) } ?? maxTokens
           return .init(
             message: .init(role: .assistant, content: reasoning.parts + toolCalls), usage: usage,
             stopReason: !toolCalls.isEmpty ? .toolCall
-              : (usage?.outputTokens ?? 0) >= maxTokens ? .length : .stop,
+              : (usage?.outputTokens ?? 0) >= outputLimit ? .length : .stop,
             contextUsage: contextUsage)
         } catch {
           generationTask.cancel()

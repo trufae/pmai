@@ -298,7 +298,8 @@ func openAIModelCatalog() async throws {
             {
               "id":"model-a",
               "name":"Model A",
-              "architecture":{"input_modalities":["text","image","audio"]}
+              "architecture":{"input_modalities":["text","image","audio"]},
+              "pricing":{"prompt":"0.0000025","completion":"0.00001"}
             }
           ]
         }
@@ -310,7 +311,9 @@ func openAIModelCatalog() async throws {
     configuration: .init(
       baseURL: try #require(URL(string: "https://models.example.test/v1/chat/completions")),
       apiKey: "secret",
-      additionalHeaders: ["X-Workspace": "test"]),
+      additionalHeaders: ["X-Workspace": "test"],
+      modelPricing: ["model-z": try #require(ModelPricing(catalog:
+        .object(["prompt": .string("0"), "completion": .string("0.000002")]), configured: true))]),
     session: stubSession())
   let models = try await provider.availableModels()
 
@@ -320,6 +323,10 @@ func openAIModelCatalog() async throws {
   #expect(models.first?.capabilities.contains(.imageInput) == true)
   #expect(models.first?.capabilities.contains(.audioInput) == true)
   #expect(models.last?.ownedBy == "vendor")
+  #expect(models.first?.pricing?.inputPerMillion == 2.5)
+  #expect(models.last?.pricing?.inputPerMillion == 0)
+  #expect(models.last?.pricing?.outputPerMillion == 2)
+  #expect(models.last?.pricing?.configured == true)
   let request = try #require(recorder.request)
   #expect(request.httpMethod == "GET")
   #expect(request.url?.absoluteString == "https://models.example.test/v1/models")

@@ -135,7 +135,7 @@ extension ModelDescriptor {
     let context = [object["context_length"], object["context_window"], object["max_context_length"],
       object["top_provider"]?.objectValue?["context_length"]]
       + info.keys.sorted().filter { $0.hasSuffix(".context_length") }.map { info[$0] }
-    if let size = context.compactMap({ $0?.intValue }).first(where: { $0 > 0 }) {
+    if let size = context.compactMap({ $0?.intValue }).filter({ $0 > 0 }).min() {
       model.contextWindow = size
     }
     if let pricing = object["pricing"].flatMap({ ModelPricing(catalog: $0) }) {

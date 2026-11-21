@@ -13,7 +13,8 @@ public struct ModelPricing: Codable, Equatable, Sendable {
   /// Negative/dynamic prices and malformed fields remain unknown, never free.
   public init?(catalog value: JSONValue, configured: Bool = false) {
     guard let fields = value.objectValue,
-      fields["currency"]?.stringValue.map({ $0.uppercased() == "USD" }) ?? true else { return nil }
+      fields["currency"]?.stringValue.map({ $0.uppercased() == "USD" }) ?? true
+    else { return nil }
     func price(_ key: String, scale: Double = 1_000_000) -> Double? {
       let value: Double?
       switch fields[key] {
@@ -31,7 +32,10 @@ public struct ModelPricing: Codable, Equatable, Sendable {
     request = price("request", scale: 1)
     hasTiers = !(fields["overrides"]?.arrayValue?.isEmpty ?? true)
     self.configured = configured
-    guard inputPerMillion != nil || outputPerMillion != nil || cachedInputPerMillion != nil || request != nil else { return nil }
+    guard
+      inputPerMillion != nil || outputPerMillion != nil || cachedInputPerMillion != nil
+        || request != nil
+    else { return nil }
   }
 
   public var label: String {
