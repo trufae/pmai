@@ -16,6 +16,52 @@ final class UsageStatsStore: ObservableObject {
   typealias ModelTotals = ModelUsageTotals
 
   @Published private(set) var ledger: ModelUsageLedger
+  private(set) var contexts: [UUID: ChatContextSnapshot] = [:]
+  @Published private(set) var contextRevision = 0
+
+  struct ChatContextSnapshot {
+    var usage: ContextUsage
+    var request: ChatCompletionRequest
+    var assistantText: String? = nil
+
+    func matches(_ conversation: Conversation, settings: AppSettings) -> Bool {
+      let source = request.conversation
+      return conversation.messages.contains(where: {
+        $0.id == request.assistantMessageID && (assistantText == nil || $0.text.hasSuffix(assistantText ?? ""))
+      })
+        && source.provider == conversation.provider && source.modelID == conversation.modelID
+        && source.endpointID == conversation.endpointID && request.settings == settings
+        && source.contextWindowMode == conversation.contextWindowMode
+        && source.contextWindowTokens == conversation.contextWindowTokens
+        && source.mlxMaxKVSize == conversation.mlxMaxKVSize
+        && source.systemPromptID == conversation.systemPromptID
+        && source.reasoningLevel == conversation.reasoningLevel
+        && source.toolSelection == conversation.toolSelection
+        && Self.evidence(source, excluding: request.assistantMessageID)
+          == Self.evidence(conversation, excluding: request.assistantMessageID)
+    }
+
+    private static func evidence(_ conversation: Conversation, excluding id: UUID) -> [ChatMessage] {
+      conversation.messages.filter { $0.id != id }.compactMap(\.contextVersion)
+    }
+  }
+
+  static func recordContext(_ usage: ContextUsage, request: ChatCompletionRequest, assistantText: String? = nil) {
+    guard case .text = request.oneShotResponseFormat else { return }
+    // Auxiliary title/summary calls have transient conversation IDs. Retain only
+    // a bounded set; this is live telemetry, never a duplicate durable history.
+    if shared.contexts[request.conversation.id] == nil, shared.contexts.count >= 8 {
+      shared.contexts.removeAll()
+    }
+    var snapshotRequest = request
+    snapshotRequest.context = ""
+    snapshotRequest.nativeContinuationMessages = []
+    snapshotRequest.nativeTools = nil
+    snapshotRequest.toolPrompt = ""
+    shared.contexts[request.conversation.id] = .init(usage: usage, request: snapshotRequest, assistantText: assistantText)
+    shared.contextRevision &+= 1
+  }
+
 
   var totals: [ModelTotals] { ledger.totals }
 

@@ -88,6 +88,7 @@ public actor ACPClient {
   private var sessionOptions: [RemoteSessionOption] = []
   private var legacyModes = false
   private var legacyModels: [ModelDescriptor] = []
+  public private(set) var contextUsage: ContextUsage?
   private var currentModel: String?
   private var toolCalls: [String: ToolCall] = [:]
   private var toolNames: [String: String] = [:]
@@ -584,6 +585,7 @@ public actor ACPClient {
     if !supportsPromptImages, request.attachments.contains(where: { if case .image = $0 { true } else { false } }) {
       throw JSONRPCError.invalidParams("This host does not accept images. Update the pmai host to attach images.")
     }
+    contextUsage = nil
     toolCalls.removeAll()
     toolNames.removeAll()
     activeSink = emit
@@ -1019,6 +1021,11 @@ public actor ACPClient {
           ]))
       }
       await onUpdate?(update)
+    }
+    if let update = params?.objectValue?["update"], let usage = ContextUsage(acpUpdate: update) {
+      contextUsage = usage
+      await activeSink?(.contextUsage(usage))
+      return
     }
     guard let sink = activeSink else { return }
     guard let update = params?.objectValue?["update"]?.objectValue,

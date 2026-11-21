@@ -659,6 +659,7 @@ final class RemoteAgentChat {
     didSet { cachedPresentation = nil }
   }
   @ObservationIgnored private var cachedPresentation: Conversation?
+  var contextUsage: ContextUsage?
   var status = "Disconnected"
   var error: String?
   var busy = false
@@ -1424,12 +1425,15 @@ final class RemoteAgentChat {
     guard self.generation == generation, let object = update.objectValue,
       let kind = object["sessionUpdate"]?.stringValue
     else { return }
-    if kind == "_pmai/session_state", let running = object["running"]?.boolValue {
+    if kind == "usage_update" {
+      contextUsage = ContextUsage(acpUpdate: update)
+    } else if kind == "_pmai/session_state", let running = object["running"]?.boolValue {
       responding = running
       if !running { flushMessages(); cancelPermissions(); persist() }
       busy = running || operation != nil
       status = running ? "Responding…" : "Connected"
     } else if kind == "config_option_update" {
+      contextUsage = nil
       configurationOptions = RemoteSessionOption.parse(object["configOptions"])
     } else if kind == "available_commands_update" {
       catalogLoaded = false

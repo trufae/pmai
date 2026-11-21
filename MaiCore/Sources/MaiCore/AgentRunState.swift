@@ -21,6 +21,9 @@ extension AgentRuntime {
     var modelRequest: ProviderRequest?
     var modelRequestTranscriptCount = 0
     var modelInputTokens: Int?
+    var contextUsage: ContextUsage?
+    var contextUsageTranscriptCount = 0
+    var contextWindowTokens: Int?
     var skipAutocompaction = false
     var contextRecoveryAttempts = 0
     var adaptiveThreshold: Int?
@@ -65,13 +68,21 @@ extension AgentRuntime {
 
     var contextSize: AgentContextSize {
       guard var modelRequest else { return AgentContextSize(messages: contextMessages) }
+      if var contextUsage {
+        let added = AgentConversationContext.messages(from: Array(transcript.dropFirst(contextUsageTranscriptCount)))
+        contextUsage.usedTokens += AgentContextSize(messages: added).estimatedTokens
+        contextUsage.isEstimated = contextUsage.isEstimated || !added.isEmpty
+        return AgentContextSize(usage: contextUsage, messageCount: modelRequest.messages.count + added.count)
+      }
       let added = AgentConversationContext.messages(from: Array(transcript.dropFirst(modelRequestTranscriptCount)))
+      if let modelInputTokens {
+        let usage = ContextUsage(usedTokens: modelInputTokens + AgentContextSize(messages: added).estimatedTokens,
+          windowTokens: contextWindowTokens)
+        return AgentContextSize(usage: usage, messageCount: modelRequest.messages.count + added.count)
+      }
       modelRequest.messages += added
       var size = AgentContextSize(request: modelRequest)
-      if let modelInputTokens {
-        size.estimatedTokens = max(
-          size.estimatedTokens, modelInputTokens + AgentContextSize(messages: added).estimatedTokens)
-      }
+      size.usage = ContextUsage(usedTokens: size.estimatedTokens, windowTokens: contextWindowTokens)
       return size
     }
 

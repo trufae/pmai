@@ -286,6 +286,7 @@ extension AppSettings {
     conversation.showThinking = showThinkingByDefault
     conversation.toolCallingMode = toolCallingMode
     conversation.contextWindowMode = nil
+    conversation.contextWindowTokens = nil
     conversation.mlxMaxKVSize = nil
     conversation.toolsEnabled = true
     conversation.toolSelection = toolSelection

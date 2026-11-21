@@ -22,6 +22,9 @@ public protocol ChatProvider: Sendable {
   /// backend cannot enumerate models.
   func availableModels() async throws -> [ModelDescriptor]
 
+  /// A local deployment limit, without a catalog/network request.
+  func contextWindow(model: String, options: GenerationOptions) async -> Int?
+
   /// Lets providers with persistent remote connections apply live offline settings.
   func configureInternetAccess(_ policy: InternetAccessPolicy) async
 
@@ -37,6 +40,8 @@ extension ChatProvider {
   public func configureInternetAccess(_ policy: InternetAccessPolicy) async {}
 
   public func availableModels() async throws -> [ModelDescriptor] { [] }
+
+  public func contextWindow(model: String, options: GenerationOptions) async -> Int? { nil }
 
   public func complete(_ request: ProviderRequest) async throws -> ProviderResponse {
     try await complete(request) { _ in }

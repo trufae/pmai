@@ -1,10 +1,17 @@
 import Foundation
+import MaiCore
 
 #if canImport(Metal)
   import Metal
 #endif
 
 public enum MLXModels {
+  public static func contextWindow(configuration: JSONValue) -> Int? {
+    let object = configuration.objectValue ?? [:]
+    let text = object["text_config"]?.objectValue ?? object
+    return ContextUsage.effectiveWindow(text["max_position_embeddings"]?.intValue)
+  }
+
   public static let defaultModelID = "LiquidAI/LFM2.5-1.2B-Instruct-MLX-4bit"
   public static let presets = [
     defaultModelID,

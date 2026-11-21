@@ -682,8 +682,11 @@ extension MaiCLI {
       let selected: AgentPID? = if case .agent(let pid) = loop.focus { pid } else { chatProcessIDs[session.id] }
       let strip = AgentProcessNavigation.strip(tabs, selected: selected)
       let detail = facts.isEmpty ? "" : " · " + facts.joined(separator: " · ")
+      let window = await runtime.contextWindow(
+        provider: identitySession.profile.provider, model: identitySession.profile.model,
+        options: identitySession.profile.options)
       return (
-        "\(activityMarker)\(strip) \(currentDirectoryName()) \(promptIdentity(identitySession, contextSize: liveContext, includeContext: loop.focus == .main || liveContext != nil))\(detail)",
+        "\(activityMarker)\(strip) \(currentDirectoryName()) \(promptIdentity(identitySession, contextSize: liveContext, includeContext: loop.focus == .main || liveContext != nil, contextWindow: window))\(detail)",
         running
       )
     }

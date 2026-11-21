@@ -32,13 +32,14 @@ extension MaiCLI {
   /// The agent, estimated context, and provider/model a chat runs on. The
   /// context sits immediately before the model so it stays easy to compare.
   static func promptIdentity(
-    _ session: REPLSession, contextSize: AgentContextSize? = nil, includeContext: Bool = true
+    _ session: REPLSession, contextSize: AgentContextSize? = nil, includeContext: Bool = true,
+    contextWindow: Int? = nil
   ) -> String {
     let profile = session.profile
     let model = profile.model.isEmpty
       ? (profile.provider.rawValue.isEmpty ? "no model selected" : profile.provider.rawValue)
       : "\(profile.provider.rawValue)::\(profile.model)"
-    let context = includeContext ? " · \(promptContextStatus(session, contextSize: contextSize))" : ""
+    let context = includeContext ? " · \(promptContextStatus(session, contextSize: contextSize, contextWindow: contextWindow))" : ""
     let effort = visibleUITitle(profile.options.reasoningEffort ?? "auto")
     return "[\(profile.agentID)]\(context) · \(model) [\(effort.isEmpty ? "auto" : effort)]"
   }
@@ -68,22 +69,18 @@ extension MaiCLI {
     return "\(seconds)s"
   }
 
-  /// A fast, deliberately approximate context indicator. Providers tokenize
-  /// differently and do not all expose their context-window size, so showing
-  /// an estimate is more honest than implying an exact percentage.
   private static func promptContextStatus(
-    _ session: REPLSession, contextSize: AgentContextSize? = nil
+    _ session: REPLSession, contextSize: AgentContextSize? = nil, contextWindow: Int? = nil
   ) -> String {
-    if let size = contextSize ?? session.historyContextSize {
-      return "\(ModelUsageFormat.count(size.estimatedTokens))/\(size.messageCount)"
+    let measured = contextSize ?? session.historyContextSize
+    let size = measured ?? AgentContextSize(messages: session.history.messages)
+    if measured == nil, let page = session.historyWindow, page.totalCount > size.messageCount {
+      return "ctx ~\(ModelUsageFormat.count(size.estimatedTokens))+ · \(page.totalCount) msgs"
     }
-    let size = AgentContextSize(messages: session.history.messages)
-    // A chat opened on its latest page has not been measured as a whole:
-    // its message count is known, its tokens are at least the page's.
-    guard let window = session.historyWindow, window.totalCount > size.messageCount else {
-      return "\(ModelUsageFormat.count(size.estimatedTokens))/\(size.messageCount)"
-    }
-    return "\(ModelUsageFormat.count(size.estimatedTokens))+/\(window.totalCount)"
+    var usage = size.usage ?? ContextUsage(usedTokens: size.estimatedTokens)
+    usage.windowTokens = usage.windowTokens ?? ContextUsage.effectiveWindow(
+      contextWindow, session.profile.options.contextWindowTokens)
+    return usage.label
   }
 
   static func markdownTableCell(_ text: String) -> String {

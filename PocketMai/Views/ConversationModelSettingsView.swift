@@ -91,6 +91,12 @@ struct ConversationModelSettingsView: View {
           }
 
           Section("Context") {
+            TextField("Token limit (auto)", value: contextTokenLimit, format: .number)
+              .keyboardType(.numberPad)
+              .disabled(store.isResponding || store.isCompacting)
+            Text("Leave empty for the provider limit. A smaller limit reduces context for this chat, including reply space.")
+              .font(.caption)
+              .foregroundStyle(.secondary)
             Picker(
               "Chat history", selection: conversationBinding(\.contextWindowMode, fallback: nil)
             ) {
@@ -287,6 +293,12 @@ struct ConversationModelSettingsView: View {
 
   private func effectiveSystemPromptID(for conversation: Conversation) -> UUID {
     conversation.systemPromptID ?? store.effectiveSystemPromptID(forFolderID: conversation.folderID)
+  }
+
+  private var contextTokenLimit: Binding<Int?> {
+    Binding(get: { store.currentConversation?.contextWindowTokens }, set: { value in
+      store.updateCurrentConversationSettings { $0.contextWindowTokens = ContextUsage.effectiveWindow(value) }
+    })
   }
 
   private func conversationBinding<Value>(

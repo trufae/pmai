@@ -109,6 +109,10 @@ actor LocalMLXProvider {
       toolPromptInContext: request.toolPromptInContext, messageLimitOverride: request.messageLimitOverride)
     guard messages.contains(where: { $0.role == .user }) else { throw LocalMLXError.emptyPrompt }
     let maxKVSize = (request.conversation.mlxMaxKVSize ?? request.settings.mlxMaxKVSize).effectiveSize
+    let window = ContextUsage.effectiveWindow(maxKVSize, request.conversation.contextWindowTokens)
+    await UsageStatsStore.recordContext(ContextUsage(
+      usedTokens: AgentRuntime.contextTokens(.init(model: modelID, messages: messages, tools: request.nativeTools ?? [])),
+      windowTokens: window), request: request)
     let accumulator = await MainActor.run { CoreProviderEventAccumulator(onUpdate: onUpdate) }
     let metrics = LocalMLXGenerationMetrics()
     let response = try await provider.complete(
@@ -117,12 +121,18 @@ actor LocalMLXProvider {
           model: modelID, messages: messages, tools: request.nativeTools ?? [],
           options: .init(
             temperature: request.hasToolCalling ? 0.2 : 0.7, maxOutputTokens: 1_200,
+            contextWindowTokens: request.conversation.contextWindowTokens,
             reasoningEffort: request.conversation.reasoningLevel.rawValue,
             additional: ["mlxMaxKVSize": .integer(maxKVSize)]),
           stream: request.conversation.usesStreaming), settings: request.settings),
       emit: { await accumulator.consume($0) },
       onGenerationInfo: { await metrics.record($0) })
     let (output, timing) = try await accumulator.finish(response: response)
+    if let usage = response.usage {
+      await UsageStatsStore.recordContext(response.contextUsage ?? ContextUsage(
+        usedTokens: usage.inputTokens + usage.outputTokens, windowTokens: window,
+        isEstimated: usage.isEstimated), request: request, assistantText: output)
+    }
     let stats: GenerationStats
     if let info = await metrics.info {
       stats = GenerationStats(

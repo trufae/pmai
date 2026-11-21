@@ -137,7 +137,7 @@ public actor ACPProvider: ChatProvider {
     return ProviderResponse(
       message: message,
       usage: nil,
-      stopReason: stopReason)
+      stopReason: stopReason, contextUsage: await client.contextUsage)
   }
 
   public func shutdown() async {

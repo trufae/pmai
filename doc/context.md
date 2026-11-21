@@ -32,8 +32,8 @@ model's reasoning effort and of the durable compaction threshold.
 
 Smart uses the model window configured with `/set ctx.window`, a limit learned
 from a provider context-limit error, or the exact model's advertised catalog
-window. Explicit settings override catalog hints; a provider rejection can
-tighten an explicit setting. Model listings populate the runtime's window cache.
+window. A configured cap can lower a catalog window; it cannot enlarge one. A provider
+rejection can tighten the cap further. Model listings populate the runtime's window cache.
 If the window is still unknown when a request reaches the fallback trigger,
 the runtime attempts catalog discovery once per connection before reducing.
 Small requests do not wait for discovery; failed or empty automatic discovery
@@ -240,3 +240,33 @@ separate context/UI plumbing; its compaction also retains original messages and
 recording references, and exports preserve context annotations. Remote managed tool-loop providers own their own
 context; smart/adaptive do not summarize inside those managed loops. Selecting
 a CLI strategy does not establish identical mobile or remote behavior.
+
+## Context occupancy
+
+The shell status line and native iOS chat title show `ctx ~12.0k/32.8k (37%)`
+when capacity is known. The denominator is tokens, not message count. `~` marks
+an estimate. The numerator describes the prepared model context, including
+instructions and tools; provider input counts take precedence over byte-based
+estimates. This is separate from tokens spent over multiple calls.
+
+Without a known limit pmai shows only context tokens. Before iOS has prepared a
+call, or after history/settings edits, the saved working transcript is a partial
+estimate: `ctx ~12.0k+/32.8k`, without a percentage. Partially loaded shell history
+also keeps the `+` marker. Request preparation and completed calls refresh the
+measurement; this is not a per-keystroke tokenizer. Last-call telemetry is
+transient; reopening a chat uses the transcript estimate until another call.
+
+`/set ctx.window 8192` sets a lower shell context cap; `auto` removes it. In iOS,
+Chat Settings → Context → Token limit persists a per-chat cap; clear the field
+for automatic capacity. MLX uses the smaller of its loaded model's advertised
+`max_position_embeddings`, configured KV cache and user cap, and bounds generation
+by the remaining space. Apple uses the SDK's context size/token counter when
+available, otherwise estimates. OpenAI-compatible catalogs can publish context
+metadata; a plain catalog that omits it leaves capacity unknown. No model-name
+lookup table is assumed.
+
+ACP's standard `usage_update` supplies actual remote occupancy and capacity.
+These snapshots replace previous occupancy and never become billable token
+usage. A remote agent owns its context policy: a host-side `ctx.window` setting
+cannot reconfigure an arbitrary agent's native context. pmai hosts forward their
+own occupancy over ACP too, marking estimates in `_meta.pmai.estimated`.

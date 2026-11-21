@@ -25,6 +25,14 @@ extension AgentRuntime {
     }
     let usage = call.usage(for: turn.request)
     state.modelInputTokens = providerResponse.usage?.inputTokens
+    if var usage = providerResponse.contextUsage {
+      if !managesToolLoop {
+        usage.windowTokens = ContextUsage.effectiveWindow(
+          usage.windowTokens, turn.request.options.contextWindowTokens, state.contextWindowTokens)
+      }
+      state.contextUsage = usage
+      state.contextUsageTranscriptCount = state.transcript.count + 1
+    }
     state.totalUsage = state.totalUsage.merging(usage)
     // Reduced context usage does not describe the full saved transcript.
     state.lastUsage =

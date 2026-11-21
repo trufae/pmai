@@ -165,6 +165,10 @@ func remoteACPHostAccess() {
                     name = tools[0]['name']
                     tool_result = rpc('tools/call',{'name':name,'arguments':{}})
                     if 'TWICE' in text: tool_result = rpc('tools/call',{'name':name,'arguments':{}})
+            if 'CONTEXT_USAGE' in text:
+                update('usage_update', used=1200, size=8192)
+                update('usage_update', used=None, size=8192)
+                child_update('unknown-child','usage_update',used=7000,size=8192)
             update('agent_thought_chunk', content={'type':'text','text':'thinking'})
             answer = json.dumps({'model':model,'effort':effort,'turn':turn,'prompt':text,'tool':tool_result,
                                  'sessionMethod':session_method,'systemPrompt':native_prompt,
@@ -206,6 +210,17 @@ func remoteACPHostAccess() {
       ACPConfiguredProviderFactory().makeProvider(
         from: .init(id: "test-acp", kind: "acp", displayName: "Fixture", options: options),
         environment: environment) as? ACPProvider)
+  }
+
+  @Test("ACP context usage replaces occupancy without charging it as token spending")
+  func acpContextUsage() async throws {
+    let provider = try providerFixture()
+    let first = try await provider.complete(.init(model: "large", messages: [.user("CONTEXT_USAGE")]))
+    #expect(first.contextUsage == ContextUsage(usedTokens: 1200, windowTokens: 8192, isEstimated: false))
+    #expect(first.usage == nil)
+    let second = try await provider.complete(.init(model: "large", messages: [.user("next")]))
+    #expect(second.contextUsage == nil)
+    await provider.shutdown()
   }
 
   @Test("ACP context replacement honors assistant deletion and bypasses stored sessions")
