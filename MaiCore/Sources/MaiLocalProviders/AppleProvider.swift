@@ -71,7 +71,7 @@ public struct AppleProvider: ChatProvider {
     return nil
   }
 
-  public func contextWindow(model: String, options: GenerationOptions) async -> Int? {
+  public func contextWindow(model: String, options: MaiCore.GenerationOptions) async -> Int? {
     ContextUsage.effectiveWindow(options.contextWindowTokens, Self.contextWindow(deviceOnly: deviceOnly))
   }
 

@@ -85,7 +85,7 @@ public actor MLXProvider: ChatProvider {
       loadedContextWindow = await loaded.perform { context in
         guard case .directory(let directory) = context.configuration.id,
           let data = try? Data(contentsOf: directory.appendingPathComponent("config.json")),
-          let config = try? JSONDecoder().decode(JSONValue.self, from: data)
+          let config = try? JSONDecoder().decode(MaiCore.JSONValue.self, from: data)
         else { return nil as Int? }
         return MLXModels.contextWindow(configuration: config)
       }
