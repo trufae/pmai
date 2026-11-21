@@ -69,8 +69,6 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
-	<key>NSRemindersFullAccessUsageDescription</key>
-	<string>PocketMai manages reminders in its own list in the Reminders app when you enable this integration.</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>
 	<string>PocketMai can read your calendar events only when the Calendar tool is enabled and called in chat.</string>
 	<key>NSCalendarsUsageDescription</key>
@@ -92,6 +90,8 @@
 	<string>PocketMai uses the microphone for active voice conversations. When Native iOS Live is selected, raw microphone audio stays on this device.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>PocketMai saves chat images to your photo library when you choose Save Image.</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>PocketMai manages reminders in its own list in the Reminders app when you enable this integration.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>PocketMai transcribes voice on device by default. Audio may be sent to Apple only if you enable Allow Apple Server Transcription in voice settings. Offline mode always requires on-device transcription.</string>
 	<key>NSSupportsLiveActivities</key>
@@ -129,7 +129,9 @@
 	</dict>
 	<key>UIBackgroundModes</key>
 	<array>
+		<string>processing</string>
 		<string>audio</string>
+		<string>fetch</string>
 	</array>
 	<key>UIFileSharingEnabled</key>
 	<true/>
