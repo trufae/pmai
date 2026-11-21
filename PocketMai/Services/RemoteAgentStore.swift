@@ -996,6 +996,7 @@ final class RemoteAgentChat {
           let options = try await client.setConfigurationOption(id: update.id, value: update.value)
           guard generation == attempt else { return }
           configurationOptions = options
+          contextUsage = nil
         }
       } catch {
         if generation == attempt, !(error is CancellationError) {
