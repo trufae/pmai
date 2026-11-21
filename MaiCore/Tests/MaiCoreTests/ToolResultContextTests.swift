@@ -93,7 +93,9 @@ func toolResultContextLoop() async throws {
   #expect(await stats.totals().reduce(0) { $0 + $1.callCount } == 6)
 
   let sizes = await primary.contextSizes
-  #expect(sizes == requests.map { AgentContextSize(request: $0) })
+  #expect(sizes.map(\.messageCount) == requests.map { $0.messages.count })
+  #expect(sizes.map(\.estimatedTokens) == requests.map { AgentContextSize(request: $0).estimatedTokens })
+  #expect(sizes.allSatisfy { $0.usage == .init(usedTokens: $0.estimatedTokens) })
   #expect(sizes[1].estimatedTokens > sizes[0].estimatedTokens)
   #expect(sizes[2].estimatedTokens < sizes[1].estimatedTokens)
   #expect(sizes[3].estimatedTokens < sizes[2].estimatedTokens)
