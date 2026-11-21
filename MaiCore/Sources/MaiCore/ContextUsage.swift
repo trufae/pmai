@@ -7,7 +7,9 @@ public struct ContextUsage: Codable, Equatable, Sendable {
   public var isEstimated: Bool
   public var isPartial: Bool
 
-  public init(usedTokens: Int, windowTokens: Int? = nil, isEstimated: Bool = true, isPartial: Bool = false) {
+  public init(
+    usedTokens: Int, windowTokens: Int? = nil, isEstimated: Bool = true, isPartial: Bool = false
+  ) {
     self.usedTokens = max(0, usedTokens)
     self.windowTokens = Self.effectiveWindow(windowTokens)
     self.isEstimated = isEstimated
@@ -20,7 +22,8 @@ public struct ContextUsage: Codable, Equatable, Sendable {
   }
 
   public var label: String {
-    let used = (isEstimated ? "~" : "") + ModelUsageFormat.count(usedTokens) + (isPartial ? "+" : "")
+    let used =
+      (isEstimated ? "~" : "") + ModelUsageFormat.count(usedTokens) + (isPartial ? "+" : "")
     guard let windowTokens, windowTokens > 0 else { return "ctx \(used)" }
     if isPartial { return "ctx \(used)/\(ModelUsageFormat.count(windowTokens))" }
     let percent = String(format: "%.0f", Double(usedTokens) / Double(windowTokens) * 100)
@@ -34,7 +37,8 @@ public struct ContextUsage: Codable, Equatable, Sendable {
       let used = fields["used"]?.intValue, used >= 0,
       let size = fields["size"]?.intValue, size >= 0
     else { return nil }
-    let estimated = fields["_meta"]?.objectValue?["pmai"]?.objectValue?["estimated"]?.boolValue ?? false
+    let estimated =
+      fields["_meta"]?.objectValue?["pmai"]?.objectValue?["estimated"]?.boolValue ?? false
     self.init(usedTokens: used, windowTokens: size, isEstimated: estimated)
   }
 }

@@ -41,21 +41,8 @@ extension MaiCLI {
       return
     }
     if id == session.profile.provider.rawValue {
-      let live = if let process { await runtime.supervisor.info(process)?.contextSize } else { nil as AgentContextSize? }
-      let window = await runtime.contextWindow(provider: session.profile.provider,
-        model: session.profile.model, options: session.profile.options)
-      await terminal.line("\(session.profile.provider)::\(session.profile.model): "
-        + promptContextStatus(session, contextSize: live, contextWindow: window))
-      var context = live?.usage ?? ContextUsage(usedTokens:
-        (live ?? session.historyContextSize ?? AgentContextSize(messages: session.history.messages)).estimatedTokens,
-        isPartial: live == nil)
-      context.windowTokens = context.windowTokens ?? window
-      let pricing = services.modelCatalog.model(session.profile.model, provider: session.profile.provider)?.pricing
-      await terminal.line("Price: " + (pricing?.label ?? "unknown; /models refreshes the catalog"))
-      for warning in UsageWarnings.messages(context: context,
-        threshold: configuration?.ui.usageWarningPercent ?? UsageWarnings.defaultThreshold) {
-        await terminal.line("⚠ " + warning)
-      }
+      await currentContextReport(session: session, runtime: runtime, process: process, services: services,
+        warningThreshold: configuration?.ui.usageWarningPercent ?? UsageWarnings.defaultThreshold, terminal: terminal)
     }
     if flags.contains("verbose") || flags.contains("models") {
       await terminal.line(
@@ -68,6 +55,26 @@ extension MaiCLI {
         provider: provider, session: session, services: services,
         refresh: flags.contains("refresh") || fields.contains("refresh"),
         warningThreshold: configuration?.ui.usageWarningPercent ?? UsageWarnings.defaultThreshold))
+  }
+
+  static func currentContextReport(session: REPLSession, runtime: AgentRuntime, process: AgentPID?,
+    services: REPLServices, warningThreshold: Int, terminal: TerminalWriter) async {
+    var size = session.historyContextSize
+    if let process, let info = await runtime.supervisor.info(process), !info.state.isTerminal {
+      size = info.contextSize
+    }
+    let profile = session.profile
+    let window = await runtime.contextWindow(provider: profile.provider, model: profile.model, options: profile.options)
+    let label = promptContextStatus(session, contextSize: size, contextWindow: window)
+    await terminal.line("\(profile.provider)::\(profile.model): \(label)")
+    let measured = size ?? AgentContextSize(messages: session.history.messages)
+    var context = measured.usage ?? ContextUsage(usedTokens: measured.estimatedTokens, isPartial: true)
+    if context.windowTokens == nil { context.windowTokens = window }
+    let model = services.modelCatalog.model(profile.model, provider: profile.provider)
+    await terminal.line("Price: " + (model?.pricing?.label ?? "unknown; /models refreshes the catalog"))
+    for warning in UsageWarnings.messages(context: context, threshold: warningThreshold) {
+      await terminal.line("⚠ " + warning)
+    }
   }
 
   /// `/usage`: the limits and their resets, then what this machine spent

@@ -344,9 +344,8 @@ extension MaiCLI {
     let (events, continuation) = AsyncStream<REPLEvent>.makeStream()
     var eventIterator = events.makeAsyncIterator()
     var deferredEvents: [REPLEvent] = []
-    var quotaRefresh: Task<Void, Never>?
-    var quotaChecked: (provider: ConfiguredProvider, date: Date)?
-    defer { quotaRefresh?.cancel() }
+    let quotaMonitor = REPLQuotaMonitor(store: services.providerStatus)
+    defer { quotaMonitor.cancel() }
     let interruptHandler = TerminalInterruptHandler {
       continuation.yield(.interrupt($0, endedInput: $1))
     }
@@ -486,8 +485,9 @@ extension MaiCLI {
             try currentStore.loadChatPage(id: id)
           }
         ).value {
-          session.historyContextSize = AgentContextSize(messages: session.history.messages)
+          let size = session.historyContextSize ?? AgentContextSize(messages: session.history.messages)
           session.history = AgentTranscript(messages: page.messages)
+          session.historyContextSize = size
           session.historyWindow = page.historyWindow
           session.subagents = page.subagents
           workspace.upsert(session.chat)
@@ -690,22 +690,17 @@ extension MaiCLI {
         provider: identitySession.profile.provider, model: identitySession.profile.model,
         options: identitySession.profile.options)
       let threshold = configuration?.ui.usageWarningPercent ?? UsageWarnings.defaultThreshold
+      if offline || threshold == 0 { quotaMonitor.cancel() }
       if threshold > 0, !offline,
-        let provider = configuration?.providers.first(where: { $0.id == identitySession.profile.provider.rawValue }),
-        quotaChecked?.provider != provider || Date().timeIntervalSince(quotaChecked?.date ?? .distantPast) >= 60 {
-        quotaRefresh?.cancel()
-        let changed = quotaChecked?.provider != provider
-        quotaChecked = (provider, Date())
-        let model = identitySession.profile.model
-        quotaRefresh = Task {
-          _ = try? await services.providerStatus.status(for: provider, model: model, refresh: changed)
-          if !Task.isCancelled { continuation.yield(.supervisor) }
+        let provider = configuration?.providers.first(where: { $0.id == identitySession.profile.provider.rawValue }) {
+        quotaMonitor.refresh(provider: provider, model: identitySession.profile.model) {
+          continuation.yield(.supervisor)
         }
       }
-      var usage = liveContext?.usage ?? ContextUsage(usedTokens:
-        (liveContext ?? identitySession.historyContextSize ?? AgentContextSize(messages: identitySession.history.messages)).estimatedTokens,
-        isPartial: liveContext == nil)
-      usage.windowTokens = usage.windowTokens ?? window
+      let measured = liveContext ?? identitySession.historyContextSize
+      let size = measured ?? AgentContextSize(messages: identitySession.history.messages)
+      var usage = size.usage ?? ContextUsage(usedTokens: size.estimatedTokens, isPartial: true)
+      if usage.windowTokens == nil { usage.windowTokens = window }
       let cached = services.providerStatus.cachedStatus()
       let quota = cached?.provider == identitySession.profile.provider.rawValue ? cached : nil
       let warnings = UsageWarnings.messages(context: usage, quota: quota, threshold: threshold)
@@ -3811,6 +3806,11 @@ extension MaiCLI {
         case .success(let result):
           if let turn, turn.chatID != nil, turn.restartPrompt == nil {
             settled = settle(result.transcript, from: turn)
+            if turn.chatID == session.id, session.profile.provider == turn.request.provider,
+              session.profile.model == turn.request.model, session.profile.options == turn.request.options,
+              session.history.messages == (turn.redactor?.unredact(result.transcript) ?? result.transcript) {
+              session.historyContextSize = await runtime.supervisor.info(pid)?.contextSize
+            }
           }
           succeeded = true
           modelStats = result.modelStats

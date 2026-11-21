@@ -6,9 +6,12 @@ struct REPLSession: Sendable {
   /// The session the chat presents to providers; see `ChatSession`.
   var sessionID: String
   var title: String
-  var profile: SessionProfile
+  var profile: SessionProfile {
+    didSet { historyContextSize = nil }
+  }
   var history: AgentTranscript {
     didSet {
+      historyContextSize = nil
       if !isKnownUniquelyReferenced(&historyChanges) { historyChanges = historyChanges.copy() }
       historyChanges.changed(
         from: zip(oldValue.messages, history.messages).prefix { $0 == $1 }.count)

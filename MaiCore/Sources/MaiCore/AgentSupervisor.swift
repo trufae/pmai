@@ -723,7 +723,7 @@ public actor AgentSupervisor {
     guard var entry = entries[pid] else { return }
     entry.transcript = result.transcript
     entry.info.transcriptRevision &+= 1
-    entry.info.contextSize = AgentContextSize(messages: result.transcript)
+    entry.info.contextSize = entry.info.contextSize ?? AgentContextSize(messages: result.transcript)
     entry.result = result
     entry.info.modelTurns = result.modelTurns
     entry.info.toolCalls = result.toolCalls

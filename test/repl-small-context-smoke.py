@@ -19,7 +19,8 @@ fail_after = None
 
 class Provider(JSONProvider):
     def do_GET(self):
-        self.respond({'data': [{'id': 'small'}]})
+        self.respond({'data': [{'id': 'small', 'pricing': {
+            'prompt': '0.0000025', 'completion': '0.00001'}}]})
 
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
@@ -38,8 +39,11 @@ class Provider(JSONProvider):
             return
         markers = sorted(set(re.findall(r'\bKEEP-\d+\b', text)))
         answer = 'Saved facts: ' + ' '.join(markers) if markers else 'Ready.'
-        self.respond({'choices': [{'message': {'role': 'assistant', 'content': answer},
-                                   'finish_reason': 'stop'}]})
+        response = {'choices': [{'message': {'role': 'assistant', 'content': answer},
+                                 'finish_reason': 'stop'}]}
+        if 'CONTEXT_USAGE_FIXTURE' in text:
+            response['usage'] = {'prompt_tokens': 7000, 'completion_tokens': 2, 'total_tokens': 7002}
+        self.respond(response)
 
 
 def main():
@@ -73,7 +77,14 @@ def main():
                 assert result.returncode == 0, output
                 return output
 
-            run(['seed'], resume=False)
+            output = run(['seed', '/set ctx.window 8192', 'CONTEXT_USAGE_FIXTURE',
+                          '/usage', '/usage refresh', '/models --sort input', '/usage',
+                          '/set usage.warn 90', '/set usage.warn', '/set usage.warn 0',
+                          '/reset usage.warn', '/set ctx.window auto'], resume=False)
+            assert '/8.2k (' in output and 'Context ~85% full' in output, output
+            assert 'in $2.5' in output and 'out $10' in output, output
+            assert 'Unknown provider' not in output, output
+            assert json.loads(config.read_text())['ui']['usagewarn'] == 80, output
             chat_file = next((project_storage(root / 'home', root) / 'chats').glob('*.json'))
             chat = read_chat(chat_file)
             source = '\n'.join(f'KEEP-{index} ' + 'evidence ' * 6000 for index in range(12))

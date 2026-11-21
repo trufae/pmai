@@ -77,7 +77,7 @@ extension MaiCLI {
     if measured == nil, let page = session.historyWindow, page.totalCount > size.messageCount {
       return "ctx ~\(ModelUsageFormat.count(size.estimatedTokens))+ · \(page.totalCount) msgs"
     }
-    var usage = size.usage ?? ContextUsage(usedTokens: size.estimatedTokens)
+    var usage = size.usage ?? ContextUsage(usedTokens: size.estimatedTokens, isPartial: true)
     usage.windowTokens = usage.windowTokens ?? ContextUsage.effectiveWindow(
       contextWindow, session.profile.options.contextWindowTokens)
     return usage.label
