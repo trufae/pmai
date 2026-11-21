@@ -169,7 +169,7 @@ extension MaiCLI {
       }
     }
     let requestedKey = parts[0].lowercased()
-    let key = requestedKey == "ui.toolresultlines" ? "ui.tools" : requestedKey
+    let key = ["ui.toolresultlines": "ui.tools", "usage.warn": "ui.usagewarn"][requestedKey] ?? requestedKey
     let displayedKey = key
     if key == "http.transport" {
       guard var draft = configuration,
@@ -661,7 +661,7 @@ extension MaiCLI {
       return
     }
     let booleanKeys = ["ui.markdown", "ui.tableborders", "ui.broadcast", "ui.toolgroups"]
-    let countKeys = ["ui.tools", "ui.toolcalls", "ui.scroll", "ui.scrollbar"]
+    let countKeys = ["ui.tools", "ui.toolcalls", "ui.scroll", "ui.scrollbar", "ui.usagewarn"]
     let levelKeys = ["ui.subagents", "ui.thinking", "ui.color", "ui.mode", "ui.line"]
     if key == "ui.title" {
       await terminal.line("Use /chat title [TEXT|none] for a temporary prompt and terminal/tab title.")
@@ -702,6 +702,12 @@ extension MaiCLI {
       } else {
         ui.editor = value
       }
+    } else if key == "ui.usagewarn" {
+      guard let percent = Int(parts[1]), (0...100).contains(percent) else {
+        await terminal.line("Usage: /set usage.warn <0..100> (0 disables warnings)")
+        return
+      }
+      ui.usageWarningPercent = percent
     } else if key == "ui.scroll" {
       guard let value = Int(parts[1]), value > 0 else {
         await terminal.line("Usage: /set ui.scroll <positive integer>")

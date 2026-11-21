@@ -10,6 +10,7 @@ import SwiftUI
 struct UsageStatsView: View {
   private typealias Metric = ModelUsageReport.Metric
 
+  @EnvironmentObject private var store: AppStore
   @ObservedObject private var stats = UsageStatsStore.shared
   @State private var metric: Metric = .ranking
   @State private var selectedID: String?
@@ -40,6 +41,19 @@ struct UsageStatsView: View {
 
   var body: some View {
     List {
+      if let quota = stats.quota {
+        Section("Reported provider allowance") {
+          Text(quota.summary())
+        }
+      }
+      if let conversation = store.currentConversation,
+        let snapshot = stats.contexts[conversation.id], snapshot.matches(conversation, settings: store.settings) {
+        Section("Current chat") {
+          Text(snapshot.usage.label)
+          Text("Last prepared model context; lifetime spending is listed below.")
+            .font(.caption).foregroundStyle(.secondary)
+        }
+      }
       if stats.totals.isEmpty {
         ContentUnavailableView(
           "No Usage Yet",

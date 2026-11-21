@@ -4,6 +4,7 @@ import SwiftUI
 struct ConversationModelSettingsView: View {
   @EnvironmentObject private var store: AppStore
   @Environment(\.dismiss) private var dismiss
+  @AppStorage("usage.warningPercent") private var usageWarningPercent = 80
   @State private var showingNewFolder = false
   @State private var showingFolderManager = false
   @State private var showingCompactSheet = false
@@ -91,6 +92,10 @@ struct ConversationModelSettingsView: View {
           }
 
           Section("Context") {
+            Stepper(usageWarningPercent == 0 ? "Usage warnings off" : "Warn at \(usageWarningPercent)%",
+              value: $usageWarningPercent, in: 0...100, step: 5)
+            Text("Warn near context and reported quota limits. Zero disables warnings.")
+              .font(.caption).foregroundStyle(.secondary)
             TextField("Token limit (auto)", value: contextTokenLimit, format: .number)
               .keyboardType(.numberPad)
               .disabled(store.isResponding || store.isCompacting)

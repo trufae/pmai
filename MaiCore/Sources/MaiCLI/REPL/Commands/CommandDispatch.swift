@@ -598,8 +598,8 @@ extension MaiCLI {
       await handleStatsCommand(argument, store: services.usageStats, terminal: terminal)
     case "/usage":
       await handleUsageCommand(
-        argument, session: session, configuration: configuration, services: services,
-        terminal: terminal)
+        argument, session: session, runtime: runtime, process: chatProcess,
+        configuration: configuration, services: services, terminal: terminal)
     case "/clear":
       await terminal.clearScreen()
     case "/queue":

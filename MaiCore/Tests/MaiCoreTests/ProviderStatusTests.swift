@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+  import FoundationNetworking
+#endif
 import Testing
 
 @testable import MaiCore
@@ -205,3 +208,24 @@ struct ProviderStatusUsageTests {
     }
   }
 #endif
+
+@Test("Usage warnings use consumed quota, rearm after reset and never invent unknown capacity")
+func usageWarningThresholds() throws {
+  let now = Date(timeIntervalSince1970: 1000)
+  let context = ContextUsage(usedTokens: 800, windowTokens: 1000)
+  let quota = MaiProviderStatus(provider: "test", limits: [
+    "weekly": .init(remainingPercent: 20, resetsAt: now.addingTimeInterval(60)),
+    "expired": .init(remainingPercent: 0, resetsAt: now),
+  ], balances: [.credits(remaining: 10, allowance: 100, resetsAt: nil)])
+  #expect(UsageWarnings.messages(context: context, quota: quota, now: now).count == 3)
+  #expect(UsageWarnings.messages(context: context, quota: quota, threshold: 95, now: now).isEmpty)
+  #expect(UsageWarnings.messages(context: context, quota: quota, threshold: 0, now: now).isEmpty)
+  #expect(UsageWarnings.messages(context: ContextUsage(usedTokens: 100000)).isEmpty)
+  #expect(UsageWarnings.messages(context: ContextUsage(usedTokens: 900, windowTokens: 1000, isPartial: true)).isEmpty)
+  #expect(UsageWarnings.messages(context: ContextUsage(usedTokens: 799, windowTokens: 1000)).isEmpty)
+  let legacy = try JSONDecoder().decode(ConfiguredTerminalUI.self, from: Data("{}".utf8))
+  #expect(legacy.usageWarningPercent == 80)
+  let restored = try JSONDecoder().decode(ConfiguredTerminalUI.self,
+    from: JSONEncoder().encode(ConfiguredTerminalUI(usageWarningPercent: 90)))
+  #expect(restored.usageWarningPercent == 90)
+}

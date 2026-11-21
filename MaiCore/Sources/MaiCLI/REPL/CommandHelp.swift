@@ -57,8 +57,9 @@ extension MaiCLI {
     """
 
   static let usageHelp: String = """
-    What is left to spend:
-      /usage             Limits, their resets, and this machine's token usage
+    What is left to spend (context and quota warnings default to 80%):
+      /set usage.warn N  Warn at N% used; 0 disables warnings
+      /usage             Current context, account limits, and this machine's token usage
       /usage PROVIDER    The same for another configured provider
       /usage -verbose    The recorded usage of that provider, all time
       /usage -models     The same, one row per model

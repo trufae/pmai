@@ -29,6 +29,7 @@ extension MaiCLI {
     if toolProxyKeys.contains(key) { key = "tool.proxy" }
     if ["tools.auto", "tool.automatic"].contains(key) { key = "tool.auto" }
     if key == "ui.toolresultlines" { key = "ui.tools" }
+    if key == "usage.warn" { key = "ui.usagewarn" }
     let configuration = MaiConfiguration()
     let themeKey = key.hasPrefix("ui.") ? String(key.dropFirst(3)) : key
     if let value = TerminalTheme.value(themeKey, in: configuration.ui) {
@@ -911,7 +912,7 @@ extension MaiCLI {
     let keys = [
       "ui.color", "ui.mode", "ui.line", "ui.scroll", "ui.scrollbar", "ui.highlight", "ui.editor", "ui.markdown", "ui.tools", "ui.toolcalls", "ui.toolgroups",
       "ui.subagents", "ui.thinking", "ui.tableborders",
-      "ui.broadcast",
+      "ui.broadcast", "ui.usagewarn",
       "ui.fgbold", "ui.fgitalic",
     ]
     return keys.map { "\($0) = \(uiSetting($0, in: ui))" }
@@ -925,6 +926,7 @@ extension MaiCLI {
     case "ui.line": return ui.line.rawValue
     case "ui.scroll": return String(ui.scroll)
     case "ui.scrollbar": return String(ui.scrollbar)
+    case "ui.usagewarn": return String(ui.usageWarningPercent)
     case "ui.highlight": value = ui.highlight
     // Unset is worth showing as what it resolves to, since that is the editor
     // that actually opens.

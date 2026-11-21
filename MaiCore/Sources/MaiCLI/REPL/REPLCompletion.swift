@@ -90,7 +90,7 @@ extension MaiCLI {
       "/set retry.", "/set retry.attempts ", "/set retry.delay ", "/set ctx.", "/set ctx.compact ",
       "/set ctx.compact off",
       "/set ctx.recent ", "/set ctx.recent auto",
-      "/set ctx.window ", "/set ctx.window auto",
+      "/set ctx.window ", "/set ctx.window auto", "/set usage.warn ",
       "/set ctx.strategy ", "/set ctx.strategy cache", "/set ctx.strategy size", "/set ctx.strategy smart",
       "/set ctx.strategy tools",
       "/set ctx.strategy adaptive",

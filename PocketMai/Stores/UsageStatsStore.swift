@@ -18,6 +18,27 @@ final class UsageStatsStore: ObservableObject {
   @Published private(set) var ledger: ModelUsageLedger
   private(set) var contexts: [UUID: ChatContextSnapshot] = [:]
   @Published private(set) var contextRevision = 0
+  @Published private(set) var quota: MaiProviderStatus?
+  private let quotaStore = ProviderStatusStore()
+  private var quotaChecked: (endpoint: OpenAIEndpoint, date: Date)?
+
+  func refreshQuota(conversation: Conversation, settings: AppSettings) async {
+    guard !settings.isOffline, conversation.provider == .openAICompatible,
+      let endpoint = OpenAICompatibleProvider.selectedEndpoint(for: conversation, settings: settings)
+    else { return }
+    guard quotaChecked?.endpoint != endpoint
+      || Date().timeIntervalSince(quotaChecked?.date ?? .distantPast) >= 60 else { return }
+    let changed = quotaChecked?.endpoint != endpoint
+    if changed { quota = nil }
+    quotaChecked = (endpoint, Date())
+    let configuration = ConfiguredProvider(id: endpoint.id.uuidString, kind: endpoint.kind,
+      displayName: endpoint.name, baseURL: URL(string: endpoint.baseURL), apiKey: endpoint.apiKey,
+      headers: endpoint.effectiveHeaders)
+    let status = try? await quotaStore.status(for: configuration, model: conversation.modelID, refresh: changed)
+    guard quotaChecked?.endpoint == endpoint else { return }
+    guard !Task.isCancelled else { quotaChecked = nil; return }
+    quota = status
+  }
 
   struct ChatContextSnapshot {
     var usage: ContextUsage
