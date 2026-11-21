@@ -8,6 +8,8 @@ extension MaiCLI {
   static func handleUsageCommand(
     _ argument: String,
     session: REPLSession,
+    runtime: AgentRuntime,
+    process: AgentPID?,
     configuration: MaiConfiguration?,
     services: REPLServices,
     terminal: TerminalWriter
@@ -18,7 +20,7 @@ extension MaiCLI {
     for field in fields where field.hasPrefix("-") {
       flags.insert(String(field.drop { $0 == "-" }).lowercased())
     }
-    for field in fields where !field.hasPrefix("-") {
+    for field in fields where !field.hasPrefix("-") && field != "refresh" {
       target = target ?? field
     }
     if flags.contains("help") {
@@ -38,6 +40,21 @@ extension MaiCLI {
         "Unknown provider '\(id)'. /providers lists them.", to: .standardError)
       return
     }
+    if id == session.profile.provider.rawValue {
+      let live = if let process { await runtime.supervisor.info(process)?.contextSize } else { nil as AgentContextSize? }
+      let window = await runtime.contextWindow(provider: session.profile.provider,
+        model: session.profile.model, options: session.profile.options)
+      await terminal.line("\(session.profile.provider)::\(session.profile.model): "
+        + promptContextStatus(session, contextSize: live, contextWindow: window))
+      var context = live?.usage ?? ContextUsage(usedTokens:
+        (live ?? session.historyContextSize ?? AgentContextSize(messages: session.history.messages)).estimatedTokens,
+        isPartial: live == nil)
+      context.windowTokens = context.windowTokens ?? window
+      for warning in UsageWarnings.messages(context: context,
+        threshold: configuration?.ui.usageWarningPercent ?? UsageWarnings.defaultThreshold) {
+        await terminal.line("⚠ " + warning)
+      }
+    }
     if flags.contains("verbose") || flags.contains("models") {
       await terminal.line(
         await providerUsageReport(
@@ -47,7 +64,8 @@ extension MaiCLI {
     await terminal.line(
       await providerStatusReport(
         provider: provider, session: session, services: services,
-        refresh: flags.contains("refresh") || fields.contains("refresh")))
+        refresh: flags.contains("refresh") || fields.contains("refresh"),
+        warningThreshold: configuration?.ui.usageWarningPercent ?? UsageWarnings.defaultThreshold))
   }
 
   /// `/usage`: the limits and their resets, then what this machine spent
@@ -55,18 +73,21 @@ extension MaiCLI {
   /// facts a person needs to decide whether to keep going.
   static func providerStatusReport(
     provider: ConfiguredProvider?, session: REPLSession, services: REPLServices, refresh: Bool,
-    now: Date = Date()
+    now: Date = Date(), warningThreshold: Int = UsageWarnings.defaultThreshold
   ) async -> String {
     guard let provider else {
       return "No provider selected. Pick one with /model first."
     }
     let usageLine = await providerUsageLine(provider: provider, services: services)
-    let limits: String
+    var limits: String
     do {
       let status = try await services.providerStatus.status(
         for: provider, model: session.profile.model, refresh: refresh, now: now)
       limits = status?.summary(now: now, providerLabel: provider.id)
         ?? "\(provider.id) reports no limits. Known: Ollama Cloud, Codex, and Claude Code."
+      for warning in UsageWarnings.messages(quota: status, threshold: warningThreshold, now: now) {
+        limits += "\n⚠ " + warning
+      }
     } catch {
       limits = "\(provider.id): \(error.localizedDescription)"
     }

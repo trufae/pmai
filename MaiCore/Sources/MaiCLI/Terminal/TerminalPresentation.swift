@@ -69,7 +69,7 @@ extension MaiCLI {
     return "\(seconds)s"
   }
 
-  private static func promptContextStatus(
+  static func promptContextStatus(
     _ session: REPLSession, contextSize: AgentContextSize? = nil, contextWindow: Int? = nil
   ) -> String {
     let measured = contextSize ?? session.historyContextSize

@@ -270,3 +270,25 @@ These snapshots replace previous occupancy and never become billable token
 usage. A remote agent owns its context policy: a host-side `ctx.window` setting
 cannot reconfigure an arbitrary agent's native context. pmai hosts forward their
 own occupancy over ACP too, marking estimates in `_meta.pmai.estimated`.
+
+## Usage warnings
+
+`/usage` includes the current chat's context, alongside the provider's allowance
+and lifetime spending. `-models` and `-verbose` keep their ledger views and include
+current context for the active provider. The iOS Statistics screen also shows the
+last measured chat context and reported provider allowance.
+
+`/set usage.warn 80` (alias `/set ui.usagewarn 80`) sets a persistent warning
+threshold for both context occupancy and reported quota consumption. It defaults
+to 80; use `0` to disable or `/reset usage.warn` to restore the default. iOS has the
+same persistent preference under Chat Settings → Context → Warn at N%.
+Warnings stay visible near the chat title/status prompt without modal interruptions.
+They clear below the threshold, when capacity changes, or when a known quota resets.
+Unknown limits and partial transcript estimates never produce percentage warnings.
+
+While warnings are enabled, the shell refreshes the selected provider's quota in
+the background at most once a minute when the prompt updates. iOS refreshes when
+an idle chat updates/opens, also at most once a minute. Offline mode disables
+refreshes. Quota sources remain the existing Ollama Cloud and supported ACP agent
+status adapters; an ordinary OpenAI-compatible endpoint may publish no allowance.
+These snapshots can lag actual spending and are advisory, never a spending cap.

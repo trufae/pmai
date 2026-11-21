@@ -75,6 +75,7 @@ struct ChatView: View {
 
   @ObservedObject private var usageStats = UsageStatsStore.shared
   @State private var contextUsage: ContextUsage?
+  @AppStorage("usage.warningPercent") private var usageWarningPercent = 80
   @ObservedObject var storeObservation: AppStoreViewObservation
   @State var remoteChat: RemoteAgentChat? = nil
   @AppStorage(AwakeController.preferenceKey) private var keepAwake = false
@@ -139,7 +140,13 @@ struct ChatView: View {
 
   var body: some View {
     chatViewWithAlerts
-      .task(id: conversationActivitySnapshot) { refreshContextUsage() }
+      .task(id: conversationActivitySnapshot) {
+        refreshContextUsage()
+        if let conversation = currentConversation, remoteChat == nil, !currentChatIsResponding,
+          usageWarningPercent > 0 {
+          await usageStats.refreshQuota(conversation: conversation, settings: store.settings)
+        }
+      }
       .onChange(of: usageStats.contextRevision) { _, _ in refreshContextUsage() }
       .onChange(of: store.endpointModelDescriptors) { _, _ in refreshContextUsage() }
       .onChange(of: store.settings) { _, _ in refreshContextUsage() }
@@ -713,7 +720,12 @@ struct ChatView: View {
         .lineLimit(1)
         .foregroundStyle(remoteChat.map { $0.connected ? Color.primary : .red } ?? .primary)
         if let label = (remoteChat?.contextUsage ?? contextUsage)?.label {
-          Text(label).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+          Text(label).font(.caption.monospacedDigit())
+            .foregroundStyle(contextWarnings.isEmpty ? Color.secondary : .orange)
+        }
+        if !contextWarnings.isEmpty {
+          Text("⚠ " + contextWarnings.joined(separator: " · "))
+            .font(.caption2).foregroundStyle(.orange).lineLimit(1)
         }
         if let metadata = chatTitleMetadata {
           HStack(spacing: 4) {
@@ -775,6 +787,15 @@ struct ChatView: View {
     if let remoteChat { return remoteChat.responding }
     guard let id = currentConversation?.id else { return false }
     return store.isResponding(in: id)
+  }
+
+  private var contextWarnings: [String] {
+    let endpoint = currentConversation.flatMap {
+      OpenAICompatibleProvider.selectedEndpoint(for: $0, settings: store.settings)
+    }
+    let quota = remoteChat == nil && usageStats.quota?.provider == endpoint?.id.uuidString ? usageStats.quota : nil
+    return UsageWarnings.messages(context: remoteChat?.contextUsage ?? contextUsage,
+      quota: quota, threshold: usageWarningPercent)
   }
 
   private func refreshContextUsage() {

@@ -590,6 +590,7 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
   public var scroll: Int
   /// Scrollbar width: positive on the right, negative on the left, zero hidden. Only shown for overflow.
   public var scrollbar: Int
+  public var usageWarningPercent: Int
   /// Literal text highlighted throughout the terminal transcript. Empty disables it.
   public var highlight: String
   public var backgroundLine: String
@@ -648,6 +649,7 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
     line: TerminalInputLineMode = .multi,
     scroll: Int = 1,
     scrollbar: Int = 0,
+    usageWarningPercent: Int = UsageWarnings.defaultThreshold,
     highlight: String = "",
     backgroundLine: String = "rgb:024",
     foreground: String = "",
@@ -691,6 +693,7 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
     self.line = line
     self.scroll = max(1, scroll)
     self.scrollbar = scrollbar
+    self.usageWarningPercent = min(100, max(0, usageWarningPercent))
     self.highlight = highlight
     self.backgroundLine = backgroundLine
     self.foreground = foreground
@@ -736,6 +739,7 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
     case line
     case scroll
     case scrollbar
+    case usageWarningPercent = "usagewarn"
     case highlight
     case backgroundLine = "bgline"
     case foreground = "fgcolor"
@@ -786,6 +790,7 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
       line: (try? container.decodeIfPresent(TerminalInputLineMode.self, forKey: .line)) ?? .multi,
       scroll: (try? container.decodeIfPresent(Int.self, forKey: .scroll)) ?? 1,
       scrollbar: (try? container.decodeIfPresent(Int.self, forKey: .scrollbar)) ?? 0,
+      usageWarningPercent: (try? container.decodeIfPresent(Int.self, forKey: .usageWarningPercent)) ?? UsageWarnings.defaultThreshold,
       highlight: (try? container.decodeIfPresent(String.self, forKey: .highlight)) ?? "",
       backgroundLine: (try? container.decodeIfPresent(String.self, forKey: .backgroundLine))
         ?? "rgb:024",

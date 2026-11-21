@@ -344,6 +344,9 @@ extension MaiCLI {
     let (events, continuation) = AsyncStream<REPLEvent>.makeStream()
     var eventIterator = events.makeAsyncIterator()
     var deferredEvents: [REPLEvent] = []
+    var quotaRefresh: Task<Void, Never>?
+    var quotaChecked: (provider: ConfiguredProvider, date: Date)?
+    defer { quotaRefresh?.cancel() }
     let interruptHandler = TerminalInterruptHandler {
       continuation.yield(.interrupt($0, endedInput: $1))
     }
@@ -627,7 +630,8 @@ extension MaiCLI {
         return (modal.status, false)
       }
       var facts: [String] = []
-      if await runtime.internetAccessPolicy().isOffline { facts.append("✈ offline") }
+      let offline = await runtime.internetAccessPolicy().isOffline
+      if offline { facts.append("✈ offline") }
       var liveContext: AgentContextSize?
       var identitySession = session
       if case .agent(let pid) = loop.focus {
@@ -685,8 +689,29 @@ extension MaiCLI {
       let window = await runtime.contextWindow(
         provider: identitySession.profile.provider, model: identitySession.profile.model,
         options: identitySession.profile.options)
+      let threshold = configuration?.ui.usageWarningPercent ?? UsageWarnings.defaultThreshold
+      if threshold > 0, !offline,
+        let provider = configuration?.providers.first(where: { $0.id == identitySession.profile.provider.rawValue }),
+        quotaChecked?.provider != provider || Date().timeIntervalSince(quotaChecked?.date ?? .distantPast) >= 60 {
+        quotaRefresh?.cancel()
+        let changed = quotaChecked?.provider != provider
+        quotaChecked = (provider, Date())
+        let model = identitySession.profile.model
+        quotaRefresh = Task {
+          _ = try? await services.providerStatus.status(for: provider, model: model, refresh: changed)
+          if !Task.isCancelled { continuation.yield(.supervisor) }
+        }
+      }
+      var usage = liveContext?.usage ?? ContextUsage(usedTokens:
+        (liveContext ?? identitySession.historyContextSize ?? AgentContextSize(messages: identitySession.history.messages)).estimatedTokens,
+        isPartial: liveContext == nil)
+      usage.windowTokens = usage.windowTokens ?? window
+      let cached = services.providerStatus.cachedStatus()
+      let quota = cached?.provider == identitySession.profile.provider.rawValue ? cached : nil
+      let warnings = UsageWarnings.messages(context: usage, quota: quota, threshold: threshold)
+      let warning = warnings.isEmpty ? "" : " · ⚠ " + warnings.joined(separator: " · ")
       return (
-        "\(activityMarker)\(strip) \(currentDirectoryName()) \(promptIdentity(identitySession, contextSize: liveContext, includeContext: loop.focus == .main || liveContext != nil, contextWindow: window))\(detail)",
+        "\(activityMarker)\(strip) \(currentDirectoryName()) \(promptIdentity(identitySession, contextSize: liveContext, includeContext: loop.focus == .main || liveContext != nil, contextWindow: window))\(detail)\(warning)",
         running
       )
     }
