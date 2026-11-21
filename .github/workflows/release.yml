@@ -210,7 +210,7 @@ jobs:
         id: build-cache
         uses: ./.github/actions/restore-swift-build
         with:
-          profile: ${{ matrix.arch == 'arm64' && 'windows-release-osize-msvc-14.44' || 'windows-release-osize' }}
+          profile: windows-release-osize-msvc-14.44
 
       - name: Build release CLI without debug information
         run: ./sys/build-windows.ps1 -Architecture ${{ matrix.arch }}
