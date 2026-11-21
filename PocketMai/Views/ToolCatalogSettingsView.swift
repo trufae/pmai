@@ -21,7 +21,6 @@ struct ToolPickerContainer<Content: View>: View {
         .padding(8)
     }
     .frame(minWidth: 260, idealWidth: 320, maxWidth: 360, maxHeight: 480)
-    .background(.regularMaterial)
   }
 }
 

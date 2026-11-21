@@ -1160,7 +1160,7 @@ struct ChatComposer: View {
         showingWebXDCLauncher = true
       }
     }
-    .padding(8).frame(minWidth: 240, idealWidth: 320, maxWidth: 360).background(.regularMaterial)
+    .padding(8).frame(minWidth: 240, idealWidth: 320, maxWidth: 360)
     .fileImporter(
       isPresented: $showingTextFileImporter,
       allowedContentTypes: Self.documentAttachmentTypes
@@ -1220,7 +1220,6 @@ struct ChatComposer: View {
     }
     .padding(8)
     .frame(minWidth: 260)
-    .background(.regularMaterial)
     .workingFolderImporter(
       isPresented: $showingWorkingFolderImporter, errorMessage: $attachmentError,
       onCompletion: { showingWorkingFolderMenu = false },
