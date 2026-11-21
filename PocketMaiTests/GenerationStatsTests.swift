@@ -7,6 +7,23 @@ import XCTest
 final class GenerationStatsTests: XCTestCase {
   private let start = Date(timeIntervalSince1970: 1_000)
 
+  @MainActor
+  func testContextLimitAndTelemetry() throws {
+    var conversation = Conversation()
+    conversation.contextWindowTokens = 4096
+    let assistant = ChatMessage(role: .assistant, text: "")
+    conversation.messages = [ChatMessage(role: .user, text: "task"), assistant]
+    let saved = try JSONEncoder().encode(conversation)
+    XCTAssertEqual(try JSONDecoder().decode(Conversation.self, from: saved).contextWindowTokens, 4096)
+    let request = ChatCompletionRequest(conversation: conversation, settings: AppSettings(), context: "", assistantMessageID: assistant.id)
+    let snapshot = UsageStatsStore.ChatContextSnapshot(usage: .init(usedTokens: 1000, windowTokens: 4096), request: request)
+    XCTAssertTrue(snapshot.matches(conversation, settings: request.settings))
+    conversation.messages[0].text = "edited task"
+    XCTAssertFalse(snapshot.matches(conversation, settings: request.settings))
+    conversation.messages.removeAll()
+    XCTAssertFalse(snapshot.matches(conversation, settings: request.settings))
+  }
+
   func testLiveReasoningRateExcludesHistoryAndStopsWithTheReasoning() {
     var rate = ReasoningGenerationRate()
     rate.observe(characterCount: 4_000, at: start)

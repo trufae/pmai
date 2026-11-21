@@ -205,6 +205,13 @@ extension AgentRuntime {
       options: inference.options,
       stream: usesTextToolProtocol ? false : inference.stream,
       sessionID: state.request.sessionID)
+    let revision = providerRevisions[inference.provider]
+    var deploymentOptions = inference.options
+    deploymentOptions.contextWindowTokens = nil
+    if let localWindow = await provider.contextWindow(model: inference.model, options: deploymentOptions),
+      providerRevisions[inference.provider] == revision {
+      catalogContextWindows[inference.provider, default: [:]][inference.model] = localWindow
+    }
     if state.request.context == .smart || state.request.context == .adaptive,
       !managesToolLoop, !deciding
     {

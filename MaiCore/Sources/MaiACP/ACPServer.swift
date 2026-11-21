@@ -1494,6 +1494,12 @@ public actor ACPServer {
     case .provider(let context, .reasoningDelta(let text))
     where context.depth == 0 && !text.isEmpty:
       await update(session: id, kind: .agentThoughtChunk, text: text)
+    case .provider(let context, .contextUsage(let usage)) where context.depth == 0:
+      await contextUpdate(usage, session: id)
+    case .finished(let context, _) where context.depth == 0:
+      if let pid = context.pid, let size = await runtime.supervisor.info(pid)?.contextSize {
+        await contextUpdate(size.usage ?? ContextUsage(usedTokens: size.estimatedTokens), session: id)
+      }
     case .toolStarted(let context, let call) where context.depth == 0:
       await toolUpdate(session: id, call: call)
     case .toolUpdated(let context, let call) where context.depth == 0:
@@ -1506,6 +1512,14 @@ public actor ACPServer {
     default:
       break
     }
+  }
+
+  private func contextUpdate(_ usage: ContextUsage, session id: String) async {
+    guard let window = usage.windowTokens else { return }
+    await sendUpdate(session: id, update: .object([
+      "sessionUpdate": .string("usage_update"), "used": .integer(usage.usedTokens), "size": .integer(window),
+      "_meta": .object(["pmai": .object(["estimated": .bool(usage.isEstimated)])]),
+    ]))
   }
 
   private func update(session id: String, kind: ACP.Update, text: String, remember: Bool = true) async {

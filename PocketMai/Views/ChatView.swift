@@ -1,4 +1,5 @@
 import MaiCore
+import MaiLocalProviders
 import MaiUI
 import SwiftUI
 import UIKit
@@ -30,7 +31,7 @@ struct ChatView: View {
     var canPinSidebar = false
   }
 
-  private struct ConversationActivitySnapshot: Equatable {
+  private struct ConversationActivitySnapshot: Hashable {
     var conversationID: UUID?
     var updatedAt: Date?
     var isResponding: Bool
@@ -72,6 +73,8 @@ struct ChatView: View {
     case bottom
   }
 
+  @ObservedObject private var usageStats = UsageStatsStore.shared
+  @State private var contextUsage: ContextUsage?
   @ObservedObject var storeObservation: AppStoreViewObservation
   @State var remoteChat: RemoteAgentChat? = nil
   @AppStorage(AwakeController.preferenceKey) private var keepAwake = false
@@ -136,6 +139,10 @@ struct ChatView: View {
 
   var body: some View {
     chatViewWithAlerts
+      .task(id: conversationActivitySnapshot) { refreshContextUsage() }
+      .onChange(of: usageStats.contextRevision) { _, _ in refreshContextUsage() }
+      .onChange(of: store.endpointModelDescriptors) { _, _ in refreshContextUsage() }
+      .onChange(of: store.settings) { _, _ in refreshContextUsage() }
       .sheet(
         item: Binding(
           get: { remoteChat?.permissions.first },
@@ -705,6 +712,9 @@ struct ChatView: View {
         .font(.headline)
         .lineLimit(1)
         .foregroundStyle(remoteChat.map { $0.connected ? Color.primary : .red } ?? .primary)
+        if let label = (remoteChat?.contextUsage ?? contextUsage)?.label {
+          Text(label).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+        }
         if let metadata = chatTitleMetadata {
           HStack(spacing: 4) {
             Text(metadata.folder)
@@ -767,6 +777,39 @@ struct ChatView: View {
     return store.isResponding(in: id)
   }
 
+  private func refreshContextUsage() {
+    guard remoteChat == nil, let conversation = currentConversation else {
+      contextUsage = nil
+      return
+    }
+    let knownWindow: Int?
+    switch conversation.provider {
+    case .apple:
+      knownWindow = AppleProvider.contextWindow(deviceOnly: store.settings.isOffline)
+    case .mlx:
+      knownWindow = (conversation.mlxMaxKVSize ?? store.settings.mlxMaxKVSize).effectiveSize
+    case .openAICompatible:
+      let endpoint = OpenAICompatibleProvider.selectedEndpoint(for: conversation, settings: store.settings)
+      let model = conversation.modelID.isEmpty ? endpoint?.defaultModel : conversation.modelID
+      knownWindow = endpoint.flatMap { store.endpointModelDescriptors[$0.id] }?
+        .first(where: { $0.id == model })?.contextWindow
+    }
+    var usage: ContextUsage
+    if let snapshot = usageStats.contexts[conversation.id], snapshot.matches(conversation, settings: store.settings) {
+      usage = snapshot.usage
+    } else {
+      // Before the first prepared call (or after edits), only the saved working
+      // transcript is known. Runtime instructions and schemas arrive with the call.
+      let messages = PromptComposer.contextMessages(
+        from: conversation, settings: store.settings,
+        limit: (conversation.contextWindowMode ?? store.settings.contextWindowMode).messageLimit)
+      usage = ContextUsage(usedTokens: AgentContextSize(messages: messages.map { AgentMessage(pocketMai: $0) }).estimatedTokens,
+        isPartial: true)
+    }
+    usage.windowTokens = ContextUsage.effectiveWindow(usage.windowTokens, knownWindow, conversation.contextWindowTokens)
+    contextUsage = usage
+  }
+
   private var providerSubtitle: String {
     if let remoteChat {
       let folder = AgentTooling.firstNonEmpty(remoteChat.conversation.cwd) ?? "No folder selected"
@@ -779,7 +822,7 @@ struct ChatView: View {
     if isLoadingConversation { return "Loading…" }
     if isLoadingCurrentLocalModel { return "Loading local model into memory…" }
     guard let metadata = chatTitleMetadata else { return "No conversation" }
-    return [metadata.folder, metadata.providerModel, systemPromptTitle]
+    return [metadata.folder, metadata.providerModel, systemPromptTitle, contextUsage?.label]
       .compactMap { AgentTooling.firstNonEmpty($0) }.joined(separator: " · ")
   }
 

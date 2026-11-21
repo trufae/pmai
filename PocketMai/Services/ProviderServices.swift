@@ -988,11 +988,19 @@ enum AppleFoundationProvider {
         prompt: ContentRedactor.current?.redact(request.conversation.messages.last?.text ?? "")
           ?? request.conversation.messages.last?.text ?? "", count: count)
     } else {
-      response = try await provider.complete(input: input, stream: request.conversation.usesStreaming) {
+      response = try await provider.complete(
+        input: input, options: .init(contextWindowTokens: request.conversation.contextWindowTokens),
+        stream: request.conversation.usesStreaming) {
+        if case .contextUsage(let usage) = $0 {
+          await UsageStatsStore.recordContext(usage, request: request)
+        }
         await accumulator.consume($0)
       }
     }
     let (content, timing) = try await accumulator.finish(response: response)
+    if let usage = response.contextUsage {
+      await UsageStatsStore.recordContext(usage, request: request, assistantText: content)
+    }
     let stats = GenerationStats.measured(
       providerLabel: "Apple Intelligence", modelID: AppleProvider.modelID, usage: response.usage,
       estimatedInputTokens: GenerationStats.estimatedTokenCount(forCharacterCount: input.characterCount),
@@ -1131,6 +1139,7 @@ enum OpenAICompatibleProvider {
         messageLimitOverride: request.messageLimitOverride
       )
       let coreOptions = MaiCore.GenerationOptions(
+        contextWindowTokens: request.conversation.contextWindowTokens,
         reasoningEffort: request.conversation.reasoningLevel.optionValue,
         includeStreamUsage: includeStreamUsage)
       let provider = try await PocketMaiPluginHost.shared.makeProvider(
@@ -1145,20 +1154,23 @@ enum OpenAICompatibleProvider {
         imageInputCount: messages.reduce(0) { $0 + $1.imageInputCount },
         fallbackInputTokenEstimate: GenerationStats.estimatedTokenCount(
           forCharacterCount: messages.reduce(0) { $0 + $1.text.count }))
+      let prepared = MaiCore.ProviderRequest(
+        model: model, messages: messages, tools: coreTools, options: coreOptions,
+        stream: request.conversation.usesStreaming, sessionID: request.conversation.sessionID)
+      let initialContext = ContextUsage(
+        usedTokens: AgentRuntime.contextTokens(prepared), windowTokens: request.conversation.contextWindowTokens)
+      await UsageStatsStore.recordContext(initialContext, request: request)
+      if let cap = request.conversation.contextWindowTokens, cap > 0,
+        AgentRuntime.contextTokens(prepared) >= cap - min(1_200, cap / 4) {
+        throw ProviderContextLimitError(message: "Configured context length exceeded.", contextWindowTokens: cap)
+      }
       let accumulator = await MainActor.run {
         CoreProviderEventAccumulator(onUpdate: onUpdate)
       }
       let response: MaiCore.ProviderResponse
       do {
         response = try await provider.complete(
-          AppRedaction.request(
-            MaiCore.ProviderRequest(
-              model: model,
-              messages: messages,
-              tools: coreTools,
-              options: coreOptions,
-              stream: request.conversation.usesStreaming,
-              sessionID: request.conversation.sessionID), settings: request.settings)
+          AppRedaction.request(prepared, settings: request.settings)
         ) { event in
           await accumulator.consume(event)
         }
@@ -1169,6 +1181,12 @@ enum OpenAICompatibleProvider {
       }
 
       let (content, timing) = try await accumulator.finish(response: response)
+      let input = response.usage?.inputTokens ?? initialContext.usedTokens
+      let output = response.usage?.outputTokens
+        ?? GenerationStats.estimatedTokenCount(forCharacterCount: response.message.text.count)
+      await UsageStatsStore.recordContext(
+        ContextUsage(usedTokens: input + output, windowTokens: request.conversation.contextWindowTokens,
+          isEstimated: response.usage == nil || response.usage?.isEstimated == true), request: request, assistantText: content)
       await recordUsage(
         context: usageContext,
         usage: response.usage,
@@ -1310,7 +1328,7 @@ final class CoreProviderEventAccumulator {
       timing.noteTokenChunk()
     case .toolCallDelta:
       timing.noteTokenChunk()
-    case .usage, .toolStarted, .toolUpdated, .toolFinished:
+    case .usage, .contextUsage, .toolStarted, .toolUpdated, .toolFinished:
       break
     }
     let now = Date()

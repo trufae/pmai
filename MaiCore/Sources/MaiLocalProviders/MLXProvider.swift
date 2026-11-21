@@ -17,6 +17,7 @@ public actor MLXProvider: ChatProvider {
   #if !PMAI_NO_MLX && canImport(MLX)
     private var container: ModelContainer?
     private var loadedModel: String?
+    private var loadedContextWindow: Int?
     private var generationTail: Task<Void, Never>?
     private let downloader: (any Downloader)?
     private let availability: MLXAvailability
@@ -81,6 +82,13 @@ public actor MLXProvider: ChatProvider {
           progressHandler: progressHandler)
       }
       try Task.checkCancellation()
+      loadedContextWindow = await loaded.perform { context in
+        guard case .directory(let directory) = context.configuration.id,
+          let data = try? Data(contentsOf: directory.appendingPathComponent("config.json")),
+          let config = try? JSONDecoder().decode(JSONValue.self, from: data)
+        else { return nil as Int? }
+        return MLXModels.contextWindow(configuration: config)
+      }
       container = loaded
       loadedModel = modelID
     }
@@ -93,6 +101,7 @@ public actor MLXProvider: ChatProvider {
       guard loadedModel == modelID else { return }
       container = nil
       loadedModel = nil
+      loadedContextWindow = nil
     }
   #endif
 
@@ -106,6 +115,16 @@ public actor MLXProvider: ChatProvider {
     #else
       return "MLX requires macOS on Apple silicon."
     #endif
+  }
+
+  public func contextWindow(model: String, options: GenerationOptions) async -> Int? {
+    var modelWindow: Int?
+    #if !PMAI_NO_MLX && canImport(MLX)
+      if model == loadedModel { modelWindow = loadedContextWindow }
+    #endif
+    return ContextUsage.effectiveWindow(
+      modelWindow, options.contextWindowTokens, options.additional["mlxMaxKVSize"]?.intValue
+        ?? configuration.options["maxKVSize"]?.intValue ?? 32_768)
   }
 
   public func availableModels() async throws -> [ModelDescriptor] {
@@ -181,14 +200,10 @@ public actor MLXProvider: ChatProvider {
         }
       }
       let maxTokens = request.options.maxOutputTokens ?? 1_200
-      let maxKVSize = request.options.additional["mlxMaxKVSize"]?.intValue
-        ?? configuration.options["maxKVSize"]?.intValue ?? 32_768
+      let maxKVSize = await contextWindow(model: model, options: request.options) ?? 32_768
       guard maxTokens > 0, maxKVSize > 512 else {
         throw LocalProviderError("MLX output tokens must be positive and maxKVSize must exceed 512 tokens.")
       }
-      let parameters = GenerateParameters(
-        maxTokens: maxTokens, maxKVSize: maxKVSize,
-        temperature: Float(request.options.temperature ?? 0.7))
       let (stream, generationTask) = try await container.perform(
         nonSendable: UserInput(
           chat: messages, tools: Self.toolSpecs(request.tools),
@@ -197,8 +212,13 @@ public actor MLXProvider: ChatProvider {
       ) { context, userInput in
         let input = try await context.processor.prepare(input: userInput)
         guard input.text.tokens.size + min(maxTokens, 512) <= maxKVSize else {
-          throw LocalProviderError("MLX context length exceeded. Compact the conversation or shorten the prompt.")
+          throw ProviderContextLimitError(
+            message: "MLX context length exceeded. Compact the conversation or shorten the prompt.",
+            contextWindowTokens: maxKVSize)
         }
+        let parameters = GenerateParameters(
+          maxTokens: min(maxTokens, maxKVSize - input.text.tokens.size), maxKVSize: maxKVSize,
+          temperature: Float(request.options.temperature ?? 0.7))
         let iterator = try TokenIterator(input: input, model: context.model, parameters: parameters)
         return MLXLMCommon.generateTask(
           promptTokenCount: input.text.tokens.size, modelConfiguration: context.configuration,
@@ -237,11 +257,17 @@ public actor MLXProvider: ChatProvider {
           await emitParts(reasoning.flush())
           await generationTask.value
           try Task.checkCancellation()
+          let contextUsage = usage.map {
+            ContextUsage(usedTokens: $0.inputTokens + $0.outputTokens, windowTokens: maxKVSize,
+              isEstimated: $0.isEstimated)
+          }
           if let usage { await emit(.usage(usage)) }
+          if let contextUsage { await emit(.contextUsage(contextUsage)) }
           return .init(
             message: .init(role: .assistant, content: reasoning.parts + toolCalls), usage: usage,
             stopReason: !toolCalls.isEmpty ? .toolCall
-              : (usage?.outputTokens ?? 0) >= maxTokens ? .length : .stop)
+              : (usage?.outputTokens ?? 0) >= maxTokens ? .length : .stop,
+            contextUsage: contextUsage)
         } catch {
           generationTask.cancel()
           await generationTask.value

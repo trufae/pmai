@@ -74,7 +74,7 @@ public final class StreamTimingRecorder: @unchecked Sendable {
         stored.noteTokenChunk(at: date)
         return first
       }
-    case .usage, .toolStarted, .toolUpdated, .toolFinished: return false
+    case .usage, .contextUsage, .toolStarted, .toolUpdated, .toolFinished: return false
     }
   }
 

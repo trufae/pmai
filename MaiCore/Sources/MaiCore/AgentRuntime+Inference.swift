@@ -376,6 +376,9 @@ extension AgentRuntime {
     state.modelRequest = turn.request
     state.modelRequestTranscriptCount = state.transcript.count
     state.modelInputTokens = nil
+    state.contextUsage = nil
+    state.contextWindowTokens = contextWindow(
+      provider: turn.provider.descriptor.id, model: turn.request.model, options: turn.request.options)
     await emit(.modelStarted(context, turn: state.modelTurns))
     await supervisor.note(
       state.pid, modelTurns: state.modelTurns, activity: "thinking",
@@ -429,6 +432,13 @@ extension AgentRuntime {
           }
           if turn.usesTextToolProtocol, case .textDelta = event { return }
           switch event {
+          case .contextUsage(var usage):
+            if !turn.provider.descriptor.capabilities.contains(.managedToolLoop) {
+              usage.windowTokens = ContextUsage.effectiveWindow(usage.windowTokens, turn.request.options.contextWindowTokens)
+            }
+            let size = AgentContextSize(usage: usage, messageCount: turn.request.messages.count)
+            await self.supervisor.note(pid, contextSize: size)
+            await emit(.provider(context, .contextUsage(usage)))
           case .toolStarted(let call):
             let activity = AgentEvent.toolStarted(context, call)
             await toolCount.record(activity)

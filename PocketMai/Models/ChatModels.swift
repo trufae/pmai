@@ -1574,6 +1574,7 @@ struct Conversation: Identifiable, Codable, Equatable, Sendable {
   // nil inherits the app-wide setting. These overrides are especially useful
   // for local models where tool transcripts consume the KV cache quickly.
   var contextWindowMode: ContextWindowMode? = nil
+  var contextWindowTokens: Int? = nil
   var mlxMaxKVSize: MLXKVCacheSize? = nil
   var lastContextSignature: String? = nil
   var folderID: String = ConversationFolder.defaultID
@@ -1618,6 +1619,7 @@ struct Conversation: Identifiable, Codable, Equatable, Sendable {
     case showThinking
     case toolCallingMode
     case contextWindowMode
+    case contextWindowTokens
     case mlxMaxKVSize
     case lastContextSignature
     case lastToolContextSignature
@@ -1661,6 +1663,8 @@ struct Conversation: Identifiable, Codable, Equatable, Sendable {
     toolCallingMode = try? container.decodeIfPresent(ToolCallingMode.self, forKey: .toolCallingMode)
     contextWindowMode = try? container.decodeIfPresent(
       ContextWindowMode.self, forKey: .contextWindowMode)
+    contextWindowTokens = ContextUsage.effectiveWindow(
+      try? container.decodeIfPresent(Int.self, forKey: .contextWindowTokens))
     mlxMaxKVSize = try? container.decodeIfPresent(MLXKVCacheSize.self, forKey: .mlxMaxKVSize)
     lastContextSignature =
       (try? container.decodeIfPresent(String.self, forKey: .lastContextSignature))
@@ -1703,6 +1707,7 @@ struct Conversation: Identifiable, Codable, Equatable, Sendable {
     try container.encode(showThinking, forKey: .showThinking)
     try container.encodeIfPresent(toolCallingMode, forKey: .toolCallingMode)
     try container.encodeIfPresent(contextWindowMode, forKey: .contextWindowMode)
+    try container.encodeIfPresent(contextWindowTokens, forKey: .contextWindowTokens)
     try container.encodeIfPresent(mlxMaxKVSize, forKey: .mlxMaxKVSize)
     try container.encodeIfPresent(lastContextSignature, forKey: .lastContextSignature)
     try container.encode(folderID, forKey: .folderID)

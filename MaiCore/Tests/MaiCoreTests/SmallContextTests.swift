@@ -386,3 +386,39 @@ private actor SmallContextProvider: ChatProvider {
     return ProviderResponse(message: .assistant("done"), stopReason: .stop)
   }
 }
+
+@Test("Context occupancy is independent of spending and unknown capacity stays unknown")
+func contextOccupancyDisplay() throws {
+  #expect(ContextUsage(usedTokens: 1_024).label == "ctx ~1.0k")
+  #expect(ContextUsage(usedTokens: 1_024, windowTokens: 4_096, isEstimated: false).label == "ctx 1.0k/4.1k (25%)")
+  #expect(ContextUsage(usedTokens: 5_000, windowTokens: 4_000).label.contains("125%"))
+  #expect(ContextUsage.effectiveWindow(nil, 0, -1) == nil)
+  #expect(ContextUsage.effectiveWindow(32_768, 8_192, 16_384) == 8_192)
+  let valid: JSONValue = .object(["sessionUpdate": .string("usage_update"), "used": .integer(0), "size": .integer(8_192)])
+  #expect(ContextUsage(acpUpdate: valid)?.usedTokens == 0)
+  #expect(ContextUsage(acpUpdate: valid)?.isEstimated == false)
+  for used: JSONValue in [.null, .integer(-1), .string("1200")] {
+    #expect(ContextUsage(acpUpdate: .object(["sessionUpdate": .string("usage_update"), "used": used, "size": .integer(8_192)])) == nil)
+  }
+}
+
+@Test("Prepared context favors reported input and includes subsequent tool results")
+func reportedContextSize() {
+  let request = AgentRequest(provider: "test", messages: [.user(String(repeating: "x", count: 300))])
+  var state = AgentRuntime.RunState(request, context: .init(runID: UUID(), parentRunID: nil, agentID: "test", depth: 0), pid: 1,
+    budget: RunBudget(limits: .init()), activeTaskID: nil, emit: { _ in })
+  state.modelRequest = ProviderRequest(model: "model", messages: request.messages)
+  state.modelRequestTranscriptCount = request.messages.count
+  state.contextWindowTokens = 8_192
+  state.modelInputTokens = 20
+  #expect(state.contextSize.estimatedTokens == 20)
+  state.transcript.append(.assistant("answer"))
+  #expect(state.contextSize.estimatedTokens > 20)
+  state.contextUsage = ContextUsage(usedTokens: 1_200, windowTokens: 8_192, isEstimated: false)
+  state.contextUsageTranscriptCount = state.transcript.count
+  #expect(state.contextSize.estimatedTokens == 1_200)
+  #expect(state.contextSize.usage?.isEstimated == false)
+  state.transcript.append(.init(role: .tool, content: [.toolResult(.init(callID: "read", text: "file content"))]))
+  #expect(state.contextSize.estimatedTokens > 1_200)
+  #expect(state.contextSize.usage?.isEstimated == true)
+}

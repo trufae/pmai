@@ -55,6 +55,8 @@ func modelCatalogRuntimeWindows() async throws {
   #expect(await runtime.contextWindow(provider: "catalog", model: "model", options: .init()) == 131_072)
   #expect(await runtime.contextWindow(provider: "catalog", model: "other", options: .init()) == nil)
   #expect(await runtime.contextWindow(provider: "catalog", model: "model",
+    options: .init(contextWindowTokens: 262_144)) == 131_072)
+  #expect(await runtime.contextWindow(provider: "catalog", model: "model",
     options: .init(contextWindowTokens: 32_768)) == 32_768)
   try await runtime.register(ContextCatalogProvider(window: 8_192), replacingExisting: true)
   #expect(await runtime.contextWindow(provider: "catalog", model: "model", options: .init()) == nil)

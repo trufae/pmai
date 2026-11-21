@@ -129,12 +129,19 @@ public enum AgentAttention: Equatable, Sendable {
 public struct AgentContextSize: Equatable, Sendable {
   public var messageCount: Int
   public var estimatedTokens: Int
+  public var usage: ContextUsage? = nil
 
   public init(messages: [AgentMessage]) {
     let messages = AgentConversationContext.messages(from: messages)
     messageCount = messages.count
     estimatedTokens = ModelCallStats.estimatedTokenCount(
       forCharacterCount: AgentTranscriptEditor.characterCount(of: messages))
+  }
+
+  public init(usage: ContextUsage, messageCount: Int) {
+    self.messageCount = messageCount
+    estimatedTokens = usage.usedTokens
+    self.usage = usage
   }
 
   public init(request: ProviderRequest) {

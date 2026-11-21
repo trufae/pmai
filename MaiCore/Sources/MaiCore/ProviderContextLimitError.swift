@@ -46,13 +46,11 @@ public struct ProviderContextLimitError: LocalizedError, Sendable {
 }
 
 extension AgentRuntime {
-  func contextWindow(provider: ProviderID, model: String, options: GenerationOptions) -> Int? {
-    let learned = contextWindows[provider]?[model]
-    if let configured = options.contextWindowTokens {
-      return min(configured, learned ?? configured)
-    }
-    let catalog = catalogContextWindows[provider]?[model]
-    return learned ?? catalog
+  public func contextWindow(provider: ProviderID, model: String, options: GenerationOptions) -> Int? {
+    let model = providers[provider].map { resolvedModel(model, for: $0) } ?? model
+    return ContextUsage.effectiveWindow(
+      options.contextWindowTokens, contextWindows[provider]?[model],
+      catalogContextWindows[provider]?[model])
   }
 
   /// Only discover automatically when an unknown window would otherwise cause
@@ -73,7 +71,7 @@ extension AgentRuntime {
 
   /// Account for UTF-8 text, tool schemas, message framing and reply space.
   /// Tokenization is approximate; a provider rejection can tighten this budget.
-  static func contextTokens(_ request: ProviderRequest) -> Int {
+  public static func contextTokens(_ request: ProviderRequest) -> Int {
     let bytes =
       request.messages.reduce(0) { total, message in
         total + ((try? JSONEncoder().encode(message).count) ?? message.text.utf8.count)

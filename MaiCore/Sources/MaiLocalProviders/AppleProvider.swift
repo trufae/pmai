@@ -64,11 +64,23 @@ public struct AppleProvider: ChatProvider {
     #endif
   }
 
+  public static func contextWindow(deviceOnly: Bool = false) -> Int? {
+    #if canImport(FoundationModels) && PMAI_FOUNDATION_MODELS_26_4
+      if #available(macOS 26.4, iOS 26.4, *) { return systemModel(deviceOnly: deviceOnly).contextSize }
+    #endif
+    return nil
+  }
+
+  public func contextWindow(model: String, options: GenerationOptions) async -> Int? {
+    ContextUsage.effectiveWindow(options.contextWindowTokens, Self.contextWindow(deviceOnly: deviceOnly))
+  }
+
   public func availableModels() async throws -> [ModelDescriptor] {
     if let reason = Self.availabilityReport(deviceOnly: deviceOnly).unavailableMessage {
       throw LocalProviderError(reason)
     }
-    return [.init(id: Self.modelID, displayName: "Apple on-device model", capabilities: descriptor.capabilities)]
+    return [.init(id: Self.modelID, displayName: "Apple on-device model", capabilities: descriptor.capabilities,
+      contextWindow: Self.contextWindow(deviceOnly: deviceOnly))]
   }
 
   public func complete(
@@ -95,33 +107,44 @@ public struct AppleProvider: ChatProvider {
         var input = originalInput
         guard !input.prompt.isEmpty else { throw LocalProviderError("Apple Intelligence needs a text prompt.") }
         let model = Self.systemModel(deviceOnly: deviceOnly)
+        let window = await contextWindow(model: Self.modelID, options: options)
         var maximumResponseTokens = options.maxOutputTokens ?? 1_200
-        #if PMAI_FOUNDATION_MODELS_26_4
-          if #available(macOS 26.4, iOS 26.4, *) {
-            let available = try? await input.trimToFit(
-              contextSize: model.contextSize, reservingTokens: maximumResponseTokens
-            ) { input in
+        if let cap = options.contextWindowTokens {
+          maximumResponseTokens = min(maximumResponseTokens, max(1, cap / 4))
+        }
+        var inputTokensAreEstimated = true
+        func countInput(_ input: AppleConversationInput) async throws -> Int {
+          #if PMAI_FOUNDATION_MODELS_26_4
+            if #available(macOS 26.4, iOS 26.4, *) {
               let entries = Array(Self.transcript(for: input)) + [
                 Transcript.Entry.prompt(.init(segments: [.text(.init(content: input.prompt))]))
               ]
               return try await model.tokenCount(for: entries)
             }
-            if let available {
-              guard available > 0 else {
-                throw ProviderContextLimitError(
-                  message: "Apple Intelligence context is full even without older history. Reduce the agent instructions or tool catalog (/set tool.proxy all), current request, context, or tool results.",
-                  contextWindowTokens: model.contextSize)
-              }
-              maximumResponseTokens = min(maximumResponseTokens, available)
-            }
-          }
+          #endif
+          return ModelCallStats.estimatedTokenCount(forCharacterCount: input.characterCount)
+        }
+        #if PMAI_FOUNDATION_MODELS_26_4
+          if #available(macOS 26.4, iOS 26.4, *) { inputTokensAreEstimated = false }
         #endif
+        if let window {
+          let available = try await input.trimToFit(contextSize: window, reservingTokens: maximumResponseTokens,
+            tokenCount: countInput)
+          guard available > 0 else {
+            throw ProviderContextLimitError(
+              message: "Apple Intelligence context length exceeded even without older history.", contextWindowTokens: window)
+          }
+          maximumResponseTokens = min(maximumResponseTokens, available)
+        }
         let generationOptions = FoundationModels.GenerationOptions(
           temperature: options.temperature, maximumResponseTokens: maximumResponseTokens)
         var attempts = 0
         while true {
           try Task.checkCancellation()
           do {
+            let inputTokens = try await countInput(input)
+            await emit(.contextUsage(ContextUsage(usedTokens: inputTokens, windowTokens: window,
+              isEstimated: inputTokensAreEstimated)))
             let session = LanguageModelSession(model: model, transcript: Self.transcript(for: input))
             let response: LanguageModelSession.Response<String>
             if stream {
@@ -141,7 +164,13 @@ public struct AppleProvider: ChatProvider {
             }
             let usage = Self.usage(of: response)
             if let usage { await emit(.usage(usage)) }
-            return .init(message: .assistant(response.content), usage: usage, stopReason: .stop)
+            let contextUsage = ContextUsage(
+              usedTokens: (usage?.inputTokens ?? inputTokens) + (usage?.outputTokens
+                ?? ModelCallStats.estimatedTokenCount(forCharacterCount: response.content.count)),
+              windowTokens: window, isEstimated: usage == nil || usage?.isEstimated == true)
+            await emit(.contextUsage(contextUsage))
+            return .init(message: .assistant(response.content), usage: usage, stopReason: .stop,
+              contextUsage: contextUsage)
           } catch {
             guard Self.isContextOverflowError(error) else { throw error }
             guard attempts < 3, input.trimForRetry(lastAttempt: attempts == 2) else {

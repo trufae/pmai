@@ -92,3 +92,19 @@ func localProviderValidation() {
     }
   }
 #endif
+
+@Test("MLX user caps lower the deployment cache without needing a loaded GPU model")
+func mlxDeploymentContextLimit() async {
+  let provider = MLXProvider(configuration: .init(id: "mlx", kind: .mlx, options: ["maxKVSize": .integer(8_192)]))
+  #expect(await provider.contextWindow(model: "test/model", options: .init()) == 8_192)
+  #expect(await provider.contextWindow(model: "test/model", options: .init(contextWindowTokens: 4_096)) == 4_096)
+  #expect(await provider.contextWindow(model: "test/model", options: .init(contextWindowTokens: 32_768)) == 8_192)
+  #expect(await provider.contextWindow(model: "test/model", options: .init(additional: ["mlxMaxKVSize": .integer(16_384)])) == 16_384)
+}
+
+@Test("MLX reads the loaded text model window without assuming a window from its name")
+func mlxModelContextMetadata() {
+  #expect(MLXModels.contextWindow(configuration: .object(["max_position_embeddings": .integer(2048)])) == 2048)
+  #expect(MLXModels.contextWindow(configuration: .object(["text_config": .object(["max_position_embeddings": .integer(4096)])])) == 4096)
+  #expect(MLXModels.contextWindow(configuration: .object([:])) == nil)
+}

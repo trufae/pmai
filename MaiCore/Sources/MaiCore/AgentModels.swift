@@ -624,6 +624,8 @@ public enum ProviderEvent: Codable, Equatable, Sendable {
   /// The call's token usage, sent once per call when the provider reports
   /// it — after the last delta of a stream — so a host may add these up.
   case usage(TokenUsage)
+  /// Current context occupancy; replaces the previous snapshot.
+  case contextUsage(ContextUsage)
 }
 
 public enum ProviderStopReason: String, Codable, Sendable {
@@ -819,6 +821,7 @@ public struct ProviderRequest: Codable, Sendable {
 }
 
 public struct ProviderResponse: Codable, Equatable, Sendable {
+  public var contextUsage: ContextUsage?
   public var message: AgentMessage
   public var usage: TokenUsage?
   public var stopReason: ProviderStopReason
@@ -828,12 +831,14 @@ public struct ProviderResponse: Codable, Equatable, Sendable {
     message: AgentMessage,
     usage: TokenUsage? = nil,
     stopReason: ProviderStopReason = .unknown,
-    toolDecision: ToolChoice? = nil
+    toolDecision: ToolChoice? = nil,
+    contextUsage: ContextUsage? = nil
   ) {
     self.message = message
     self.usage = usage
     self.stopReason = stopReason
     self.toolDecision = toolDecision
+    self.contextUsage = contextUsage
   }
 
   public var reasoning: String { message.reasoning }

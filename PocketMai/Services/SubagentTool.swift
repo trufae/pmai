@@ -162,6 +162,7 @@ enum SubagentTool {
       child.usesStreaming = conversation.usesStreaming
       child.toolCallingMode = conversation.toolCallingMode
       child.contextWindowMode = conversation.contextWindowMode
+      child.contextWindowTokens = conversation.contextWindowTokens
       child.mlxMaxKVSize = conversation.mlxMaxKVSize
     case .profile(let profile):
       agentID = profile.name
