@@ -49,6 +49,8 @@ public struct OpenAIConfiguredProviderFactory: ConfiguredProviderFactory {
         apiKey: try configuration.resolvedAPIKey(environment: environment),
         additionalHeaders: try configuration.resolvedHeaders(environment: environment),
         requestTimeout: configuration.timeout ?? 600,
-        httpTransport: transport))
+        httpTransport: transport,
+        modelPricing: (configuration.options["modelPricing"]?.objectValue ?? [:])
+          .compactMapValues { ModelPricing(catalog: $0, configured: true) }))
   }
 }

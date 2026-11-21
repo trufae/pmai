@@ -27,6 +27,10 @@ final class REPLModelCatalog: @unchecked Sendable {
     }
   }
 
+  func model(_ id: String, provider: ProviderID) -> ModelDescriptor? {
+    lock.withLock { models[provider]?.first(where: { $0.id == id }) }
+  }
+
   func cancel() {
     lock.withLock {
       for task in pending.values { task.cancel() }

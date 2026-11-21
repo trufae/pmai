@@ -65,6 +65,7 @@ public struct ModelDescriptor: Codable, Equatable, Identifiable, Sendable {
   public var outputModalities: Set<String>?
   public var contextWindow: Int?
   public var voices: [String]?
+  public var pricing: ModelPricing?
 
   public init(
     id: String,
@@ -74,7 +75,8 @@ public struct ModelDescriptor: Codable, Equatable, Identifiable, Sendable {
     inputModalities: Set<String>? = nil,
     outputModalities: Set<String>? = nil,
     contextWindow: Int? = nil,
-    voices: [String]? = nil
+    voices: [String]? = nil,
+    pricing: ModelPricing? = nil
   ) {
     self.id = id
     self.displayName = displayName ?? id
@@ -84,10 +86,11 @@ public struct ModelDescriptor: Codable, Equatable, Identifiable, Sendable {
     self.outputModalities = outputModalities
     self.contextWindow = contextWindow
     self.voices = voices
+    self.pricing = pricing
   }
 
   private enum CodingKeys: String, CodingKey {
-    case id, displayName, ownedBy, capabilities, inputModalities, outputModalities, contextWindow, voices
+    case id, displayName, ownedBy, capabilities, inputModalities, outputModalities, contextWindow, voices, pricing
   }
 
   public init(from decoder: Decoder) throws {
@@ -103,7 +106,8 @@ public struct ModelDescriptor: Codable, Equatable, Identifiable, Sendable {
         Set<String>.self, forKey: .inputModalities),
       outputModalities: try container.decodeIfPresent(Set<String>.self, forKey: .outputModalities),
       contextWindow: try container.decodeIfPresent(Int.self, forKey: .contextWindow),
-      voices: try container.decodeIfPresent([String].self, forKey: .voices))
+      voices: try container.decodeIfPresent([String].self, forKey: .voices),
+      pricing: try container.decodeIfPresent(ModelPricing.self, forKey: .pricing))
   }
 }
 

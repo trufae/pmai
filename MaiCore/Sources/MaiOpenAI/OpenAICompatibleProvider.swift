@@ -14,6 +14,7 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
     public var additionalHeaders: [String: String]
     public var requestTimeout: TimeInterval
     public var httpTransport: ProviderHTTPTransport
+    public var modelPricing: [String: ModelPricing]
 
     public init(
       id: ProviderID = .openAI,
@@ -22,7 +23,8 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
       apiKey: String? = nil,
       additionalHeaders: [String: String] = [:],
       requestTimeout: TimeInterval = 600,
-      httpTransport: ProviderHTTPTransport = .automatic
+      httpTransport: ProviderHTTPTransport = .automatic,
+      modelPricing: [String: ModelPricing] = [:]
     ) {
       self.id = id
       self.displayName = displayName
@@ -31,6 +33,7 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
       self.additionalHeaders = additionalHeaders
       self.requestTimeout = requestTimeout
       self.httpTransport = httpTransport
+      self.modelPricing = modelPricing
     }
   }
 
@@ -97,6 +100,7 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
     } while true
     let models = values.compactMap { value -> ModelDescriptor? in
       guard let object = value.objectValue, var model = ModelDescriptor.catalogEntry(object) else { return nil }
+      model.pricing = configuration.modelPricing[model.id] ?? model.pricing
       if OpenAISpeech.isDirectEndpoint(configuration.baseURL), OpenAISpeech.models.contains(model.id) {
         model.capabilities.insert(.audioOutput)
         model.voices = OpenAISpeech.voices(for: model.id)

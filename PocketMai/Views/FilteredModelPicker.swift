@@ -186,6 +186,13 @@ struct ModelBrowser: View {
             .font(.subheadline.weight(.medium)).padding(.horizontal, 14).frame(minHeight: 44)
             .background(.quaternary, in: Capsule())
         }
+        Menu {
+          Button("Name") { filter.sort = .name }
+          Button("Input price") { filter.sort = .inputPrice }
+          Button("Output price") { filter.sort = .outputPrice }
+        } label: {
+          Text("Sort").font(.subheadline.weight(.medium)).padding(.horizontal, 14).frame(minHeight: 44)
+        }
         if filter != ModelCatalogFilter() {
           Button("Reset") { filter = .init() }.frame(minHeight: 44)
         }
@@ -199,6 +206,8 @@ struct ModelBrowser: View {
       VStack(alignment: .leading, spacing: 2) {
         Text(model.displayName).font(.subheadline.weight(.medium)).foregroundStyle(.primary)
           .lineLimit(1).truncationMode(.middle)
+        Text(model.pricing?.label ?? "Price unknown")
+          .font(.caption).foregroundStyle(.secondary)
         if model.displayName != model.id {
           Text(model.id).font(.caption).foregroundStyle(.secondary)
             .lineLimit(1).truncationMode(.middle)
@@ -222,7 +231,8 @@ struct ModelBrowser: View {
     .accessibilityElement(children: .ignore)
     .accessibilityLabel(([model.displayName]
       + (model.displayName != model.id ? [model.id] : [])
-      + (model.featureLabels.isEmpty ? ["Features unknown"] : model.featureLabels))
+      + (model.featureLabels.isEmpty ? ["Features unknown"] : model.featureLabels)
+      + [model.pricing?.label ?? "Price unknown"])
       .joined(separator: ", "))
   }
 
