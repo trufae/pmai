@@ -18,6 +18,9 @@ final class GenerationStatsTests: XCTestCase {
     let request = ChatCompletionRequest(conversation: conversation, settings: AppSettings(), context: "", assistantMessageID: assistant.id)
     let snapshot = UsageStatsStore.ChatContextSnapshot(usage: .init(usedTokens: 1000, windowTokens: 4096), request: request)
     XCTAssertTrue(snapshot.matches(conversation, settings: request.settings))
+    conversation.toolsEnabled.toggle()
+    XCTAssertFalse(snapshot.matches(conversation, settings: request.settings))
+    conversation.toolsEnabled.toggle()
     conversation.messages[0].text = "edited task"
     XCTAssertFalse(snapshot.matches(conversation, settings: request.settings))
     conversation.messages.removeAll()

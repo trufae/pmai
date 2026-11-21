@@ -58,6 +58,8 @@ final class UsageStatsStore: ObservableObject {
         && source.systemPromptID == conversation.systemPromptID
         && source.reasoningLevel == conversation.reasoningLevel
         && source.toolSelection == conversation.toolSelection
+        && source.toolsEnabled == conversation.toolsEnabled
+        && source.toolCallingMode == conversation.toolCallingMode
         && Self.evidence(source, excluding: request.assistantMessageID)
           == Self.evidence(conversation, excluding: request.assistantMessageID)
     }
