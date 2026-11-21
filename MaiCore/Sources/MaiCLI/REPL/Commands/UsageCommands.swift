@@ -50,6 +50,8 @@ extension MaiCLI {
         (live ?? session.historyContextSize ?? AgentContextSize(messages: session.history.messages)).estimatedTokens,
         isPartial: live == nil)
       context.windowTokens = context.windowTokens ?? window
+      let pricing = services.modelCatalog.model(session.profile.model, provider: session.profile.provider)?.pricing
+      await terminal.line("Price: " + (pricing?.label ?? "unknown; /models refreshes the catalog"))
       for warning in UsageWarnings.messages(context: context,
         threshold: configuration?.ui.usageWarningPercent ?? UsageWarnings.defaultThreshold) {
         await terminal.line("⚠ " + warning)

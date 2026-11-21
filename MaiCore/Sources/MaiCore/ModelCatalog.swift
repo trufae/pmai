@@ -18,17 +18,23 @@ public enum ModelFeature: String, CaseIterable, Codable, Hashable, Sendable {
   }
 }
 
+public enum ModelCatalogSort: String, CaseIterable, Sendable {
+  case name, inputPrice, outputPrice
+}
+
 public struct ModelCatalogFilter: Equatable, Sendable {
   public var search: String
+  public var sort: ModelCatalogSort
   public var features: Set<ModelFeature>
   public var minimumContextWindow: Int?
   public var requiredCapabilities: ProviderCapabilities
 
   public init(
     search: String = "", features: Set<ModelFeature> = [], minimumContextWindow: Int? = nil,
-    requiredCapabilities: ProviderCapabilities = []
+    requiredCapabilities: ProviderCapabilities = [], sort: ModelCatalogSort = .name
   ) {
     self.search = search
+    self.sort = sort
     self.features = features
     self.minimumContextWindow = minimumContextWindow
     self.requiredCapabilities = requiredCapabilities
@@ -48,6 +54,11 @@ public struct ModelCatalogFilter: Equatable, Sendable {
 
   public func applying(to models: [ModelDescriptor]) -> [ModelDescriptor] {
     models.filter(matches).sorted {
+      if sort != .name {
+        let lhs = sort == .inputPrice ? $0.pricing?.inputPerMillion : $0.pricing?.outputPerMillion
+        let rhs = sort == .inputPrice ? $1.pricing?.inputPerMillion : $1.pricing?.outputPerMillion
+        if lhs != rhs { return (lhs ?? .infinity) < (rhs ?? .infinity) }
+      }
       let order = $0.id.localizedCaseInsensitiveCompare($1.id)
       return order == .orderedSame ? $0.id < $1.id : order == .orderedAscending
     }
@@ -126,6 +137,9 @@ extension ModelDescriptor {
       + info.keys.sorted().filter { $0.hasSuffix(".context_length") }.map { info[$0] }
     if let size = context.compactMap({ $0?.intValue }).first(where: { $0 > 0 }) {
       model.contextWindow = size
+    }
+    if let pricing = object["pricing"].flatMap({ ModelPricing(catalog: $0) }) {
+      model.pricing = pricing
     }
     if let voices = object["voices"]?.arrayValue {
       model.voices = voices.compactMap {

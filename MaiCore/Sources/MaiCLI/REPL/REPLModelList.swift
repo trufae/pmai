@@ -5,8 +5,8 @@ struct REPLModelListOptions {
   var provider: ProviderID
   var filter = ModelCatalogFilter()
   static let usage = """
-    /models [PROVIDER] [SEARCH] [--tools] [--vision] [--reasoning] [--decision] [--voice] [--context 128K]
-    Lists models alphabetically with provider-reported features and context sizes.
+    /models [PROVIDER] [SEARCH] [--tools] [--vision] [--reasoning] [--decision] [--voice] [--context 128K] [--sort name|input|output]
+    Lists model features, context sizes and published USD input/output prices per million tokens.
     Filters combine; unknown capabilities do not match. Every listing refreshes the catalog.
     Examples: /models ollama --tools llama   /models --voice   /models --context 128K
     """
@@ -27,6 +27,13 @@ struct REPLModelListOptions {
           throw Invalid(message: "Use --context with a positive token count, such as 32K or 128K.")
         }
         filter.minimumContextWindow = size
+      } else if word == "--sort" {
+        index += 1
+        guard index < words.count, let sort = ["name": ModelCatalogSort.name,
+          "input": .inputPrice, "output": .outputPrice][words[index]] else {
+          throw Invalid(message: "Use --sort name, input or output.")
+        }
+        filter.sort = sort
       } else if word == "--refresh" {
         // Explicit for discoverability; /models always performs a fresh listing.
       } else if word.hasPrefix("--"), let feature = ModelFeature(rawValue: String(word.dropFirst(2))) {
@@ -64,6 +71,7 @@ extension TerminalWriter {
     var badges = model.features.map { paint("[\($0.title)]", color: colors[$0]) }
     if let context = model.contextLabel { badges.append(paint("[\(context)]", color: "green")) }
     if badges.isEmpty { badges.append(paint("[Features unknown]", role: .infoForeground)) }
+    badges.append(paint("[\(model.pricing?.label ?? "Price unknown")]", role: .infoForeground))
     let name = model.displayName == model.id ? model.id : "\(model.id) (\(model.displayName))"
     let owner = model.ownedBy.map { " — \($0)" } ?? ""
     return "\(selected ? "*" : " ") \(paint(name + owner, bold: selected))  \(badges.joined(separator: " "))"

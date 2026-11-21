@@ -292,3 +292,38 @@ an idle chat updates/opens, also at most once a minute. Offline mode disables
 refreshes. Quota sources remain the existing Ollama Cloud and supported ACP agent
 status adapters; an ordinary OpenAI-compatible endpoint may publish no allowance.
 These snapshots can lag actual spending and are advisory, never a spending cap.
+
+## Model prices
+
+`/models` and the iOS model picker display published USD input/output prices per
+**million** tokens, with cached-input and per-request rates when advertised.
+`/models --sort input` and `--sort output` sort known prices first; the iOS picker
+has the same choices. `/usage` includes the selected model's cached price.
+A reported zero is free for that token category; missing, invalid, negative or
+dynamic rates remain unknown. Variable tiers are marked as base rates. These
+catalog snapshots are not invoices: tools, images/audio, routing, reasoning,
+caching, long-context tiers and negotiated plans can affect the final bill.
+
+OpenRouter-compatible `pricing.prompt`, `completion` and `input_cache_read`
+are USD **per token** in the catalog, and `pricing.request` is USD per request.
+The UI converts token rates to per-million units. See the
+[provider catalog schema](https://github.com/OpenRouterTeam/docs/blob/main/guides/overview/models.mdx).
+Direct providers that omit prices from `/models` remain unknown; pmai does not
+substitute another provider's prices or infer a price from a model name.
+`/models` refreshes the data on demand.
+
+For an API endpoint without catalog prices, explicit rates can be supplied in
+that provider's `options.modelPricing`, keyed by exact model ID, using the same
+per-token units. For example:
+
+```json
+"options": {
+  "modelPricing": {
+    "my-model": {"prompt": "0.0000025", "completion": "0.00001"}
+  }
+}
+```
+
+This displays `$2.5` input / `$10` output per million tokens, marked `configured`.
+Configured prices override the catalog for that connection only; keep them up to
+date when your provider changes its rates.

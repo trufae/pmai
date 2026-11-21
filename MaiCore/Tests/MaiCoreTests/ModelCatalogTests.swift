@@ -74,3 +74,29 @@ private struct ContextCatalogProvider: ChatProvider {
     .init(message: .assistant("done"))
   }
 }
+
+@Test("Model prices distinguish unknown and free, convert token units and sort by the requested rate")
+func modelCatalogPricing() throws {
+  let model = try #require(ModelDescriptor.catalogEntry([
+    "id": .string("priced"), "pricing": .object([
+      "prompt": .string("0.0000025"), "completion": .number(0.00001),
+      "input_cache_read": .string("0.00000025"), "overrides": .array([.object([:])]),
+    ]),
+  ]))
+  #expect(model.pricing?.inputPerMillion == 2.5)
+  #expect(model.pricing?.outputPerMillion == 10)
+  #expect(model.pricing?.cachedInputPerMillion == 0.25)
+  #expect(model.pricing?.label.contains("tiers vary") == true)
+  let free = try #require(ModelDescriptor.catalogEntry([
+    "id": .string("free"), "pricing": .object(["prompt": .string("0"), "completion": .integer(0)]),
+  ]))
+  #expect(free.pricing?.inputPerMillion == 0)
+  for value in ["-1", "NaN", "inf", "1e308", "garbage"] {
+    #expect(ModelPricing(catalog: .object(["prompt": .string(value)])) == nil)
+  }
+  #expect(ModelPricing(catalog: .object(["prompt": .string("1"), "currency": .string("EUR")])) == nil)
+  let unknown = ModelDescriptor(id: "unknown")
+  #expect(ModelCatalogFilter(sort: .inputPrice).applying(to: [unknown, model, free]).map(\.id) == ["free", "priced", "unknown"])
+  let restored = try JSONDecoder().decode(ModelDescriptor.self, from: JSONEncoder().encode(model))
+  #expect(restored.pricing == model.pricing)
+}
