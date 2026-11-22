@@ -61,7 +61,9 @@ final class ConversationPagingTests: XCTestCase {
     let root = try directory()
     defer { try? FileManager.default.removeItem(at: root) }
     let persistence = PersistenceStore(localBaseURL: root)
-    let chat = conversation(count: 129)
+    var chat = conversation(count: 129)
+    chat.messages[0].role = .system
+    chat.messages[2].role = .tool
     let saved = expectation(description: "initial save")
     persistence.saveConversations([chat]) { saved.fulfill() }
     await fulfillment(of: [saved], timeout: 5)
@@ -72,6 +74,10 @@ final class ConversationPagingTests: XCTestCase {
     }
     await store.selectConversation(id: chat.id)
     XCTAssertEqual(store.currentConversation?.messages.count, 64)
+    XCTAssertEqual(store.currentConversation?.historyWindow?.range, 65..<129)
+    let opening = try await store.conversationOpeningMessages(id: chat.id)
+    XCTAssertEqual(opening.map(\.text), ["message 1", "message 3", "message 4"])
+    XCTAssertEqual(store.selectedConversationID, chat.id)
     XCTAssertEqual(store.currentConversation?.historyWindow?.range, 65..<129)
     await store.pageConversationHistory(earlier: true)
     XCTAssertEqual(store.currentConversation?.messages.count, 64)
@@ -88,5 +94,7 @@ final class ConversationPagingTests: XCTestCase {
     XCTAssertFalse(persisted?.messages.contains(where: { $0.id == removed.id }) ?? true)
     XCTAssertEqual(persisted?.messages.first?.id, chat.messages.first?.id)
     XCTAssertEqual(persisted?.messages.last?.id, chat.messages.last?.id)
+    let loadedOpening = try await store.conversationOpeningMessages(id: chat.id)
+    XCTAssertEqual(loadedOpening.map(\.id), opening.map(\.id))
   }
 }

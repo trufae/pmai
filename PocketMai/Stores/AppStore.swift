@@ -1500,6 +1500,24 @@ final class AppStore: ObservableObject {
     await ensureConversationLoaded(id)
   }
 
+  func conversationOpeningMessages(id: UUID) async throws -> [ConversationPreviewMessage] {
+    let conversation: Conversation?
+    if let loaded = self.conversation(withID: id),
+      loaded.historyWindow == nil || loaded.historyWindow?.range.lowerBound == 0
+    {
+      conversation = loaded
+    } else {
+      let persistence = self.persistence
+      conversation = try await Task.detached(priority: .userInitiated) {
+        try persistence.loadConversationPage(id: id, before: 12)
+      }.value
+    }
+    guard let conversation else { throw CocoaError(.fileReadNoSuchFile) }
+    return conversation.messages.prefix(12)
+      .filter { $0.role == .user || $0.role == .assistant }
+      .prefix(3).map { ConversationPreviewMessage(message: $0) }
+  }
+
   func loadStoredConversationsForSearch() async {
     guard
       !hasLoadedPersistedConversations || conversations.contains(where: { $0.historyWindow != nil })
