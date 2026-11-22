@@ -630,7 +630,7 @@ struct PendingConversationDeletion: Identifiable {
 }
 
 extension View {
-  fileprivate func conversationDeletionAlert(
+  func conversationDeletionAlert(
     _ deletion: Binding<PendingConversationDeletion?>,
     onConfirm: @escaping (Set<UUID>) -> Void
   ) -> some View {
@@ -873,6 +873,14 @@ struct ConversationFolderManagementView: View {
   var body: some View {
     NavigationStack {
       Form {
+        Section {
+          NavigationLink {
+            ConversationOrganizerView()
+          } label: {
+            Label("Organize Chats", systemImage: "rectangle.stack")
+          }
+        }
+
         Section {
           folderInfoRow(ConversationFolder.defaultFolder)
           folderInfoRow(ConversationFolder.iCloudFolder)
