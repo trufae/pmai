@@ -237,27 +237,32 @@ enum MessageActionMenus {
     onSpeakMessage: @escaping (String?) -> Void,
     onSpeakFromHere: ((String?) -> Void)?
   ) -> UIMenu {
-    var language: String?
-    let choices: [(String, String?)] = [("Default Voices", nil), ("System Default", "")]
-      + SystemLanguageSupport.textToSpeechLanguageIdentifiers.map {
-        (SystemLanguageSupport.languageDisplayName($0), $0)
-      }
-    let languages = UIMenu(title: "Language", options: .singleSelection, children: choices.map {
-      title, identifier in
-      UIAction(
-        title: title, attributes: .keepsMenuPresented, state: identifier == nil ? .on : .off
-      ) { _ in language = identifier }
-    })
     var playback: [UIMenuElement] = [
-      action("Only This Message", systemImage: "text.bubble") { onSpeakMessage(language) }
+      speechLanguages(title: "Only This Message", systemImage: "text.bubble", perform: onSpeakMessage)
     ]
     if let onSpeakFromHere {
-      playback.append(action("All Messages From Here", systemImage: "text.bubble.fill") {
-        onSpeakFromHere(language)
-      })
+      playback.append(speechLanguages(
+        title: "All Messages From Here", systemImage: "text.bubble.fill", perform: onSpeakFromHere))
     }
-    return UIMenu(title: "Speak", image: UIImage(systemName: "speaker.wave.2"), children: [
-      languages, UIMenu(options: .displayInline, children: playback),
-    ])
+    return UIMenu(title: "Speak", image: UIImage(systemName: "speaker.wave.2"), children: playback)
+  }
+
+  private static func speechLanguages(
+    title: String, systemImage: String, perform: @escaping (String?) -> Void
+  ) -> UIMenu {
+    func languageAction(_ identifier: String) -> UIAction {
+      UIAction(title: SystemLanguageSupport.languageDisplayName(identifier)) { _ in perform(identifier) }
+    }
+    var choices: [UIMenuElement] = []
+    let recent = TTSPlayer.shared.recentLanguages
+    if !recent.isEmpty {
+      choices.append(UIMenu(title: "Recent", children: recent.map(languageAction)))
+    }
+    choices.append(UIAction(title: "Default Voices") { _ in perform(nil) })
+    choices.append(UIAction(title: "System Default") { _ in perform("") })
+    choices.append(UIMenu(
+      options: .displayInline,
+      children: SystemLanguageSupport.textToSpeechLanguageIdentifiers.map(languageAction)))
+    return UIMenu(title: title, image: UIImage(systemName: systemImage), children: choices)
   }
 }

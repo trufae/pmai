@@ -32,6 +32,15 @@ struct NowSpeakingBar: View {
       .accessibilityLabel(ttsPlayer.isMuted ? "Unmute" : "Mute")
 
       Menu {
+        if ttsPlayer.canChangeLanguage, !ttsPlayer.recentLanguages.isEmpty {
+          Menu("Recent", systemImage: "clock") {
+            ForEach(ttsPlayer.recentLanguages, id: \.self) { language in
+              Button(SystemLanguageSupport.languageDisplayName(language)) {
+                ttsPlayer.changeLanguage(language)
+              }
+            }
+          }
+        }
         Picker(
           ttsPlayer.currentVoice?.provider == .openAICompatible ? "System Voice Language" : "Language",
           selection: Binding(
@@ -51,6 +60,17 @@ struct NowSpeakingBar: View {
         }
         .pickerStyle(.menu)
         .disabled(!ttsPlayer.canChangeLanguage)
+
+        Picker(
+          "Speed",
+          selection: Binding(
+            get: { ttsPlayer.playbackRate }, set: { ttsPlayer.changePlaybackRate($0) })
+        ) {
+          ForEach([0.5, 0.75, 1, 1.25, 1.5, 2], id: \.self) { rate in
+            Text("\(rate.formatted())×").tag(rate)
+          }
+        }
+        .pickerStyle(.menu)
 
         Button("Rewind to Start", systemImage: "backward.end.fill") { ttsPlayer.rewind() }
         Button(

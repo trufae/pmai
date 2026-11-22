@@ -2,6 +2,7 @@ import AVFoundation
 import Foundation
 import MaiCore
 import MaiOpenAI
+import UIKit
 import XCTest
 
 @testable import PocketMai
@@ -308,6 +309,78 @@ final class OpenAISpeechTests: XCTestCase {
     player.speak(text: "Use my saved voice.", voice: voice, role: .assistant)
     XCTAssertTrue(player.errorMessage?.contains("missing or disabled") == true)
     XCTAssertFalse(player.isSpeaking)
+  }
+
+  func testSpeechMenuLanguageStartsSelectedScopeAndDismisses() throws {
+    var spoken: [String?] = []
+    var queued: [String?] = []
+    let menu = MessageActionMenus.speech(
+      onSpeakMessage: { spoken.append($0) }, onSpeakFromHere: { queued.append($0) })
+    for (index, title) in ["Only This Message", "All Messages From Here"].enumerated() {
+      let scope = try XCTUnwrap(menu.children.compactMap { $0 as? UIMenu }.first { $0.title == title })
+      let language = try XCTUnwrap(scope.children.compactMap { $0 as? UIAction }.first {
+        $0.title == "System Default"
+      })
+      XCTAssertFalse(language.attributes.contains(.keepsMenuPresented))
+      let button = UIButton(type: .system)
+      button.addAction(language, for: .touchUpInside)
+      button.sendActions(for: .touchUpInside)
+      XCTAssertEqual(spoken, [""])
+      XCTAssertEqual(queued, index == 0 ? [] : [""])
+    }
+  }
+
+  func testRecentSpeechLanguagesPersistWithoutDuplicates() throws {
+    let suite = "SpeechRecents-\(UUID().uuidString)"
+    let preferences = try XCTUnwrap(UserDefaults(suiteName: suite))
+    defer { preferences.removePersistentDomain(forName: suite) }
+    let player = TTSPlayer(
+      integratesWithSystemPlayback: false, synthesizer: PlaybackSpeechSynthesizer(),
+      preferences: preferences)
+    defer { player.stop() }
+    player.speak(text: "Hello.", voice: .defaults, language: "es_ES", role: .assistant)
+    player.changeLanguage("fr-FR")
+    player.changeLanguage("ca-ES")
+    player.changeLanguage("fr_FR")
+    player.changeLanguage("de-DE")
+    player.changeLanguage("")
+    XCTAssertEqual(player.recentLanguages, ["de-DE", "fr-FR", "ca-ES"])
+    let restored = TTSPlayer(integratesWithSystemPlayback: false, preferences: preferences)
+    XCTAssertEqual(restored.recentLanguages, player.recentLanguages)
+  }
+
+  func testPlaybackSpeedPreservesPauseAndQueue() async throws {
+    let suite = "SpeechSpeed-\(UUID().uuidString)"
+    let preferences = try XCTUnwrap(UserDefaults(suiteName: suite))
+    defer { preferences.removePersistentDomain(forName: suite) }
+    let synthesizer = PlaybackSpeechSynthesizer()
+    let player = TTSPlayer(
+      integratesWithSystemPlayback: false, synthesizer: synthesizer, preferences: preferences)
+    defer { player.stop() }
+    let voice = RoleVoiceSettings(rate: 0.4, pitch: 1.2)
+    player.speak(text: "First.", voice: voice, role: .assistant)
+    player.enqueue(text: "Second.", voice: voice, role: .assistant)
+    player.changePlaybackRate(1.5)
+    XCTAssertEqual(try XCTUnwrap(synthesizer.utterances.last).rate, 0.6, accuracy: 0.001)
+    player.pause()
+    player.changePlaybackRate(2)
+    XCTAssertTrue(player.isPaused)
+    XCTAssertNil(synthesizer.activeUtterance)
+    player.resume()
+    XCTAssertEqual(try XCTUnwrap(synthesizer.utterances.last).rate, 0.8, accuracy: 0.001)
+    XCTAssertEqual(synthesizer.utterances.last?.pitchMultiplier, 1.2)
+    let next = expectation(description: "The queued message keeps the selected speed")
+    synthesizer.onSpeak = { utterance in
+      XCTAssertEqual(utterance.speechString, "Second.")
+      XCTAssertEqual(utterance.rate, 0.8, accuracy: 0.001)
+      next.fulfill()
+    }
+    synthesizer.finish()
+    await fulfillment(of: [next], timeout: 5)
+    let restored = TTSPlayer(integratesWithSystemPlayback: false, preferences: preferences)
+    XCTAssertEqual(restored.playbackRate, 2)
+    player.changePlaybackRate(.nan)
+    XCTAssertEqual(player.playbackRate, 2)
   }
 
   func testMessageLanguageChoiceAppliesToEveryQueuedMessage() async {

@@ -17,6 +17,10 @@ final class TTSPlayer: NSObject, ObservableObject {
   @Published private(set) var currentTag: String?
   @Published private(set) var currentMessageID: UUID?
   @Published private(set) var errorMessage: String?
+  @Published private(set) var recentLanguages: [String]
+  @Published private(set) var playbackRate: Double
+
+  private let preferences: UserDefaults
 
   typealias SpeechSynthesis = @MainActor (OpenAIEndpoint, String, String) async throws -> Data
   private let synthesizeSpeech: SpeechSynthesis
@@ -42,6 +46,7 @@ final class TTSPlayer: NSObject, ObservableObject {
   private var boostedAudioEngine: AVAudioEngine?
   private var boostedAudioPlayerNode: AVAudioPlayerNode?
   private var boostedAudioGainUnit: AVAudioUnitEQ?
+  private var boostedAudioTimePitch: AVAudioUnitTimePitch?
   private var boostedAudioPlaybackID: UUID?
   private var speechGeneration = 0
 
@@ -50,6 +55,7 @@ final class TTSPlayer: NSObject, ObservableObject {
     managesAudioSession: Bool = false,
     carPlayAudio: Bool = false,
     synthesizer: AVSpeechSynthesizer? = nil,
+    preferences: UserDefaults = .standard,
     synthesizeSpeech: @escaping SpeechSynthesis = { endpoint, text, voice in
       try await OpenAICompatibleProvider.synthesizeSpeechAudio(
         endpoint: endpoint, input: text, voice: voice)
@@ -58,6 +64,10 @@ final class TTSPlayer: NSObject, ObservableObject {
     self.integratesWithSystemPlayback = integratesWithSystemPlayback
     self.managesAudioSession = managesAudioSession || integratesWithSystemPlayback || carPlayAudio
     self.carPlayAudio = carPlayAudio
+    self.preferences = preferences
+    self.recentLanguages = preferences.stringArray(forKey: "tts.recentLanguages") ?? []
+    let savedRate = preferences.double(forKey: "tts.playbackRate")
+    self.playbackRate = (0.5...2).contains(savedRate) ? savedRate : 1
     self.synthesizeSpeech = synthesizeSpeech
     self.makeSynthesizer = { synthesizer ?? AVSpeechSynthesizer() }
     super.init()
@@ -116,6 +126,7 @@ final class TTSPlayer: NSObject, ObservableObject {
       )
     else { return }
 
+    rememberLanguage(language)
     if hasActiveSpeech {
       if interrupt {
         queuedSpeech.removeAll()
@@ -229,6 +240,7 @@ final class TTSPlayer: NSObject, ObservableObject {
     }
     guard let first = items.first else { return }
 
+    rememberLanguage(language)
     queuedSpeech = Array(items.dropFirst())
     if hasActiveSpeech {
       pendingSpeechAfterCancel = first
@@ -310,6 +322,8 @@ final class TTSPlayer: NSObject, ObservableObject {
       let player = try AVAudioPlayer(contentsOf: url)
       player.delegate = self
       player.volume = isMuted ? 0 : 1
+      player.enableRate = true
+      player.rate = Float(playbackRate)
       player.prepareToPlay()
       if isPaused || player.play() {
         audioPlayer = player
@@ -333,17 +347,22 @@ final class TTSPlayer: NSObject, ObservableObject {
     let gainUnit = AVAudioUnitEQ(numberOfBands: 1)
     gainUnit.bands.first?.bypass = true
     gainUnit.globalGain = speechPlaybackGainDecibels(for: file)
+    let timePitch = AVAudioUnitTimePitch()
+    timePitch.rate = Float(playbackRate)
 
     engine.attach(playerNode)
     engine.attach(gainUnit)
+    engine.attach(timePitch)
     engine.connect(playerNode, to: gainUnit, format: file.processingFormat)
-    engine.connect(gainUnit, to: engine.mainMixerNode, format: file.processingFormat)
+    engine.connect(gainUnit, to: timePitch, format: file.processingFormat)
+    engine.connect(timePitch, to: engine.mainMixerNode, format: file.processingFormat)
 
     try engine.start()
     let playbackID = UUID()
     boostedAudioEngine = engine
     boostedAudioPlayerNode = playerNode
     boostedAudioGainUnit = gainUnit
+    boostedAudioTimePitch = timePitch
     boostedAudioPlaybackID = playbackID
 
     playerNode.scheduleFile(file, at: nil, completionCallbackType: .dataPlayedBack) {
@@ -379,7 +398,9 @@ final class TTSPlayer: NSObject, ObservableObject {
     } else if !speech.voice.language.isEmpty {
       utterance.voice = AVSpeechSynthesisVoice(language: speech.voice.language)
     }
-    utterance.rate = Float(max(0, min(1, speech.voice.rate)))
+    utterance.rate = max(
+      AVSpeechUtteranceMinimumSpeechRate,
+      min(AVSpeechUtteranceMaximumSpeechRate, Float(speech.voice.rate * playbackRate)))
     utterance.pitchMultiplier = Float(max(0.5, min(2, speech.voice.pitch)))
     utterance.volume = isMuted ? 0 : 1
 
@@ -452,6 +473,8 @@ final class TTSPlayer: NSObject, ObservableObject {
       let player = try AVAudioPlayer(contentsOf: url)
       player.delegate = self
       player.volume = isMuted ? 0 : 1
+      player.enableRate = true
+      player.rate = Float(playbackRate)
       player.prepareToPlay()
       if isPaused || player.play() {
         audioPlayer = player
@@ -500,7 +523,28 @@ final class TTSPlayer: NSObject, ObservableObject {
   func changeLanguage(_ identifier: String) {
     guard var speech = originalSpeech, canChangeLanguage else { return }
     speech.voice = Self.speechVoice(speech.voice, language: identifier)
+    rememberLanguage(identifier)
     restart(speech)
+  }
+
+  private func rememberLanguage(_ identifier: String?) {
+    guard let identifier = SystemLanguageSupport.normalizedLanguageIdentifier(identifier) else { return }
+    recentLanguages = Array(([identifier] + recentLanguages.filter { $0 != identifier }).prefix(3))
+    preferences.set(recentLanguages, forKey: "tts.recentLanguages")
+  }
+
+  func changePlaybackRate(_ rate: Double) {
+    guard rate.isFinite else { return }
+    playbackRate = max(0.5, min(2, rate))
+    preferences.set(playbackRate, forKey: "tts.playbackRate")
+    audioPlayer?.rate = Float(playbackRate)
+    boostedAudioTimePitch?.rate = Float(playbackRate)
+    if let speech = currentSpeech, currentUtterance != nil, pendingSpeechAfterCancel == nil {
+      let position = systemSpeechPosition
+      stopSystemSpeech()
+      beginSystemSpeaking(speech, from: position)
+    }
+    updateNowPlaying()
   }
 
   private static func speechVoice(_ defaults: RoleVoiceSettings, language: String?) -> RoleVoiceSettings {
@@ -694,8 +738,12 @@ final class TTSPlayer: NSObject, ObservableObject {
     if let boostedAudioGainUnit {
       engine?.detach(boostedAudioGainUnit)
     }
+    if let boostedAudioTimePitch {
+      engine?.detach(boostedAudioTimePitch)
+    }
     boostedAudioPlayerNode = nil
     boostedAudioGainUnit = nil
+    boostedAudioTimePitch = nil
     boostedAudioPlaybackID = nil
     boostedAudioEngine = nil
   }
@@ -796,7 +844,7 @@ final class TTSPlayer: NSObject, ObservableObject {
     if let text = currentText, !text.isEmpty {
       info[MPMediaItemPropertyAlbumTitle] = String(text.prefix(120))
     }
-    info[MPNowPlayingInfoPropertyPlaybackRate] = isPaused ? 0.0 : 1.0
+    info[MPNowPlayingInfoPropertyPlaybackRate] = isPaused ? 0.0 : playbackRate
     MPNowPlayingInfoCenter.default().nowPlayingInfo = info
   }
 
