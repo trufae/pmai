@@ -9,6 +9,9 @@ struct ConversationOrganizerView: View {
   @State private var offset = CGSize.zero
   @State private var isBusy = false
   @State private var showingFolders = false
+  @State private var showingNewFolder = false
+  @State private var newFolderName = ""
+  @State private var folderErrorMessage: String?
   @State private var previewConversation: ConversationSummary?
   @State private var pendingDeletion: PendingConversationDeletion?
   @State private var errorMessage: String?
@@ -139,37 +142,65 @@ struct ConversationOrganizerView: View {
     }
     .sheet(isPresented: $showingFolders) {
       NavigationStack {
-        List(store.conversationFolders) { folder in
-          Button {
-            guard let conversation = current, !isBusy else { return }
-            isBusy = true
-            Task {
-              await store.moveConversation(id: conversation.id, to: folder.id)
-              isBusy = false
-              showingFolders = false
-              if store.conversationSummaries.first(where: { $0.id == conversation.id })?.folderID
-                == folder.id
-              {
-                advance(conversation.id)
-              } else {
-                errorMessage = store.errorMessage ?? "The conversation could not be moved."
+        List {
+          ForEach(store.conversationFolders) { folder in
+            Button {
+              guard let conversation = current, !isBusy else { return }
+              isBusy = true
+              Task {
+                await store.moveConversation(id: conversation.id, to: folder.id)
+                isBusy = false
+                showingFolders = false
+                if store.conversationSummaries.first(where: { $0.id == conversation.id })?.folderID
+                  == folder.id
+                {
+                  advance(conversation.id)
+                } else {
+                  errorMessage = store.errorMessage ?? "The conversation could not be moved."
+                }
               }
+            } label: {
+              Label(folder.displayName,
+                systemImage: folder.id == current?.folderID ? "checkmark" : folder.systemImage)
             }
-          } label: {
-            Label(folder.displayName,
-              systemImage: folder.id == current?.folderID ? "checkmark" : folder.systemImage)
+            .disabled(isBusy || !store.canUseConversationFolder(folder.id)
+              || folder.id == current?.folderID)
           }
-          .disabled(isBusy || !store.canUseConversationFolder(folder.id)
-            || folder.id == current?.folderID)
+          if let folderErrorMessage {
+            Text(folderErrorMessage)
+              .foregroundStyle(.red)
+          }
         }
         .navigationTitle("Move to Folder")
         .toolbar {
           ToolbarItem(placement: .cancellationAction) {
             Button("Cancel") { showingFolders = false }.disabled(isBusy)
           }
+          ToolbarItem(placement: .primaryAction) {
+            Button("New Folder", systemImage: "folder.badge.plus") {
+              newFolderName = ""
+              folderErrorMessage = nil
+              showingNewFolder = true
+            }
+            .disabled(isBusy)
+          }
         }
       }
       .interactiveDismissDisabled(isBusy)
+      .onAppear { folderErrorMessage = nil }
+      .alert("New Folder", isPresented: $showingNewFolder) {
+        TextField("Folder name", text: $newFolderName)
+        Button("Cancel", role: .cancel) {}
+        Button("Create") {
+          if store.createConversationFolder(named: newFolderName) == nil {
+            folderErrorMessage = store.errorMessage
+            store.errorMessage = nil
+          }
+        }
+        .disabled(ConversationFolder.normalizedCustomName(newFolderName).isEmpty)
+      } message: {
+        Text("Create a folder, then select it to move this chat.")
+      }
     }
   }
 
