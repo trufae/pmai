@@ -3,6 +3,7 @@ import SwiftUI
 struct ConversationOrganizerView: View {
   @EnvironmentObject private var store: AppStore
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @Environment(\.dismiss) private var dismiss
   @State private var queue: [UUID] = []
   @State private var started = false
   @State private var offset = CGSize.zero
@@ -26,6 +27,9 @@ struct ConversationOrganizerView: View {
         Text("\(queue.count) remaining · Shuffled for this visit")
           .font(.subheadline)
           .foregroundStyle(.secondary)
+          .padding(.top, 64)
+
+        Spacer(minLength: 16)
 
         ZStack {
           RoundedRectangle(cornerRadius: 24)
@@ -37,7 +41,7 @@ struct ConversationOrganizerView: View {
             .offset(offset)
             .rotationEffect(.degrees(reduceMotion ? 0 : Double(offset.width / 24)))
             .gesture(
-              DragGesture(minimumDistance: 20)
+              DragGesture(minimumDistance: 1)
                 .onChanged { value in
                   guard !isBusy else { return }
                   offset = value.translation
@@ -59,39 +63,23 @@ struct ConversationOrganizerView: View {
                     resetCard()
                     showingFolders = true
                   } else {
-                    togglePin(conversation)
+                    dismiss()
                   }
                 }
             )
+            .accessibilityElement(children: .combine)
+            .accessibilityHint("Swipe left to delete, up to move, right to keep, or down to close.")
+            .accessibilityAction(named: "Delete Conversation") { requestDeletion(conversation) }
+            .accessibilityAction(named: "Move to Folder") { showingFolders = true }
+            .accessibilityAction(named: "Keep Conversation") { advance(conversation.id) }
+            .accessibilityAction(named: "Close Organizer") { dismiss() }
+            .disabled(isBusy)
         }
-        .frame(maxWidth: 420, maxHeight: 560)
-        .padding(.horizontal, 8)
+        .aspectRatio(2.0 / 3.0, contentMode: .fit)
+        .frame(maxWidth: 300, maxHeight: 450)
+        .padding(.horizontal, 48)
 
-        VStack(spacing: 12) {
-          HStack {
-            action("Left: Delete", icon: "arrow.left", color: .red) {
-              requestDeletion(conversation)
-            }
-            action("Right: Keep", icon: "arrow.right", color: .green) {
-              advance(conversation.id)
-            }
-          }
-          HStack {
-            action("Up: Move", icon: "arrow.up", color: .accentColor) {
-              showingFolders = true
-            }
-            action(conversation.isPinned ? "Down: Unpin" : "Down: Pin",
-              icon: "arrow.down", color: .orange
-            ) {
-              togglePin(conversation)
-            }
-          }
-        }
-        .disabled(isBusy)
-        Text("Swipe the card or tap an action. Delete asks first. Keep skips until your next visit.")
-          .font(.caption)
-          .foregroundStyle(.secondary)
-          .multilineTextAlignment(.center)
+        Spacer(minLength: 16)
       } else {
         ContentUnavailableView(
           "All Done", systemImage: "checkmark.seal",
@@ -101,6 +89,18 @@ struct ConversationOrganizerView: View {
     .padding()
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .background(Color(uiColor: .systemGroupedBackground))
+    .overlay(alignment: .leading) {
+      swipeHint(icon: "trash", color: .red, distance: -offset.width)
+        .padding(.leading, 16)
+    }
+    .overlay(alignment: .top) {
+      swipeHint(icon: "folder", color: .accentColor, distance: -offset.height)
+        .padding(.top, 16)
+    }
+    .overlay(alignment: .trailing) {
+      swipeHint(icon: "checkmark", color: .green, distance: offset.width)
+        .padding(.trailing, 16)
+    }
     .navigationTitle("Organize Chats")
     .navigationBarTitleDisplayMode(.inline)
     .onAppear {
@@ -153,18 +153,18 @@ struct ConversationOrganizerView: View {
     }
   }
 
-  private func action(_ title: String, icon: String, color: Color,
-    perform: @escaping () -> Void
-  ) -> some View {
-    Button(action: perform) {
-      Label(title, systemImage: icon)
-        .font(.subheadline.weight(.semibold))
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 10)
-        .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
-    }
-    .buttonStyle(.plain)
-    .foregroundStyle(color)
+  private func swipeHint(icon: String, color: Color, distance: CGFloat) -> some View {
+    let progress = min(1, max(0, distance / 140))
+    return Image(systemName: icon)
+      .font(.title2.weight(.semibold))
+      .foregroundStyle(color)
+      .frame(width: 48, height: 48)
+      .background(color.opacity(0.14), in: Circle())
+      .overlay { Circle().strokeBorder(color.opacity(0.35), lineWidth: 1) }
+      .scaleEffect(reduceMotion ? 1 : 0.8 + progress * 0.2)
+      .opacity(Double(progress))
+      .allowsHitTesting(false)
+      .accessibilityHidden(true)
   }
 
   private func resetCard() {
@@ -184,21 +184,6 @@ struct ConversationOrganizerView: View {
       queue.removeAll { $0 == id }
       offset = .zero
       isBusy = false
-    }
-  }
-
-  private func togglePin(_ conversation: ConversationSummary) {
-    isBusy = true
-    offset = CGSize(width: 0, height: reduceMotion ? 0 : 45)
-    Task {
-      await store.togglePin(id: conversation.id)
-      isBusy = false
-      resetCard()
-      if store.conversationSummaries.first(where: { $0.id == conversation.id })?.isPinned
-        == conversation.isPinned
-      {
-        errorMessage = store.errorMessage ?? "The conversation could not be pinned."
-      }
     }
   }
 }
