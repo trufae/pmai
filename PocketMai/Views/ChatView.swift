@@ -719,9 +719,10 @@ struct ChatView: View {
         .font(.headline)
         .lineLimit(1)
         .foregroundStyle(remoteChat.map { $0.connected ? Color.primary : .red } ?? .primary)
-        if let label = (remoteChat?.contextUsage ?? contextUsage)?.label {
-          Text(label).font(.caption.monospacedDigit())
+        if let usage = remoteChat?.contextUsage ?? contextUsage {
+          Text(usage.compactLabel).font(.caption.monospacedDigit())
             .foregroundStyle(contextWarnings.isEmpty ? Color.secondary : .orange)
+            .accessibilityLabel(usage.label)
         }
         if !contextWarnings.isEmpty {
           Text("⚠ " + contextWarnings.joined(separator: " · "))
@@ -843,7 +844,7 @@ struct ChatView: View {
     if isLoadingConversation { return "Loading…" }
     if isLoadingCurrentLocalModel { return "Loading local model into memory…" }
     guard let metadata = chatTitleMetadata else { return "No conversation" }
-    return [metadata.folder, metadata.providerModel, systemPromptTitle, contextUsage?.label]
+    return [metadata.folder, metadata.providerModel, systemPromptTitle, contextUsage?.compactLabel]
       .compactMap { AgentTooling.firstNonEmpty($0) }.joined(separator: " · ")
   }
 

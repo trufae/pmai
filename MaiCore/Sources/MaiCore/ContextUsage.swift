@@ -30,6 +30,14 @@ public struct ContextUsage: Codable, Equatable, Sendable {
     return "ctx \(used)/\(ModelUsageFormat.count(windowTokens)) (\(percent)%)"
   }
 
+  /// A short title label; detailed estimate markers remain in `label`.
+  public var compactLabel: String {
+    let used = ModelUsageFormat.count(usedTokens).replacingOccurrences(of: ".0", with: "")
+    guard let windowTokens, windowTokens > 0 else { return "ctx \(used)" }
+    let window = ModelUsageFormat.count(windowTokens).replacingOccurrences(of: ".0", with: "")
+    return "ctx \(used)/\(window)"
+  }
+
   /// ACP usage_update describes occupancy, not billable input/output usage.
   public init?(acpUpdate: JSONValue) {
     guard let fields = acpUpdate.objectValue,

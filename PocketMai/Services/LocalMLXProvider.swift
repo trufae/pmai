@@ -127,9 +127,9 @@ actor LocalMLXProvider {
           stream: request.conversation.usesStreaming), settings: request.settings),
       emit: { await accumulator.consume($0) },
       onGenerationInfo: { await metrics.record($0) })
-    let (output, timing) = try await accumulator.finish(response: response)
+    let (output, timing, contextUsage) = try await accumulator.finish(response: response)
     if let usage = response.usage {
-      await UsageStatsStore.recordContext(response.contextUsage ?? ContextUsage(
+      await UsageStatsStore.recordContext(contextUsage ?? ContextUsage(
         usedTokens: usage.inputTokens + usage.outputTokens, windowTokens: window,
         isEstimated: usage.isEstimated), request: request, assistantText: output)
     }

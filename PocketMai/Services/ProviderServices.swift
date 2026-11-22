@@ -997,8 +997,8 @@ enum AppleFoundationProvider {
         await accumulator.consume($0)
       }
     }
-    let (content, timing) = try await accumulator.finish(response: response)
-    if let usage = response.contextUsage {
+    let (content, timing, contextUsage) = try await accumulator.finish(response: response)
+    if let usage = contextUsage {
       await UsageStatsStore.recordContext(usage, request: request, assistantText: content)
     }
     let stats = GenerationStats.measured(
@@ -1172,6 +1172,11 @@ enum OpenAICompatibleProvider {
         response = try await provider.complete(
           AppRedaction.request(prepared, settings: request.settings)
         ) { event in
+          if case .contextUsage(var usage) = event {
+            usage.windowTokens = ContextUsage.effectiveWindow(
+              usage.windowTokens, request.conversation.contextWindowTokens)
+            await UsageStatsStore.recordContext(usage, request: request)
+          }
           await accumulator.consume(event)
         }
       } catch is CancellationError {
@@ -1180,13 +1185,16 @@ enum OpenAICompatibleProvider {
         throw mapCoreError(error)
       }
 
-      let (content, timing) = try await accumulator.finish(response: response)
+      let (content, timing, reportedContext) = try await accumulator.finish(response: response)
       let input = response.usage?.inputTokens ?? initialContext.usedTokens
       let output = response.usage?.outputTokens
         ?? GenerationStats.estimatedTokenCount(forCharacterCount: response.message.text.count)
-      await UsageStatsStore.recordContext(
-        ContextUsage(usedTokens: input + output, windowTokens: request.conversation.contextWindowTokens,
-          isEstimated: response.usage == nil || response.usage?.isEstimated == true), request: request, assistantText: content)
+      var context = reportedContext ?? ContextUsage(
+        usedTokens: input + output,
+        isEstimated: response.usage == nil || response.usage?.isEstimated == true)
+      context.windowTokens = ContextUsage.effectiveWindow(
+        context.windowTokens, request.conversation.contextWindowTokens)
+      await UsageStatsStore.recordContext(context, request: request, assistantText: content)
       await recordUsage(
         context: usageContext,
         usage: response.usage,
@@ -1308,6 +1316,7 @@ final class CoreProviderEventAccumulator {
   private let onUpdate: @MainActor (String) -> Void
   private let redactor = ContentRedactor.current
   private var output = ReasoningText()
+  private var contextUsage: ContextUsage?
   private var timing = StreamTimingObservation(requestStart: Date())
   private var lastEmit = Date(timeIntervalSince1970: 0)
   private var dirty = false
@@ -1328,7 +1337,9 @@ final class CoreProviderEventAccumulator {
       timing.noteTokenChunk()
     case .toolCallDelta:
       timing.noteTokenChunk()
-    case .usage, .contextUsage, .toolStarted, .toolUpdated, .toolFinished:
+    case .contextUsage(let usage):
+      contextUsage = usage
+    case .usage, .toolStarted, .toolUpdated, .toolFinished:
       break
     }
     let now = Date()
@@ -1349,7 +1360,9 @@ final class CoreProviderEventAccumulator {
     return timing
   }
 
-  func finish(response: ProviderResponse) throws -> (String, StreamTimingObservation) {
+  func finish(response: ProviderResponse) throws
+    -> (content: String, timing: StreamTimingObservation, contextUsage: ContextUsage?)
+  {
     let calls = response.message.toolCalls.map {
       AgentTooling.makeNativeToolCall(id: $0.id, name: $0.name, rawArguments: $0.arguments.compactJSONString).textBlock
     }.filter { !$0.isEmpty }.joined(separator: "\n")
@@ -1358,6 +1371,9 @@ final class CoreProviderEventAccumulator {
     guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
       throw ChatProviderError.emptyResponse
     }
-    return (content, finish(with: content))
+    var usage = response.contextUsage ?? contextUsage
+    usage?.windowTokens = ContextUsage.effectiveWindow(
+      response.contextUsage?.windowTokens, contextUsage?.windowTokens)
+    return (content, finish(with: content), usage)
   }
 }

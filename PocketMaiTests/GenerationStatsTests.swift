@@ -27,6 +27,29 @@ final class GenerationStatsTests: XCTestCase {
     XCTAssertFalse(snapshot.matches(conversation, settings: request.settings))
   }
 
+  func testReportedContextCapacitySurvivesFinalResponseAndStorage() throws {
+    let streamed = ContextUsage(usedTokens: 18_000, windowTokens: 128_000, isEstimated: false)
+    for reported in [nil, ContextUsage(usedTokens: 19_000, isEstimated: false)] {
+      let accumulator = CoreProviderEventAccumulator(onUpdate: { _ in })
+      accumulator.consume(.contextUsage(streamed))
+      accumulator.consume(.usage(.init(inputTokens: 100, outputTokens: 20)))
+      let result = try accumulator.finish(response: .init(
+        message: .assistant("Hello"), contextUsage: reported))
+      let usage = try XCTUnwrap(result.contextUsage)
+      var conversation = Conversation()
+      let assistant = ChatMessage(role: .assistant, text: "Hello")
+      conversation.messages = [ChatMessage(role: .user, text: "hi"), assistant]
+      let request = ChatCompletionRequest(
+        conversation: conversation, settings: AppSettings(), context: "", assistantMessageID: assistant.id)
+      UsageStatsStore.recordContext(usage, request: request, assistantText: result.content)
+      let stored = try XCTUnwrap(UsageStatsStore.shared.contexts[conversation.id])
+      XCTAssertTrue(stored.matches(conversation, settings: request.settings))
+      XCTAssertEqual(stored.usage.usedTokens, reported?.usedTokens ?? streamed.usedTokens)
+      XCTAssertEqual(stored.usage.windowTokens, 128_000)
+      XCTAssertFalse(stored.usage.isEstimated)
+    }
+  }
+
   func testLiveReasoningRateExcludesHistoryAndStopsWithTheReasoning() {
     var rate = ReasoningGenerationRate()
     rate.observe(characterCount: 4_000, at: start)
