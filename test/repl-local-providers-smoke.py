@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -39,13 +40,13 @@ def main():
         output = run(['/providers', '/help provider'])
         assert '--kind apple' in output and '--kind mlx' in output, output
         assert [p['id'] for p in json.loads(config.read_text())['providers']] == ['hello']
-        assert 'apple — Apple Intelligence' not in output, output
-        assert 'mlx — MLX Local' not in output, output
+        assert not re.search(r'^\s*\*?\s*apple\s+Apple Intelligence\b', output, re.M), output
+        assert not re.search(r'^\s*\*?\s*mlx\s+MLX Local\b', output, re.M), output
         if sys.platform == 'darwin':
             output = run(['/provider add apple --kind apple', '/provider add mlx --kind mlx',
                           '/providers'])
-            assert 'apple — Apple Intelligence' in output, output
-            assert 'mlx — MLX Local' in output, output
+            assert re.search(r'^\s*\*?\s*apple\s+Apple Intelligence\b', output, re.M), output
+            assert re.search(r'^\s*\*?\s*mlx\s+MLX Local\b', output, re.M), output
             output = run(['/provider use apple', '/model -chat'])
             assert 'Chat: apple::on-device' in output, output
             output = run(['/provider', '/model -chat'], env={'OPENAI_BASE_URL': 'not-a-url'})

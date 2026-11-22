@@ -33,7 +33,7 @@ func replModelListPlainText() async {
   let terminal = TerminalWriter(capturesOutput: true)
   await terminal.table(table)
   let output = await terminal.drainCaptured()
-  #expect(output.contains("Tools, Voice") && output.contains("32K context"))
+  #expect(output.contains("Tools, Voice") && output.contains("32K"))
   #expect(output.contains("* example") && output.contains("plain | **model**"))
   #expect(!output.contains("unknown") && !output.contains("\u{1b}"))
 }

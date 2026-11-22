@@ -359,19 +359,24 @@ extension MaiCLI {
       let providers = await runtime.availableProviders()
       if providers.isEmpty {
         await terminal.line("No providers configured. Type /about for setup commands.")
+        break
       }
-      for provider in providers {
-        let selected = provider.id == session.profile.provider ? "*" : " "
+      let rows = providers.map { provider in
+        let label = markdownTableCell(provider.id.rawValue)
+        let selected = provider.id == session.profile.provider ? "**\\* \(label)**" : label
+        let configured = configuration?.providers.first { $0.id == provider.id.rawValue }
         let baseURL =
           (services.providerBaseURLs.url(for: provider.id.rawValue)
-          ?? configuration?.providers.first { $0.id == provider.id.rawValue }?.baseURL)
-          .map { " — \($0.absoluteString)" } ?? ""
-        let defaultModel = provider.defaultModel.map { " — default model \($0)" } ?? ""
-        let kind = configuration?.providers.first { $0.id == provider.id.rawValue }?.kind
-        let availability = kind.flatMap { MaiLocalProvidersPlugin.availabilityMessage(for: $0) }
-          .map { " — unavailable: \($0)" } ?? ""
-        await terminal.line("\(selected) \(provider.id) — \(provider.displayName)\(baseURL)\(defaultModel)\(availability)")
+          ?? configured?.baseURL)?.absoluteString ?? ""
+        let availability = configured.flatMap {
+          MaiLocalProvidersPlugin.availabilityMessage(for: $0.kind)
+        }.map { "unavailable: \($0)" } ?? ""
+        return [selected] + [provider.displayName, baseURL, provider.defaultModel ?? "", availability]
+          .map(markdownTableCell)
       }
+      await terminal.table(.init(
+        headers: ["Provider", "Name", "Base URL", "Default model", "Status"],
+        alignments: Array(repeating: .leading, count: 5), rows: rows))
     case "/plugins":
       for plugin in await plugins.installedPlugins() {
         let capabilities = plugin.manifest.capabilities.map(\.rawValue).sorted().joined(

@@ -75,9 +75,10 @@ extension MaiCLI {
         let label = markdownTableCell(name)
         return model.id == selected ? "**\\* \(label)**" : label
       }),
-      ("Owner", .leading, { markdownTableCell($0.ownedBy ?? "") }),
       ("Features", .leading, { $0.features.map(\.title).joined(separator: ", ") }),
-      ("Context", .trailing, { $0.contextLabel ?? "" }),
+      ("Context", .trailing, { model in
+        model.contextWindow.map { $0 >= 1024 ? "\($0 / 1024)K" : "\($0)" } ?? ""
+      }),
       ("Input $/1M", .trailing, { price($0.pricing?.inputPerMillion) }),
       ("Output $/1M", .trailing, { price($0.pricing?.outputPerMillion) }),
       ("Cache $/1M", .trailing, { price($0.pricing?.cachedInputPerMillion) }),
