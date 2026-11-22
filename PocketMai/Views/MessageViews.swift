@@ -2926,9 +2926,13 @@ struct MarkdownContentView: View {
   var body: some View {
     VStack(alignment: .leading, spacing: appearance.markdownMetric(10)) {
       ForEach(blocks) { block in
+        let bouncesAsBlock = switch block.kind {
+        case .bulletList, .orderedList, .taskList: false
+        default: true
+        }
         blockView(block)
           .streamingResponseTail(block.id == blocks.last?.id)
-          .messageScrollBounce()
+          .messageScrollBounce(enabled: bouncesAsBlock)
       }
     }
     .environment(\.markdownRenderImages, renderImages)
@@ -5822,6 +5826,7 @@ struct TaskListView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .streamingResponseTail(index == items.count - 1)
+        .messageScrollBounce()
       }
     }
   }
@@ -5879,6 +5884,7 @@ struct BulletListView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .streamingResponseTail(index == items.count - 1)
+        .messageScrollBounce()
       }
     }
   }
@@ -5938,6 +5944,7 @@ struct OrderedListView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .streamingResponseTail(index == items.count - 1)
+        .messageScrollBounce()
       }
     }
   }
