@@ -168,6 +168,43 @@ enum AssistantToolLoop {
     case toolRun(RunOutput)
   }
 
+  @MainActor
+  private final class RunBudget {
+    var toolCalls: Int
+    var repairTurns: Int
+    var stopped = false
+
+    init(settings: AppSettings) {
+      let calls = maxToolCallsPerTurn(settings: settings)
+      toolCalls = calls == 0 ? Int.max : calls
+      repairTurns = maxRepairTurnsPerTurn(settings: settings)
+    }
+
+    func allow(
+      _ kind: ToolLoopLimit, used: Int, conversation: Conversation, store: AppStore
+    ) async throws -> Bool {
+      guard !stopped else { return false }
+      let limit = kind == .toolCalls ? toolCalls : repairTurns
+      guard used >= limit else { return true }
+      let decision = await store.requestRunLimitDecision(
+        conversation: conversation, kind: kind, limit: limit)
+      try Task.checkCancellation()
+      let next: Int
+      switch decision {
+      case .extend: next = limit > Int.max / 2 ? Int.max : limit * 2
+      case .yolo: next = Int.max
+      case .stop:
+        stopped = true
+        return false
+      }
+      switch kind {
+      case .toolCalls: toolCalls = next
+      case .repairTurns: repairTurns = next
+      }
+      return true
+    }
+  }
+
   static func run(
     conversationID: UUID,
     assistantID: UUID,
@@ -187,10 +224,7 @@ enum AssistantToolLoop {
   ) async throws {
     var activeAssistantID = assistantID
     var state = State()
-    var didFinish = false
-    let maxToolCalls = maxToolCallsPerTurn(store: store)
-    let toolCallBudget = maxToolCalls == 0 ? Int.max : maxToolCalls
-    let maxRepairTurns = maxRepairTurnsPerTurn(store: store)
+    let budget = RunBudget(settings: store.settings)
 
     store.clearToolCallingDebugIterations(
       conversationID: conversationID,
@@ -200,20 +234,21 @@ enum AssistantToolLoop {
       await store.refreshEnabledMCPServers(for: conversation)
     }
 
-    while state.answering || store.settings.taskAgent(.tool) != nil
-      || (state.toolCallCount < toolCallBudget && state.repairTurnCount < maxRepairTurns)
-    {
+    while true {
       try Task.checkCancellation()
       guard let conversation = store.conversation(withID: conversationID) else { return }
+      guard !budget.stopped else { break }
+      if !state.answering {
+        guard try await budget.allow(
+          .toolCalls, used: state.toolCallCount, conversation: conversation, store: store),
+          try await budget.allow(
+            .repairTurns, used: state.repairTurnCount, conversation: conversation, store: store)
+        else { break }
+      }
       let host = RunHost.live(
         assistantID: activeAssistantID,
         baselineText: state.displayText,
         conversationID: conversationID)
-      if Self.settings(for: host, store: store).taskAgent(.tool) != nil,
-        state.toolCallCount >= toolCallBudget || state.repairTurnCount >= maxRepairTurns
-      {
-        state.answering = true
-      }
       let requestState = try await makeRequestState(
         conversation: conversation,
         baseContext: baseContext,
@@ -263,7 +298,6 @@ enum AssistantToolLoop {
           continue
         }
         store.assistantResponseCompleted()
-        didFinish = true
         return
       }
 
@@ -273,7 +307,7 @@ enum AssistantToolLoop {
         host: host,
         store: store,
         hasToolResults: state.toolCallCount > 0,
-        remainingToolCalls: toolCallBudget - state.toolCallCount)
+        usedToolCalls: state.toolCallCount, budget: budget)
       try Task.checkCancellation()
 
       switch outcome {
@@ -282,7 +316,7 @@ enum AssistantToolLoop {
           state.answering = true
           continue
         }
-        if shouldRetryHiddenOnlyFinal(turnText, state: state, maxRepairTurns: maxRepairTurns) {
+        if shouldRetryHiddenOnlyFinal(turnText, state: state, maxRepairTurns: budget.repairTurns) {
           state.debugRoundIndex += 1
           state.repairTurnCount += 1
           appendDebugIteration(
@@ -348,7 +382,6 @@ enum AssistantToolLoop {
           continue
         }
         store.assistantResponseCompleted()
-        didFinish = true
         return
       case .retry(let feedback, let provisionalText):
         state.debugRoundIndex += 1
@@ -428,25 +461,8 @@ enum AssistantToolLoop {
       }
     }
 
-    if !didFinish {
-      let suffix = toolLoopStopped(state, limit: maxToolCalls)
-      let text =
-        state.displayText.isEmpty
-        ? suffix.trimmingCharacters(in: .whitespacesAndNewlines) : state.displayText + suffix
-      store.setAssistantMessage(
-        id: activeAssistantID,
-        text: text,
-        role: .assistant)
-      if let nextAssistantID = store.injectQueuedUserMessagesAndAppendAssistant(
-        in: conversationID)
-      {
-        try await run(
-          conversationID: conversationID,
-          assistantID: nextAssistantID,
-          baseContext: baseContext,
-          store: store)
-      }
-    }
+    store.setAssistantMessage(id: activeAssistantID, text: state.displayText, role: .assistant)
+    store.markLatestAssistantStopped(in: conversationID, fallbackID: activeAssistantID)
   }
 
   /// Runs a conversation the store does not own to its final answer. With a
@@ -486,16 +502,20 @@ enum AssistantToolLoop {
     var state = State()
     var toolRuns: [ToolRunDetail] = []
     var modelTurns = 0
-    let maxToolCalls = maxToolCallsPerTurn(settings: settings)
-    let toolCallBudget = maxToolCalls == 0 ? Int.max : maxToolCalls
-    let maxRepairTurns = maxRepairTurnsPerTurn(settings: settings)
+    let budget = RunBudget(settings: settings)
 
     await store.refreshEnabledMCPServers(for: conversation, settings: settings)
 
-    while state.answering || settings.taskAgent(.tool) != nil
-      || (state.toolCallCount < toolCallBudget && state.repairTurnCount < maxRepairTurns)
-    {
+    while true {
       try Task.checkCancellation()
+      guard !budget.stopped else { break }
+      if !state.answering {
+        guard try await budget.allow(
+          .toolCalls, used: state.toolCallCount, conversation: conversation, store: store),
+          try await budget.allow(
+            .repairTurns, used: state.repairTurnCount, conversation: conversation, store: store)
+        else { break }
+      }
       // A run started without a process gets one the first time it uses an
       // agent tool, registered under its conversation; from then on its
       // children report into that process's inbox.
@@ -538,11 +558,6 @@ enum AssistantToolLoop {
         mcpResources: store.mcpResources,
         mcpStatuses: store.mcpStatuses,
         process: process)
-      if Self.settings(for: host, store: store).taskAgent(.tool) != nil,
-        state.toolCallCount >= toolCallBudget || state.repairTurnCount >= maxRepairTurns
-      {
-        state.answering = true
-      }
       let requestState = try await makeRequestState(
         conversation: conversation,
         baseContext: baseContext,
@@ -563,7 +578,7 @@ enum AssistantToolLoop {
         host: host,
         store: store,
         hasToolResults: state.toolCallCount > 0,
-        remainingToolCalls: toolCallBudget - state.toolCallCount)
+        usedToolCalls: state.toolCallCount, budget: budget)
 
       switch outcome {
       case .final(let turnText):
@@ -571,7 +586,7 @@ enum AssistantToolLoop {
           state.answering = true
           continue
         }
-        if shouldRetryHiddenOnlyFinal(turnText, state: state, maxRepairTurns: maxRepairTurns) {
+        if shouldRetryHiddenOnlyFinal(turnText, state: state, maxRepairTurns: budget.repairTurns) {
           state.debugRoundIndex += 1
           state.repairTurnCount += 1
           let text = state.append(
@@ -626,7 +641,7 @@ enum AssistantToolLoop {
       }
     }
 
-    let suffix = toolLoopStopped(state, limit: maxToolCalls)
+    let suffix = toolLoopStopped(state)
     let text = state.assistantText + suffix
     updateLocalAssistantMessage(id: assistantID, text: text, conversation: &conversation)
     return IsolatedResult(
@@ -764,7 +779,8 @@ enum AssistantToolLoop {
     host: RunHost,
     store: AppStore,
     hasToolResults: Bool,
-    remainingToolCalls: Int
+    usedToolCalls: Int,
+    budget: RunBudget
   ) async throws -> Outcome {
     guard !requestState.definitions.isEmpty else { return .final(response) }
 
@@ -777,7 +793,7 @@ enum AssistantToolLoop {
       tools: hostDefinitions,
       mode: requestState.activeMode,
       hasToolResults: hasToolResults,
-      remainingToolCalls: remainingToolCalls)
+      remainingToolCalls: budget.toolCalls - usedToolCalls)
     let calls: [ParsedToolCall]
     switch decision {
     case .final(let text): return .final(text)
@@ -788,7 +804,7 @@ enum AssistantToolLoop {
     let output = try await runToolCalls(
       response: response,
       calls: calls,
-      remainingToolCalls: remainingToolCalls,
+      usedToolCalls: usedToolCalls, budget: budget,
       parseDefinitions: parseDefinitions,
       mode: requestState.activeMode,
       host: host,
@@ -799,7 +815,8 @@ enum AssistantToolLoop {
   private static func runToolCalls(
     response: String,
     calls: [ParsedToolCall],
-    remainingToolCalls: Int,
+    usedToolCalls: Int,
+    budget: RunBudget,
     parseDefinitions: [ToolDefinition],
     mode: ToolCallingMode,
     host: RunHost,
@@ -809,7 +826,7 @@ enum AssistantToolLoop {
       publishPendingToolRuns(
         response: response,
         calls: calls,
-        remainingToolCalls: remainingToolCalls,
+        remainingToolCalls: budget.toolCalls - usedToolCalls,
         parseDefinitions: parseDefinitions,
         assistantID: assistantID,
         baselineText: baselineText,
@@ -837,7 +854,7 @@ enum AssistantToolLoop {
         transcriptText: assembled.text,
         appendedRunBlocks: assembled.appended,
         pendingCalls: pending,
-        remainingToolCalls: max(0, remainingToolCalls - progress.launched),
+        remainingToolCalls: max(0, budget.toolCalls - usedToolCalls - progress.launched),
         parseDefinitions: parseDefinitions,
         assistantID: assistantID,
         baselineText: baselineText,
@@ -874,9 +891,20 @@ enum AssistantToolLoop {
           break
         }
         replaceFirstOccurrence(of: call.rawBlock, in: &assistantContent, with: "")
-        guard progress.launched < remainingToolCalls else {
-          progress.dropped.insert(index)
-          continue
+        if budget.stopped || usedToolCalls + progress.launched >= budget.toolCalls {
+          let conversation: Conversation
+          switch host {
+          case .live(_, _, let id):
+            guard let current = store.conversation(withID: id) else { throw CancellationError() }
+            conversation = current
+          case .isolated(let current, _, _, _, _, _): conversation = current
+          }
+          guard try await budget.allow(
+            .toolCalls, used: usedToolCalls + progress.launched, conversation: conversation, store: store)
+          else {
+            progress.dropped.insert(index)
+            continue
+          }
         }
         progress.launched += 1
         let callStartedAt = Date()
@@ -1777,9 +1805,8 @@ enum AssistantToolLoop {
     return conversation.modelID
   }
 
-  private static func toolLoopStopped(_ state: State, limit: Int) -> String {
-    let budget = limit == 0 ? "" : " of \(limit) allowed"
-    return "\n\nTool loop stopped after \(state.toolCallCount)\(budget) tool calls and \(state.repairTurnCount) repair turns before the model produced a final answer."
+  private static func toolLoopStopped(_ state: State) -> String {
+    "\n\nStopped by user after \(state.toolCallCount) tool calls and \(state.repairTurnCount) repair attempts."
   }
 
   private static func maxToolCallsPerTurn(store: AppStore) -> Int {

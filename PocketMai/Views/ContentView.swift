@@ -250,6 +250,7 @@ struct ContentView: View {
         HistoryPanelPanBridge(
           isEnabled: !layout.pinsSidebar && !showingSettings && store.activeToolCallApprovalRequest == nil
             && store.activeAutocompactionApprovalRequest == nil
+            && store.activeRunLimitRequest == nil
             && store.activeLongRunningOperationTimeoutRequest == nil,
           drawerDepth: drawerDepth,
           panelWidth: panelWidth,
@@ -334,6 +335,26 @@ struct ContentView: View {
     .onChange(of: store.activeAutocompactionApprovalRequest?.id) { _, requestID in
       if requestID != nil { showingSettings = false }
     }
+    .onChange(of: store.activeRunLimitRequest?.id) { _, requestID in
+      if requestID != nil { showingSettings = false }
+    }
+    .alert(
+      store.activeRunLimitRequest?.kind.title ?? "Run limit reached",
+      isPresented: runLimitBinding,
+      presenting: store.activeRunLimitRequest
+    ) { request in
+      Button("Extend to \(request.extendedLimit)") {
+        store.resolveRunLimit(id: request.id, decision: .extend)
+      }
+      Button("YOLO") {
+        store.resolveRunLimit(id: request.id, decision: .yolo)
+      }
+      Button("Stop", role: .cancel) {
+        store.resolveRunLimit(id: request.id, decision: .stop)
+      }
+    } message: { request in
+      Text("\(request.conversationTitle) is paused at \(request.limit). Extend to continue, or choose YOLO to remove this limit for this run. Stop keeps the work so far. Tool approvals stay as configured.")
+    }
     .alert(
       store.activeLongRunningOperationTimeoutRequest?.context.promptTitle
         ?? "Operation is still running",
@@ -369,7 +390,8 @@ struct ContentView: View {
     .errorAlert(
       "Error", message: Binding(get: { store.errorMessage }, set: { store.errorMessage = $0 }),
       isEnabled: store.activeToolCallApprovalRequest == nil
-        && store.activeAutocompactionApprovalRequest == nil)
+        && store.activeAutocompactionApprovalRequest == nil
+        && store.activeRunLimitRequest == nil)
     .background(ChatScreenshotServiceInstaller(service: screenshotService))
     .onAppear {
       contentStoreObservation.connect(to: store)
@@ -629,8 +651,20 @@ struct ContentView: View {
       get: {
         store.activeToolCallApprovalRequest == nil
           && store.activeAutocompactionApprovalRequest == nil
+          && store.activeRunLimitRequest == nil
           && store.activeWebXDCSession?.pocketmai.isActive != true
           && store.activeLongRunningOperationTimeoutRequest != nil
+      },
+      set: { _ in })
+  }
+
+  private var runLimitBinding: Binding<Bool> {
+    Binding(
+      get: {
+        store.activeToolCallApprovalRequest == nil
+          && store.activeAutocompactionApprovalRequest == nil
+          && store.activeWebXDCSession?.pocketmai.isActive != true
+          && store.activeRunLimitRequest != nil
       },
       set: { _ in })
   }

@@ -198,4 +198,103 @@ final class LFMToolCallingTests: XCTestCase {
     XCTAssertTrue(result.toolRuns.first?.isError ?? false)
     XCTAssertTrue(result.toolRuns.first?.result.contains("not available") ?? false)
   }
+
+  func testLimitChoicesPreservePendingBatchCalls() async throws {
+    for mode in [ToolCallingMode.text, .native] {
+      for decision in [RunLimitDecision.extend, .yolo, .stop] {
+        StubChatEndpoint.install()
+        let chat = conversation(mode: mode)
+        store.settings.maxToolCallsPerTurn = 1
+        let calls = (1...3).map {
+          "TOOL_CALL\ntool: web_search\nquery: query\($0)\nEND_TOOL_CALL"
+        }.joined(separator: "\n\n")
+        replyWithCall(calls)
+        let task = Task {
+          try await AssistantToolLoop.runIsolated(
+            conversation: chat, settings: store.settings, baseContext: "", store: store)
+        }
+        defer { task.cancel() }
+        let first = try await waitForRunLimit()
+        XCTAssertEqual(first.kind, .toolCalls)
+        XCTAssertEqual(first.limit, 1)
+        XCTAssertEqual(StubChatEndpoint.searchQueries, ["query1"])
+        store.resolveRunLimit(id: first.id, decision: decision)
+        if case .extend = decision {
+          let second = try await waitForRunLimit()
+          XCTAssertEqual(second.limit, 2)
+          XCTAssertEqual(StubChatEndpoint.searchQueries, ["query1", "query2"])
+          store.resolveRunLimit(id: second.id, decision: .extend)
+        }
+        let result = try await task.value
+        if case .stop = decision {
+          XCTAssertEqual(result.toolRuns.count, 1)
+          XCTAssertEqual(StubChatEndpoint.requests.count, 1)
+        } else {
+          XCTAssertEqual(StubChatEndpoint.searchQueries, ["query1", "query2", "query3"])
+          XCTAssertEqual(result.toolRuns.count, 3)
+          XCTAssertTrue(result.text.contains("Search completed from fixture."))
+        }
+        XCTAssertTrue(store.runLimitRequests.isEmpty)
+        XCTAssertEqual(store.settings.maxToolCallsPerTurn, 1)
+      }
+    }
+  }
+
+  func testLiveLimitCanExtendThenCancelWithoutLeavingAPrompt() async throws {
+    var chat = conversation()
+    chat.id = try XCTUnwrap(store.currentConversation?.id)
+    store.updateCurrentConversationSettings { $0 = chat }
+    store.settings.maxToolCallsPerTurn = 1
+    StubChatEndpoint.script = { _ in
+      (StubChatEndpoint.completion(content:
+        "TOOL_CALL\ntool: web_search\nquery: query\(StubChatEndpoint.requests.count)\nEND_TOOL_CALL"), 0)
+    }
+    let assistantID = try XCTUnwrap(store.appendAssistantMessage(to: chat.id))
+    let task = Task {
+      try await AssistantToolLoop.run(
+        conversationID: chat.id, assistantID: assistantID, baseContext: "", store: store)
+    }
+    defer { task.cancel() }
+    let first = try await waitForRunLimit()
+    store.resolveRunLimit(id: first.id, decision: .extend)
+    let second = try await waitForRunLimit()
+    XCTAssertEqual(second.limit, 2)
+    task.cancel()
+    do {
+      try await task.value
+      XCTFail("Cancellation must stop the paused run")
+    } catch is CancellationError {}
+    XCTAssertTrue(store.runLimitRequests.isEmpty)
+    XCTAssertEqual(StubChatEndpoint.searchQueries, ["query1", "query2"])
+    let saved = try XCTUnwrap(store.conversation(withID: chat.id)?.messages.last)
+    XCTAssertTrue(saved.text.contains("Rizin search fixture"))
+  }
+
+  func testRepairLimitCanResume() async throws {
+    let chat = conversation()
+    StubChatEndpoint.script = { _ in
+      (StubChatEndpoint.completion(content: StubChatEndpoint.requests.count <= 4
+        ? "TOOL_CALL\nEND_TOOL_CALL" : "Recovered answer."), 0)
+    }
+    let task = Task {
+      try await AssistantToolLoop.runIsolated(
+        conversation: chat, settings: store.settings, baseContext: "", store: store)
+    }
+    defer { task.cancel() }
+    let request = try await waitForRunLimit()
+    XCTAssertEqual(request.kind, .repairTurns)
+    XCTAssertEqual(StubChatEndpoint.requests.count, 4)
+    store.resolveRunLimit(id: request.id, decision: .extend)
+    let result = try await task.value
+    XCTAssertTrue(result.text.contains("Recovered answer."))
+    XCTAssertTrue(result.toolRuns.isEmpty)
+  }
+
+  private func waitForRunLimit() async throws -> RunLimitRequest {
+    let deadline = Date().addingTimeInterval(10)
+    while store.activeRunLimitRequest == nil && Date() < deadline {
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    return try XCTUnwrap(store.activeRunLimitRequest)
+  }
 }
