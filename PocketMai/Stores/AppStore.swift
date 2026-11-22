@@ -82,6 +82,31 @@ enum ToolCallApprovalDecision: Sendable {
   case interrupted
 }
 
+enum RunLimitDecision: Sendable {
+  case extend, yolo, stop
+}
+
+enum ToolLoopLimit: Equatable, Sendable {
+  case toolCalls, repairTurns
+
+  var title: String {
+    switch self {
+    case .toolCalls: "Tool call limit reached"
+    case .repairTurns: "Repair attempt limit reached"
+    }
+  }
+}
+
+struct RunLimitRequest: Identifiable {
+  let id: UUID
+  let conversationTitle: String
+  let kind: ToolLoopLimit
+  let limit: Int
+  let continuation: CheckedContinuation<RunLimitDecision, Never>
+
+  var extendedLimit: Int { limit > Int.max / 2 ? Int.max : limit * 2 }
+}
+
 struct AutocompactionApprovalRequest: Identifiable {
   let id: UUID
   let conversationID: UUID
@@ -569,6 +594,7 @@ final class AppStore: ObservableObject {
     didSet { if !isCompacting { drainThenQueue() } }
   }
   @Published private(set) var autocompactionApprovalRequests: [AutocompactionApprovalRequest] = []
+  @Published private(set) var runLimitRequests: [RunLimitRequest] = []
   private var autoCompactingConversationIDs: Set<UUID> = []
   @Published var endpointStatuses: [UUID: EndpointConnectionState] = [:]
   @Published var endpointModels: [UUID: [String]] = [:]
@@ -3119,6 +3145,35 @@ final class AppStore: ObservableObject {
 
   var activeAutocompactionApprovalRequest: AutocompactionApprovalRequest? {
     autocompactionApprovalRequests.first
+  }
+
+  var activeRunLimitRequest: RunLimitRequest? { runLimitRequests.first }
+
+  func requestRunLimitDecision(
+    conversation: Conversation, kind: ToolLoopLimit, limit: Int
+  ) async -> RunLimitDecision {
+    guard !CarPlayTurn.active else { return .stop }
+    let id = UUID()
+    return await withTaskCancellationHandler {
+      await withCheckedContinuation { continuation in
+        guard !Task.isCancelled else {
+          continuation.resume(returning: .stop)
+          return
+        }
+        runLimitRequests.append(RunLimitRequest(
+          id: id, conversationTitle: conversation.displayTitle, kind: kind, limit: limit,
+          continuation: continuation))
+      }
+    } onCancel: {
+      Task { @MainActor [weak self] in
+        self?.resolveRunLimit(id: id, decision: .stop)
+      }
+    }
+  }
+
+  func resolveRunLimit(id: UUID, decision: RunLimitDecision) {
+    guard let index = runLimitRequests.firstIndex(where: { $0.id == id }) else { return }
+    runLimitRequests.remove(at: index).continuation.resume(returning: decision)
   }
 
   func requestAutocompactionApproval(
@@ -6797,6 +6852,7 @@ final class AppStoreViewObservation: ObservableObject {
       observe(store.$showingWebXDCApps)
       observe(store.$toolCallApprovalRequests)
       observe(store.$autocompactionApprovalRequests)
+      observe(store.$runLimitRequests)
       observe(store.$longRunningOperationTimeoutRequests)
     case .chat:
       observe(store.$activeConversation)
