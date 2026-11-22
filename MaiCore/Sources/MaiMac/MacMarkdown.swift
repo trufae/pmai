@@ -20,12 +20,15 @@ struct MacMarkdown: View, @MainActor Equatable {
     VStack(alignment: .leading, spacing: 12) {
       if let document {
         ForEach(Array(document.blocks.enumerated()), id: \.offset) { index, block in
-          // Lists remain a single moving block, including their markers.
+          let bouncesAsBlock = switch block {
+          case .bullets, .ordered, .tasks: false
+          default: true
+          }
           VStack(alignment: .leading, spacing: 12) {
             render(block, at: index)
               .streamingResponseTail(index == document.blocks.count - 1)
           }
-          .messageScrollBounce()
+          .messageScrollBounce(enabled: bouncesAsBlock)
         }
       } else if !text.isEmpty {
         ProgressView().controlSize(.small).messageScrollBounce()
@@ -103,16 +106,19 @@ struct MacMarkdown: View, @MainActor Equatable {
       ForEach(Array(items.enumerated()), id: \.offset) { index, item in
         HStack(alignment: .top) { Text("•"); inline(item) }
           .streamingResponseTail(index == items.count - 1)
+          .messageScrollBounce()
       }
     case .ordered(let items):
       ForEach(Array(items.enumerated()), id: \.offset) { index, item in
         HStack(alignment: .top) { Text(item.label); inline(item.text) }
           .streamingResponseTail(index == items.count - 1)
+          .messageScrollBounce()
       }
     case .tasks(let items):
       ForEach(Array(items.enumerated()), id: \.offset) { index, item in
         HStack(alignment: .top) { Image(systemName: item.checked ? "checkmark.square" : "square"); inline(item.text) }
           .streamingResponseTail(index == items.count - 1)
+          .messageScrollBounce()
       }
     case .footnotes(let items):
       ForEach(Array(items.enumerated()), id: \.offset) { index, item in
