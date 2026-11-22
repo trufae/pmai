@@ -302,6 +302,37 @@ for line in sys.stdin:
             run(['/set use.agentsmd off'], [])
             (root / 'AGENTS.md').unlink()
 
+            # Selecting ACP while bare is active must warn and still answer.
+            acp = root / 'acp.py'
+            acp.write_text('''import json, sys
+for line in sys.stdin:
+    request = json.loads(line)
+    if 'id' not in request:
+        continue
+    method = request['method']
+    result = {}
+    if method == 'initialize':
+        result = {'protocolVersion': 1, 'agentCapabilities': {}}
+    elif method == 'session/new':
+        result = {'sessionId': 'bare', 'models': {'currentModelId': 'small',
+                  'availableModels': [{'modelId': 'small', 'name': 'Small'}]}}
+    elif method == 'session/prompt':
+        print(json.dumps({'jsonrpc': '2.0', 'method': 'session/update', 'params': {
+            'sessionId': 'bare', 'update': {'sessionUpdate': 'agent_message_chunk',
+            'content': {'type': 'text', 'text': 'ACP bare reply'}}}}), flush=True)
+        result = {'stopReason': 'end_turn'}
+    print(json.dumps({'jsonrpc': '2.0', 'id': request['id'], 'result': result}), flush=True)
+''')
+            before_acp = config.read_bytes()
+            output, calls = run([
+                f'/provider add acp oc "{sys.executable}" -u "{acp}"',
+                '/agent use bare', '/model -chat oc::small', 'hi',
+                '/model -chat local::main', '/agent use main'], [])
+            assert "warning: Provider 'oc' manages its own native tools and permissions." in output, output
+            assert 'ACP bare reply' in output and 'error:' not in output, output
+            assert not calls, calls
+            config.write_bytes(before_acp)
+
             # Planning must inspect files and save its handoff without exposing
             # commands, writes, skills, delegation, or inherited MCP tools.
             fixture = root / 'planning.txt'
@@ -375,7 +406,7 @@ for line in sys.stdin:
             config.write_text(json.dumps(customized))
             run([], [])
             bare = next(a for a in json.loads(config.read_text())['agents'] if a['id'] == 'bare')
-            assert bare['model'] == 'custom-bare-model' and bare['enabled'] is False
+            assert bare['model'] == 'custom-bare-model' and bare['enabled'] is False, bare
             assert bare['instructions'] == 'My bare prompt' and bare['systemContext'] is False
             run(['/agent del bare'], [])
             run([], [])

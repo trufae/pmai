@@ -29,6 +29,7 @@ extension AgentRuntime {
     var adaptiveThreshold: Int?
     var rejectedContextTokens: Int?
     var modelTurns = 0
+    var warnedToolPolicyProviders: Set<ProviderID> = []
     var toolCalls = 0
     /// A specialist hands results to the primary for the remainder of a reply.
     var pendingDecision: ToolChoice?

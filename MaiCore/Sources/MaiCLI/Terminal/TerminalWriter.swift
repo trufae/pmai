@@ -342,6 +342,10 @@ actor TerminalWriter {
 
   private func consumeEvent(_ event: AgentEvent) {
     switch event {
+    case .warning(let context, let message) where context.depth == 0:
+      finishReply()
+      closeRootLine()
+      status("warning: \(message)", color: .warningForeground)
     case .modelStarted(let context, let turn) where context.depth == 0:
       if turn > 1 {
         finishReply()
@@ -437,6 +441,10 @@ actor TerminalWriter {
     case .childFinished:
       // The child's own `finished` event already printed its answer.
       break
+    case .warning(let context, let message):
+      guard let pid = context.pid, subagentOutput != .none else { return }
+      flushChildText(pid)
+      childBlock(pid, "warning: \(message)", color: .warningForeground)
     case .modelStarted(let context, let turn):
       guard let pid = context.pid else { return }
       flushChildText(pid)

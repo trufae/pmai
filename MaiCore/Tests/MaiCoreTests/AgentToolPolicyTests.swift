@@ -4,25 +4,35 @@ import Testing
 @testable import MaiCore
 @testable import MaiTestSupport
 
-@Test("Local tool permissions reject managed providers before primary or task inference")
+@Test("Restricted agents warn and answer with managed providers, including task inference")
 func localOnlyToolPolicy() async throws {
-  let provider = ScriptedProvider(responses: [], capabilities: [.managedToolLoop])
+  let provider = ScriptedProvider(
+    responses: [.init(message: .assistant("Hello"), stopReason: .stop)],
+    capabilities: [.managedToolLoop])
   let runtime = AgentRuntime()
   try await runtime.register(provider)
   let policy = AgentToolPolicy(groups: ["mcp": .disabled], localOnly: true)
   #expect(try JSONDecoder().decode(AgentToolPolicy.self, from: JSONEncoder().encode(policy)) == policy)
   #expect(!AgentToolPolicy().localOnly)
   let request = AgentRequest(
-    provider: "scripted", messages: [.user("Plan the change")], toolPolicy: policy)
-  await #expect(throws: AgentRuntimeError.localToolPolicyRequired("scripted")) {
-    try await runtime.run(request)
+    provider: "scripted", messages: [.user("hi")], toolCallingStrategy: .off, toolPolicy: policy)
+  let warnings = ToolPolicyWarnings()
+  let result = try await runtime.run(request) { event in
+    if case .warning(_, let message) = event { await warnings.append(message) }
   }
+  #expect(result.response.text == "Hello")
+  #expect(await warnings.messages == [
+    "Provider 'scripted' manages its own native tools and permissions. This agent's tool restrictions apply only to pmai tools."
+  ])
   for task in [AgentTask.tool, .compact, .approval, .btw] {
-    await #expect(throws: AgentRuntimeError.localToolPolicyRequired("scripted")) {
-      try await runtime.taskRequest(task, from: request)
-    }
+    #expect(try await runtime.taskRequest(task, from: request).provider == "scripted")
   }
-  #expect(await provider.requests.isEmpty)
+  #expect(await provider.requests.count == 1)
+}
+
+private actor ToolPolicyWarnings {
+  var messages: [String] = []
+  func append(_ message: String) { messages.append(message) }
 }
 
 private let githubPolicyGroup = ToolGroupDefinition(

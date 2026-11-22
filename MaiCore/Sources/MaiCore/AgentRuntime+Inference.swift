@@ -48,6 +48,8 @@ extension AgentRuntime {
     switch event {
     case .started(let context, let provider):
       await debugLog.record("run.started", context: context, value: provider)
+    case .warning(let context, let message):
+      await debugLog.record("run.warning", context: context, value: message)
     case .modelStarted(let context, let turn):
       await debugLog.record("model.started", context: context, value: turn)
     case .provider:

@@ -74,9 +74,11 @@ extension AgentRuntime {
       throw AgentRuntimeError.providerNotRegistered(inference.provider)
     }
     if state.request.toolPolicy.localOnly,
-      provider.descriptor.capabilities.contains(.managedToolLoop)
+      provider.descriptor.capabilities.contains(.managedToolLoop),
+      state.warnedToolPolicyProviders.insert(inference.provider).inserted
     {
-      throw AgentRuntimeError.localToolPolicyRequired(inference.provider)
+      await state.emit(.warning(state.context,
+        "Provider '\(inference.provider)' manages its own native tools and permissions. This agent's tool restrictions apply only to pmai tools."))
     }
     inference.model = resolvedModel(inference.model, for: provider)
     let deciding = provider.descriptor.capabilities.contains(.toolDecision)

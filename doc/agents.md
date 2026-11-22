@@ -93,9 +93,9 @@ pmai installs an editable `bare` agent through the same setup as `plan`, includi
 for existing configurations. Select it with `/agent use bare` or launch with
 `pmai -a bare` (`--agent bare` is equivalent).
 It starts with an empty named system prompt, no tools, skills, or delegation,
-and tool calling off. Unsolicited tool calls are ignored. Like `plan`, it uses
-`main`'s provider and model initially and rejects providers that run their own
-tool loop, such as ACP.
+and tool calling off. Unsolicited pmai tool calls are ignored. Like `plan`, it
+uses `main`'s provider and model initially. ACP providers are supported with a
+warning: their native tools and permissions are managed by the external agent.
 
 Its `systemContext: false` setting suppresses runtime additions: memory,
 AGENTS.md, SOUL.md, working directory, reasoning guidance, and redaction guidance.
@@ -120,9 +120,10 @@ and final plan, for the implementation agent.
 Its default tool allowlist contains only file listing, searching, reading,
 indexing, function inspection, `todo_list`, and `todo_add`. TODO creation is the
 only permitted write; commands, file changes, task completion, skills,
-delegation, and MCP tools are disabled. The tool policy's `localOnly` flag also
-rejects providers such as ACP that run their own tools outside pmai's permission
-checks. Use a regular chat provider for planning.
+delegation, and MCP tools are disabled. The tool policy's `localOnly` flag warns
+when providers such as ACP run their own native tools outside pmai's permission
+checks. The run continues; pmai's allowlist still applies to tools forwarded
+through its MCP bridge. Native tool restrictions belong to the external agent.
 
 Customize it through the same controls as any other agent: `/edit agent plan`,
 `/agent model plan MODEL`, `/agent provider plan PROVIDER`, and the `plan` system

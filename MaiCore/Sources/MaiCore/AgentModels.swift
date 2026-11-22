@@ -1374,6 +1374,8 @@ public struct AgentEventContext: Codable, Equatable, Sendable {
 
 public enum AgentEvent: Equatable, Sendable {
   case started(AgentEventContext, ProviderDescriptor)
+  /// Advisory information that does not interrupt the run or enter its transcript.
+  case warning(AgentEventContext, String)
   case modelStarted(AgentEventContext, turn: Int)
   case provider(AgentEventContext, ProviderEvent)
   case approvalRequested(AgentEventContext, ApprovalRequest)

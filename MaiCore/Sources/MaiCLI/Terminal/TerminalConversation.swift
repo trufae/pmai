@@ -40,7 +40,7 @@ enum REPLAgentSwitch: Sendable {
 extension AgentEvent {
   var terminalContext: AgentEventContext {
     switch self {
-    case .started(let c, _), .modelStarted(let c, _), .provider(let c, _),
+    case .started(let c, _), .warning(let c, _), .modelStarted(let c, _), .provider(let c, _),
       .approvalRequested(let c, _), .approvalDecided(let c, _), .toolStarted(let c, _),
       .toolUpdated(let c, _), .toolFinished(let c, _), .childStarted(let c, _), .childQueued(let c, _),
       .childFinished(let c, _), .userMessage(let c, _), .transcriptEdited(let c, _),
@@ -55,6 +55,7 @@ extension AgentEvent {
     c.depth = 0
     switch self {
     case .started(_, let v): return .started(c, v)
+    case .warning(_, let v): return .warning(c, v)
     case .modelStarted(_, let v): return .modelStarted(c, turn: v)
     case .provider(_, let v): return .provider(c, v)
     case .approvalRequested(_, let v): return .approvalRequested(c, v)

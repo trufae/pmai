@@ -158,11 +158,6 @@ extension AgentRuntime {
         insertSystem(agent.instructions, into: &request.messages)
       }
     }
-    if original.toolPolicy.localOnly,
-      providers[request.provider]?.descriptor.capabilities.contains(.managedToolLoop) == true
-    {
-      throw AgentRuntimeError.localToolPolicyRequired(request.provider)
-    }
     request.options = task.inferenceOptions(
       configured: taskAgents[task] == nil ? nil : request.options, caller: original.options)
     if task == .compact {

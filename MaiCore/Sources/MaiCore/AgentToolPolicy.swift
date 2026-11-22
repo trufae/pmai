@@ -20,7 +20,7 @@ public struct AgentToolPolicy: Codable, Equatable, Sendable {
   public var automatic: Bool
   public var groups: [String: AgentToolMode]
   public var tools: [String: AgentToolMode]
-  /// Reject providers that execute their own tools outside this allowlist.
+  /// Warn when a provider executes native tools outside this local allowlist.
   public var localOnly: Bool
 
   public init(
