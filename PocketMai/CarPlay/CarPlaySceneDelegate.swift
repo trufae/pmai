@@ -57,7 +57,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     .sink { [weak self] _ in self?.endVoice() }
   }
 
-  func templateApplicationScene(
+    private func templateApplicationScene(
     _ scene: CPTemplateApplicationScene, didDisconnect interfaceController: CPInterfaceController
   ) {
     guard controller === interfaceController else { return }

@@ -16,7 +16,7 @@ import MaiCore
 
   func requestAccess() async throws {
     let status = EKEventStore.authorizationStatus(for: .reminder)
-    if status == .fullAccess || status == .authorized { return }
+    if status == .fullAccess { return }
     if status == .notDetermined, try await store.requestFullAccessToReminders() { return }
     throw AppleReminderError.access
   }

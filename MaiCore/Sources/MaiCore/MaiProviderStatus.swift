@@ -279,7 +279,7 @@ public enum MaiProviderStatusService {
     let balance = try await get(
       URL(string: "https://ollama.com/api/balance")!, apiKey: key, session: session)
     let (planName, requests) = await (plan, usage)
-    var status = decoded(
+      let status = decoded(
       balance, provider: configuration.id, model: model ?? configuration.defaultModel, plan: planName,
       requestsLast7Days: requests.last7Days, requestsToday: requests.today)
     return status
