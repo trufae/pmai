@@ -289,7 +289,7 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
           MessageActivityGroup(
             summary: MessageActivitySummary(
               parts: prepared.parts[range], stats: message.stats),
-            isLive: isLiveAssistantResponse,
+            isLive: isLiveAssistantResponse && range.upperBound == prepared.parts.count,
             forceExpanded: isFullChatScreenshotRendering
           ) {
             ForEach(Array(prepared.parts[range])) { part in
@@ -372,7 +372,7 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
       InlineReasoningText(
         content: section.content,
         initiallyExpanded: showThinking && thinkingDisplay == .full && !isStreaming,
-        isStreaming: isStreaming,
+        isStreaming: isStreaming && part.id == prepared.parts.last?.id,
         style: MetaSectionTextStyle(
           monospaced: false, dimmed: true, italic: true,
           markdownAppearance: canRenderMarkdown ? appearance : nil,
@@ -1712,8 +1712,7 @@ struct MessageActivitySummary {
       case .tool(_, let entry, let section):
         timings.append(section.toolTiming)
         if entry.hasError { failedCount += 1 }
-        lastTool =
-          entry.name + (entry.params.isEmpty ? "" : " · " + String(entry.params.prefix(120)))
+        lastTool = entry.preview
       case .reasoning(_, let section):
         reasoning = section.content
       default:
@@ -2331,6 +2330,8 @@ private struct InlineReasoningText: View {
           (Text(preview) + Text(" …").foregroundColor(.accentColor))
             .font(.callout.italic())
             .foregroundStyle(.secondary)
+            .streamingTextReveal(preview)
+            .environment(\.isStreamingResponse, isStreaming)
             .multilineTextAlignment(.leading)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 12)
@@ -2410,6 +2411,7 @@ private struct MetaSectionText: View, Equatable {
         .font(plainTextFont.italicizedIf(style.italic))
         .foregroundStyle(style.dimmed ? Color.secondary : Color.primary)
         .textSelection(.enabled)
+        .streamingTextReveal(content)
     }
   }
 
@@ -2468,6 +2470,7 @@ private struct ScrollingMetaSectionContent: View {
         if !buffer.settledText.isEmpty {
           MetaSectionText(content: buffer.settledText, style: style)
             .equatable()
+            .environment(\.isStreamingResponse, false)
         }
         if !buffer.tail.isEmpty {
           // The tail can start inside a Markdown construct. Show it verbatim
@@ -2480,6 +2483,7 @@ private struct ScrollingMetaSectionContent: View {
       .padding(.horizontal, 12)
       .padding(.vertical, 10)
     }
+    .environment(\.isStreamingResponse, isStreaming)
     .onChange(of: content) { _, text in
       buffer.update(text, isStreaming: isStreaming)
     }
@@ -2616,7 +2620,7 @@ struct MessageActivityGroup<Content: View>: View {
           .layoutPriority(1)
         }
         .disclosureGroupStyle(ActivityDisclosureStyle())
-        if !isExpanded, !summary.reasoningPreview.isEmpty || !summary.lastTool.isEmpty {
+        if isLive, !isExpanded, !summary.reasoningPreview.isEmpty || !summary.lastTool.isEmpty {
           Button {
             revealReasoning = true
             expanded = true
@@ -2624,6 +2628,8 @@ struct MessageActivityGroup<Content: View>: View {
             VStack(alignment: .leading, spacing: 2) {
               if !summary.reasoningPreview.isEmpty {
                 Text(summary.reasoningPreview)
+                  .streamingTextReveal(summary.reasoning)
+                  .environment(\.isStreamingResponse, isLive)
                   .lineLimit(summary.lastTool.isEmpty ? 3 : 2)
               }
               if !summary.lastTool.isEmpty {
@@ -2664,18 +2670,11 @@ private struct ToolCallRow: View {
             Image(systemName: "exclamationmark.circle")
               .foregroundStyle(Color.red)
           }
-          Text(entry.name)
+          Text(entry.preview)
             .font(.subheadline)
             .foregroundStyle(entry.hasError ? Color.red : Color.secondary)
             .lineLimit(1)
             .layoutPriority(1)
-          if !entry.params.isEmpty {
-            Text(Self.collapsedParams(for: entry.params))
-              .font(.system(.caption, design: .monospaced))
-              .foregroundStyle(.secondary)
-              .lineLimit(1)
-              .truncationMode(.tail)
-          }
           Spacer(minLength: 0)
           Image(systemName: expanded ? "chevron.down" : "chevron.right")
             .imageScale(.small)
@@ -2830,18 +2829,11 @@ private struct ToolCallRow: View {
   }
 
   private static let largeValueThreshold = 12_000
-  private static let collapsedParamsLimit = 180
   private static let previewCharacterLimit = 4_000
   private static let previewLineLimit = 80
 
   private static func hasVisibleContent(_ value: String) -> Bool {
     value.contains { !$0.isWhitespace }
-  }
-
-  private static func collapsedParams(for value: String) -> String {
-    let prefix = value.prefix(collapsedParamsLimit)
-    guard prefix.endIndex < value.endIndex else { return value }
-    return String(prefix) + "..."
   }
 
   private static func sizeLabel(byteCount: Int) -> String {
@@ -2888,6 +2880,7 @@ struct ToolEntry: Identifiable {
   let id: String
   let name: String
   let params: String
+  let preview: String
   let body: String
   let systemImage: String
   /// Verbatim slice of the message this entry was parsed from, so edits can be
@@ -2978,10 +2971,42 @@ enum ToolCallParser {
       id: "\(index):\(header)",
       name: name.isEmpty ? "Tool" : name,
       params: params,
+      preview: preview(name: name, params: params),
       body: body,
       systemImage: icon(for: name),
       rawBlock: rawBlock
     )
+  }
+
+  private static func preview(name: String, params: String) -> String {
+    var name = name
+    var input = params
+    // Older web tools stored a single labeled value instead of a JSON object.
+    if let label = input.range(of: #"^[A-Za-z_][A-Za-z0-9_]*:\s+"#, options: .regularExpression) {
+      input.removeSubrange(label)
+    }
+    var value = try? JSONDecoder().decode(JSONValue.self, from: Data(input.utf8))
+    if name == ToolProxy.callName || name == "call_tool",
+      let arguments = value?.objectValue, let target = arguments["name"]?.stringValue
+    {
+      name = target
+      value = arguments["arguments"] ?? arguments["parameters"] ?? .object([:])
+    }
+    let values = (value.map(previewValues) ?? input)
+      .split(whereSeparator: \.isWhitespace).joined(separator: " ")
+    return name + (values.isEmpty ? "" : " · " + String(values.prefix(120)))
+  }
+
+  private static func previewValues(_ value: JSONValue) -> String {
+    switch value {
+    case .object(let object):
+      return object.keys.sorted().compactMap { object[$0].map(previewValues) }
+        .filter { !$0.isEmpty }.joined(separator: " ")
+    case .array(let array):
+      return array.map(previewValues).filter { !$0.isEmpty }.joined(separator: " ")
+    default:
+      return value.coercedStringValue
+    }
   }
 
   private static func icon(for name: String) -> String {

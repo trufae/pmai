@@ -12,12 +12,13 @@ public struct ActivityScrollView<Content: View>: View {
 
   public var body: some View {
     ScrollView(.vertical) {
-      LazyVStack(alignment: .leading, spacing: 8, content: content)
+      VStack(alignment: .leading, spacing: 8, content: content)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .fixedSize(horizontal: false, vertical: true)
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentHeight = $0 }
     }
     .frame(height: min(contentHeight, 320))
-    .defaultScrollAnchor(.bottom, for: .initialOffset)
+    .defaultScrollAnchor(.top, for: .initialOffset)
     .scrollBounceBehavior(.basedOnSize)
   }
 }
