@@ -66,6 +66,30 @@ final class MessageToolCallDetachmentTests: XCTestCase {
     XCTAssertTrue(message.contains(entry.rawBlock))
   }
 
+  func testToolPreviewsShowNamesAndValuesWithoutChangingInputs() throws {
+    let cases: [(String, String, String)] = [
+      ("Weather", #"{"city":"Barcelona"}"#, "Weather · Barcelona"),
+      ("call-tool", #"{"arguments":{"query":"rizin, name: pancake"},"name":"web_search"}"#,
+        "web_search · rizin, name: pancake"),
+      ("call_tool", #"{"name":"files_list","arguments":{}}"#, "files_list"),
+      ("call-tool", #"{"name":"search","parameters":{"query":"radare2"}}"#, "search · radare2"),
+      ("Tool", #"{"options":{"enabled":false,"paths":["a","b"],"skip":null},"page":2}"#,
+        "Tool · false a b 2"),
+      ("Web Search", #"query: "what are parameters and name?""#,
+        "Web Search · what are parameters and name?"),
+      ("Web Fetch", #"url: "https://radare.org/""#, "Web Fetch · https://radare.org/"),
+      ("Tool", "https://radare.org/", "Tool · https://radare.org/"),
+      ("Shell", "ls -l", "Shell · ls -l"),
+      ("Tool", "{}", "Tool"),
+    ]
+    for (name, params, expected) in cases {
+      let entry = try XCTUnwrap(ToolCallParser.parse("\(name) tool (\(params)):\nDone").first)
+      XCTAssertEqual(entry.preview, expected)
+      XCTAssertEqual(entry.params, params)
+      XCTAssertEqual(entry.copyText, "\(name) tool (\(params)):\nDone")
+    }
+  }
+
   func testToolEntryCopyTextWithoutInput() {
     guard let entry = ToolCallParser.parse("Clipboard tool:\ncopied\n").first else {
       return XCTFail("expected one parsed tool entry")

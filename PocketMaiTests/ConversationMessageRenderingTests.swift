@@ -158,10 +158,11 @@ final class ConversationMessageRenderingTests: XCTestCase {
     // Long tool runs must remain reachable without filling the outer transcript;
     // short runs should not reserve an otherwise empty 320-point panel.
     for count in [1, 12] {
+      let heights: [CGFloat] = (0..<count).map { count > 1 && $0 % 3 == 0 ? 160 : 44 }
       let host = UIHostingController(rootView:
         MessageActivityGroup(forceExpanded: true) {
           ForEach(0..<count, id: \.self) { index in
-            Text("Tool update \(index)").frame(height: 44)
+            Text("Tool update \(index)").frame(height: heights[index])
           }
         }
         .frame(maxHeight: .infinity, alignment: .top))
@@ -173,7 +174,7 @@ final class ConversationMessageRenderingTests: XCTestCase {
       func findScrollView(in view: UIView) -> UIScrollView? {
         (view as? UIScrollView) ?? view.subviews.lazy.compactMap { findScrollView(in: $0) }.first
       }
-      let expectedHeight = CGFloat(count * 44 + (count - 1) * 8)
+      let expectedHeight = heights.reduce(0, +) + CGFloat((count - 1) * 8)
       try await waitForLayout(host: host) {
         guard let scroll = findScrollView(in: host.view) else { return false }
         return abs(scroll.contentSize.height - expectedHeight) < 1
@@ -181,6 +182,7 @@ final class ConversationMessageRenderingTests: XCTestCase {
       }
       let scroll = try XCTUnwrap(findScrollView(in: host.view))
       XCTAssertLessThanOrEqual(scroll.bounds.height, 320)
+      XCTAssertEqual(scroll.contentOffset.y, -scroll.adjustedContentInset.top, accuracy: 1)
       let bottom = max(0, scroll.contentSize.height - scroll.bounds.height)
       scroll.setContentOffset(CGPoint(x: 0, y: bottom), animated: false)
       XCTAssertEqual(scroll.contentOffset.y + scroll.bounds.height, expectedHeight, accuracy: 1)
