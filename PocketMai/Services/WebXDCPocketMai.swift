@@ -159,17 +159,17 @@ final class WebXDCPocketMaiHost {
     guard tools.webxdcAllowProviderAPIs else {
       throw WebXDCAPIError(
         code: "NotAllowedError",
-        message: "Enable Inference and speech APIs in Permissions in the app's top bar, or Settings → Tools → Native → WebXDC Apps.")
+        message: "Enable Inference and speech APIs in Permissions in the app menu, or Settings → Tools → Native → WebXDC Apps.")
     }
     if capability == "transcription", !tools.webxdcAllowMicrophone {
       throw WebXDCAPIError(
         code: "NotAllowedError",
-        message: "Enable Microphone in Permissions in the app's top bar, or Settings → Tools → Native → WebXDC Apps.")
+        message: "Enable Microphone in Permissions in the app menu, or Settings → Tools → Native → WebXDC Apps.")
     }
     if capability == "synthesis", !tools.webxdcAllowAudioPlayback {
       throw WebXDCAPIError(
         code: "NotAllowedError",
-        message: "Enable Audio playback in Permissions in the app's top bar, or Settings → Tools → Native → WebXDC Apps.")
+        message: "Enable Audio playback in Permissions in the app menu, or Settings → Tools → Native → WebXDC Apps.")
     }
     let allowed: Bool
     switch capability {
@@ -203,7 +203,7 @@ final class WebXDCPocketMaiHost {
       throw WebXDCAPIError(
         code: "NotAllowedError",
         message:
-          "Open Permissions in the app's top bar to allow \(capability)."
+          "Open Permissions in the app menu to allow \(capability)."
       )
     }
   }
@@ -258,13 +258,13 @@ final class WebXDCPocketMaiHost {
       guard settings().toolSettings.webxdcAllowProviderAPIs else {
         throw WebXDCAPIError(
           code: "NotAllowedError",
-          message: "Enable Inference and speech APIs in Permissions in the app's top bar, or Settings → Tools → Native → WebXDC Apps.")
+          message: "Enable Inference and speech APIs in Permissions in the app menu, or Settings → Tools → Native → WebXDC Apps.")
       }
       // Catalogs may disclose configured services, so they also require a grant.
       let grants = WebXDCPermissions.load(appID)
       guard grants.inference || grants.transcription || grants.synthesis else {
         throw WebXDCAPIError(
-          code: "NotAllowedError", message: "Open Permissions in the app's top bar to allow inference or speech."
+          code: "NotAllowedError", message: "Open Permissions in the app menu to allow inference or speech."
         )
       }
       var providers: [[String: Any]] = []

@@ -552,57 +552,58 @@ struct WebXDCRunnerSheet: View {
   @ObservedObject var session: WebXDCRunningSession
   var onMove: (CGSize, Bool) -> Void = { _, _ in }
   @State private var showingDebugLogs = false
+  @State private var showingConsole = false
   @State private var showingPermissions = false
-  @State private var showingCloseOptions = false
 
   var body: some View {
     VStack(spacing: 0) {
       HStack(spacing: 12) {
-        Button { showingDebugLogs = true } label: {
-          Label("Debug Logs", systemImage: "list.bullet.rectangle")
+        Menu {
+          Section(session.app.name) {
+            Button("Permissions", systemImage: "checkmark.shield") { showingPermissions = true }
+            Button("Console", systemImage: "chevron.left.forwardslash.chevron.right") { showingConsole = true }
+            Button("Debug Logs", systemImage: "list.bullet.rectangle") { showingDebugLogs = true }
+          }
+          Section {
+            if session.presentation != .fullScreen {
+              Button("Expand", systemImage: "arrow.up.left.and.arrow.down.right") { session.present(.fullScreen) }
+            }
+            if session.presentation != .floating {
+              Button("Minimize", systemImage: "arrow.down.right.and.arrow.up.left") { session.present(.floating) }
+            }
+            Button("Run in PiP", systemImage: "pip.enter") { session.runInPictureInPicture() }
+            Button("Stop App", systemImage: "stop.circle", role: .destructive) { session.stopApp() }
+          }
+        } label: {
+          controlLabel("App menu", systemImage: "line.3.horizontal")
         }
-        Text(session.app.name)
-          .font(.subheadline.weight(.semibold)).lineLimit(1)
-          .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+        Color.clear
+          .frame(maxWidth: .infinity, minHeight: 44, maxHeight: 44)
+          .overlay { if isThinking { ProgressView().controlSize(.small) } }
           .contentShape(Rectangle())
           .gesture(DragGesture().onChanged { onMove($0.translation, false) }
             .onEnded { onMove($0.translation, true) })
           .accessibilityHint(session.presentation == .floating ? "Drag to move the floating app" : "")
-        if isThinking { ProgressView().controlSize(.small) }
-        Button { showingPermissions = true } label: {
-          Label("Permissions", systemImage: "checkmark.shield")
-        }
-        if session.presentation != .fullScreen {
-          Button { session.present(.fullScreen) } label: {
-            Label("Expand", systemImage: "arrow.up.left.and.arrow.down.right")
-          }
-        }
-        Button { showingCloseOptions = true } label: {
-          Label("Close", systemImage: "xmark")
+        Button { session.present(.closed) } label: {
+          controlLabel("Close", systemImage: "xmark")
         }
       }
-      .labelStyle(.iconOnly).buttonStyle(.borderless)
+      .buttonStyle(.plain)
       .padding(.horizontal, 14)
-      Divider()
+      .padding(.vertical, 8)
       WebXDCWebViewContainer(session: session)
         .ignoresSafeArea(edges: .bottom)
     }
     .background(Color(uiColor: .systemBackground))
-    .confirmationDialog(session.app.name, isPresented: $showingCloseOptions, titleVisibility: .visible) {
-      Button("Close") { session.present(.closed) }
-      Button("Minimize") { session.present(.floating) }
-      Button("Run in PiP") { session.runInPictureInPicture() }
-      Button("Stop App", role: .destructive) { session.stopApp() }
-      Button("Cancel", role: .cancel) {}
-    } message: {
-      Text("Close pauses voice and keeps the page. Minimize keeps the app interactive over the chat. PiP shows a read-only preview across apps while active audio continues. Stop ends the app.")
-    }
     .errorAlert("Picture in Picture", message: $session.presentationError)
     .onChange(of: session.permissionRequest) { _, _ in revealApproval() }
     .onChange(of: store.activeToolCallApprovalRequest?.id) { _, _ in revealApproval() }
     .onChange(of: store.activeLongRunningOperationTimeoutRequest?.id) { _, _ in revealApproval() }
     .sheet(isPresented: $showingDebugLogs) {
       WebXDCDebugLogView(session: session)
+    }
+    .sheet(isPresented: $showingConsole) {
+      WebXDCConsoleView(session: session)
     }
     .sheet(isPresented: $showingPermissions) {
       WebXDCPermissionsSheet(app: session.app)
@@ -640,6 +641,16 @@ struct WebXDCRunnerSheet: View {
           .background(Color(uiColor: .systemBackground))
       }
     }
+  }
+
+  private func controlLabel(_ title: String, systemImage: String) -> some View {
+    Label(title, systemImage: systemImage)
+      .labelStyle(.iconOnly)
+      .font(.body.weight(.semibold))
+      .foregroundStyle(.primary)
+      .frame(width: 44, height: 44)
+      .modifier(FloatingGlassSurface(shape: Circle()))
+      .contentShape(Circle())
   }
 
   private var isThinking: Bool {

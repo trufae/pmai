@@ -85,7 +85,7 @@ checkbox is in **Settings → Tools → Native → WebXDC Apps**, alongside the 
 WebXDC features. It is enabled by default to preserve existing app grants;
 turning it off blocks inference, speech and provider discovery for every app.
 
-Tap **Permissions** in the running app's top bar to manage this checkbox,
+Open the running app's hamburger menu and tap **Permissions** to manage this checkbox,
 **Microphone**, **Audio playback**, and the app's own **Inference providers**,
 **Speech to text**, and **Text to speech** grants. App grants are also available
 under **App Permissions** in its Apps detail page. New and imported apps
@@ -163,11 +163,14 @@ A closed or paused runner cannot start new native requests. Closing the runner
 retains the web app's page state; reopening allows new requests. Minimizing or
 entering Picture in Picture keeps native requests and active voice sessions alive.
 
-On iOS, the runner's Close button offers four actions:
+On iOS, newly added apps appear first in the app lists. The runner has a round
+Close button on the right that hides the app and pauses voice/media, retaining
+the page. The hamburger menu on the left shows the app name and provides
+**Permissions**, **Console**, **Debug Logs**, and window actions:
 
-- **Close** hides the app and pauses voice/media, retaining the page.
-- **Minimize** keeps an interactive window over PocketMai. Drag its title to move
-  it, drag the corner to resize it, and use Expand to return to full screen.
+- **Minimize** keeps an interactive window over PocketMai. Drag the space between
+  its top buttons to move it, drag the corner to resize it, and use **Expand** in
+  the menu to return to full screen.
 - **Run in PiP** shows a resizable, read-only preview across apps. Start voice in
   the WebXDC app first; existing microphone permissions still apply. The system
   playback button pauses/resumes native access and web media, and the restore
@@ -406,7 +409,7 @@ make -C examples/webxdc/voice-avatar
 
 Import `voice-avatar.xdc` into PocketMai and run it. The example requests its
 three app grants. If a WebXDC feature is disabled, use **Permissions** in the
-top bar to enable it, then tap **Start** to retry. Configure a
+app menu to enable it, then tap **Start** to retry. Configure a
 working inference provider and any remote speech credentials in PocketMai first.
 The example uses silence-ended file transcription for short turns; the same API
 can drive a WebGL character when WebGL is enabled in WebXDC settings. Animate from

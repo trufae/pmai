@@ -3,6 +3,22 @@ import XCTest
 @testable import MaiDocuments
 
 final class WebXDCStoreTests: XCTestCase {
+  // New apps must appear first, even after an older app is edited.
+  func testListsNewestAddedAppsFirst() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = WebXDCStore(rootURL: root)
+    var older = try store.createApp(name: "Older", description: "")
+    var newest = try store.createApp(name: "Newest", description: "")
+    var middle = try store.createApp(name: "Middle", description: "")
+    older.createdAt = Date(timeIntervalSince1970: 1_000)
+    newest.createdAt = Date(timeIntervalSince1970: 3_000)
+    middle.createdAt = Date(timeIntervalSince1970: 2_000)
+    for app in [older, newest, middle] { try store.save(app) }
+    try store.writeFile(older, path: "index.html", data: Data("Updated".utf8))
+    XCTAssertEqual(store.listApps().map(\.id), [newest.id, middle.id, older.id])
+  }
+
   // Importing the same app again must retain its ID, saved updates and browser storage.
   func testImportSurvivesSourceRemovalAndPreservesExistingAppData() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

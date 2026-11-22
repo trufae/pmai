@@ -102,7 +102,7 @@ public struct WebXDCStore: Sendable {
         let info = try? decoder.decode(WebXDCAppInfo.self, from: data)
       else { return nil }
       return info
-    }.sorted { $0.createdAt < $1.createdAt }
+    }.sorted { $0.createdAt > $1.createdAt }
   }
 
   public func app(id: UUID) -> WebXDCAppInfo? {
