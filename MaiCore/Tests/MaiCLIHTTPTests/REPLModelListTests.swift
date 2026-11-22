@@ -19,11 +19,21 @@ func replModelListFilters() throws {
   }
 }
 
-@Test("Captured model listings stay readable without ANSI escapes")
+@Test("Model tables show reported metadata and omit unavailable fields")
 func replModelListPlainText() async {
+  let pricing = ModelPricing(catalog: .object(["prompt": .integer(0)]))
+  let model = ModelDescriptor(id: "example", capabilities: [.nativeToolCalling, .audioOutput],
+    contextWindow: 32768, pricing: pricing)
+  let bare = ModelDescriptor(id: "plain | **model**")
+  let table = MaiCLI.modelCatalogTable([model, bare], selected: "example")
+  #expect(table.headers == ["Model", "Features", "Context", "Input $/1M"])
+  #expect(table.rows[0].last == "0")
+  #expect(table.rows[1].dropFirst().allSatisfy { $0.isEmpty })
+  #expect(MaiCLI.modelCatalogTable([bare], selected: nil).headers == ["Model"])
   let terminal = TerminalWriter(capturesOutput: true)
-  let row = await terminal.modelCatalogRow(.init(id: "example", capabilities: [.nativeToolCalling, .audioOutput], contextWindow: 32768), selected: true)
-  #expect(row.contains("[Tools]") && row.contains("[Voice]") && row.contains("[32K context]"))
-  #expect(row.hasPrefix("* example"))
-  #expect(!row.contains("\u{1b}"))
+  await terminal.table(table)
+  let output = await terminal.drainCaptured()
+  #expect(output.contains("Tools, Voice") && output.contains("32K context"))
+  #expect(output.contains("* example") && output.contains("plain | **model**"))
+  #expect(!output.contains("unknown") && !output.contains("\u{1b}"))
 }

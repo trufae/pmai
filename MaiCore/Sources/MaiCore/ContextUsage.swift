@@ -42,6 +42,8 @@ public struct ContextUsage: Codable, Equatable, Sendable {
   public init?(acpUpdate: JSONValue) {
     guard let fields = acpUpdate.objectValue,
       fields["sessionUpdate"]?.stringValue == "usage_update",
+      // OpenCode forwards child updates under the parent's session ID.
+      fields["_meta"]?.objectValue?["opencode/child-session"] == nil,
       let used = fields["used"]?.intValue, used >= 0,
       let size = fields["size"]?.intValue, size >= 0
     else { return nil }

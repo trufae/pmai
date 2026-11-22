@@ -1,5 +1,6 @@
 import Foundation
 import MaiCore
+import MaiMarkdown
 
 struct REPLModelListOptions {
   var provider: ProviderID
@@ -63,17 +64,33 @@ struct REPLModelListOptions {
   }
 }
 
-extension TerminalWriter {
-  func modelCatalogRow(_ model: ModelDescriptor, selected: Bool) -> String {
-    let colors: [ModelFeature: String] = [
-      .tools: "blue", .vision: "magenta", .reasoning: "yellow", .decision: "magenta", .voice: "cyan",
+extension MaiCLI {
+  static func modelCatalogTable(_ models: [ModelDescriptor], selected: String?) -> MarkdownTable {
+    func price(_ value: Double?) -> String {
+      value.map { String(format: "%.6g", $0) } ?? ""
+    }
+    let columns: [(title: String, alignment: MarkdownTableAlignment, value: (ModelDescriptor) -> String)] = [
+      ("Model", .leading, { model in
+        let name = model.displayName == model.id ? model.id : "\(model.id) (\(model.displayName))"
+        let label = markdownTableCell(name)
+        return model.id == selected ? "**\\* \(label)**" : label
+      }),
+      ("Owner", .leading, { markdownTableCell($0.ownedBy ?? "") }),
+      ("Features", .leading, { $0.features.map(\.title).joined(separator: ", ") }),
+      ("Context", .trailing, { $0.contextLabel ?? "" }),
+      ("Input $/1M", .trailing, { price($0.pricing?.inputPerMillion) }),
+      ("Output $/1M", .trailing, { price($0.pricing?.outputPerMillion) }),
+      ("Cache $/1M", .trailing, { price($0.pricing?.cachedInputPerMillion) }),
+      ("$/request", .trailing, { price($0.pricing?.request) }),
+      ("Pricing", .leading, { model in
+        guard let pricing = model.pricing else { return "" }
+        return [pricing.hasTiers ? "base rate; tiers vary" : nil, pricing.configured ? "configured" : nil]
+          .compactMap { $0 }.joined(separator: "; ")
+      }),
     ]
-    var badges = model.features.map { paint("[\($0.title)]", color: colors[$0]) }
-    if let context = model.contextLabel { badges.append(paint("[\(context)]", color: "green")) }
-    if badges.isEmpty { badges.append(paint("[Features unknown]", role: .infoForeground)) }
-    badges.append(paint("[\(model.pricing?.label ?? "Price unknown")]", role: .infoForeground))
-    let name = model.displayName == model.id ? model.id : "\(model.id) (\(model.displayName))"
-    let owner = model.ownedBy.map { " — \($0)" } ?? ""
-    return "\(selected ? "*" : " ") \(paint(name + owner, bold: selected))  \(badges.joined(separator: " "))"
+    let visible = columns.filter { column in models.contains { !column.value($0).isEmpty } }
+    return MarkdownTable(
+      headers: visible.map(\.title), alignments: visible.map(\.alignment),
+      rows: models.map { model in visible.map { $0.value(model) } })
   }
 }

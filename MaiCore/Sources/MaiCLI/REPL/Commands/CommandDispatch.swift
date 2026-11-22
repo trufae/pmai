@@ -397,9 +397,9 @@ extension MaiCLI {
         } else if matches.isEmpty {
           await terminal.line("No matching models. Try fewer filters; missing metadata is unknown.")
         }
-        for model in matches {
-          let selected = options.provider == session.profile.provider && model.id == session.profile.model
-          await terminal.line(await terminal.modelCatalogRow(model, selected: selected))
+        if !matches.isEmpty {
+          await terminal.table(modelCatalogTable(matches,
+            selected: options.provider == session.profile.provider ? session.profile.model : nil))
         }
       } catch {
         await terminal.line("error: \(error.localizedDescription)", to: .standardError)

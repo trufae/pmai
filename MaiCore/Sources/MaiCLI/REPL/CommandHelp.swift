@@ -65,17 +65,18 @@ extension MaiCLI {
       /usage -models     The same, one row per model
       /usage refresh     Ask again instead of reusing a minute-old answer
 
-    The first line is the account's own report. Ollama Cloud gives a session and
-    a weekly percentage from /api/balance, with the included credit. Codex and
+    The context line shows this chat's occupancy and capacity when reported,
+    including OpenCode's ACP context updates after a turn. Account limits follow
+    when available. Ollama Cloud reports session and weekly percentages or plan
+    credits from /api/balance. Codex and
     Claude Code give theirs by running the command they already have — /status
     and /usage — through the agent pmai starts, so their own login answers and
-    pmai never reads or copies those credentials. The second line is the local
+    pmai never reads or copies those credentials. The last line is the local
     ledger: tokens sent and received, requests, and the last reply's size.
 
-    The real allowance is the provider's and it never publishes it in tokens, so
-    a percentage is the share left, not a token count. A provider that reports
-    nothing says so. Answers are cached for a minute; an agent query runs only
-    when that minute has passed.
+    Account percentages show the share left, separate from context tokens.
+    Unreported account limits are omitted. Quota answers are cached for a minute;
+    an agent query runs only when that minute has passed.
     """
 
   static let exportHelp: String = """

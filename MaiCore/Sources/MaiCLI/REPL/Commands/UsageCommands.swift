@@ -71,7 +71,7 @@ extension MaiCLI {
     var context = measured.usage ?? ContextUsage(usedTokens: measured.estimatedTokens, isPartial: true)
     if context.windowTokens == nil { context.windowTokens = window }
     let model = services.modelCatalog.model(profile.model, provider: profile.provider)
-    await terminal.line("Price: " + (model?.pricing?.label ?? "unknown; /models refreshes the catalog"))
+    if let price = model?.pricing?.label { await terminal.line("Price: " + price) }
     for warning in UsageWarnings.messages(context: context, threshold: warningThreshold) {
       await terminal.line("⚠ " + warning)
     }
@@ -92,8 +92,8 @@ extension MaiCLI {
     do {
       let status = try await services.providerStatus.status(
         for: provider, model: session.profile.model, refresh: refresh, now: now)
-      limits = status?.summary(now: now, providerLabel: provider.id)
-        ?? "\(provider.id) reports no limits. Known: Ollama Cloud, Codex, and Claude Code."
+      guard let status else { return usageLine }
+      limits = status.summary(now: now, providerLabel: provider.id)
       for warning in UsageWarnings.messages(quota: status, threshold: warningThreshold, now: now) {
         limits += "\n⚠ " + warning
       }

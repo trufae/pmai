@@ -267,9 +267,12 @@ lookup table is assumed.
 
 ACP's standard `usage_update` supplies actual remote occupancy and capacity.
 These snapshots replace previous occupancy and never become billable token
-usage. A remote agent owns its context policy: a host-side `ctx.window` setting
-cannot reconfigure an arbitrary agent's native context. pmai hosts forward their
-own occupancy over ACP too, marking estimates in `_meta.pmai.estimated`.
+usage. OpenCode [reports these updates after a turn](https://opencode.ai/docs/cli/acp#usage)
+when it knows the model's context size; `/usage` and the prompt show that
+snapshot. OpenCode's forwarded child-session usage does not replace the main
+chat's context. A remote agent owns its context policy: a host-side `ctx.window`
+setting cannot reconfigure an arbitrary agent's native context. pmai hosts
+forward their own occupancy over ACP too, marking estimates in `_meta.pmai.estimated`.
 
 ## Usage warnings
 
@@ -295,8 +298,10 @@ These snapshots can lag actual spending and are advisory, never a spending cap.
 
 ## Model prices
 
-`/models` and the iOS model picker display published USD input/output prices per
-**million** tokens, with cached-input and per-request rates when advertised.
+`/models` uses a Markdown table and omits metadata columns with no reported
+values; missing values in mixed catalogs stay blank. Both `/models` and the iOS
+model picker display published USD input/output prices per **million** tokens,
+with cached-input and per-request rates when advertised.
 `/models --sort input` and `--sort output` sort known prices first; the iOS picker
 has the same choices. `/usage` includes the selected model's cached price.
 A reported zero is free for that token category; missing, invalid, negative or

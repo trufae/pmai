@@ -166,9 +166,11 @@ func remoteACPHostAccess() {
                     tool_result = rpc('tools/call',{'name':name,'arguments':{}})
                     if 'TWICE' in text: tool_result = rpc('tools/call',{'name':name,'arguments':{}})
             if 'CONTEXT_USAGE' in text:
-                update('usage_update', used=1200, size=8192)
+                update('usage_update', used=1200, size=8192, cost={'amount':0.012,'currency':'USD'})
                 update('usage_update', used=None, size=8192)
                 child_update('unknown-child','usage_update',used=7000,size=8192)
+                update('usage_update', used=7000, size=16384,
+                       _meta={'opencode/child-session':{'id':'child','parentID':'s','depth':1}})
             update('agent_thought_chunk', content={'type':'text','text':'thinking'})
             answer = json.dumps({'model':model,'effort':effort,'turn':turn,'prompt':text,'tool':tool_result,
                                  'sessionMethod':session_method,'systemPrompt':native_prompt,
@@ -212,9 +214,9 @@ func remoteACPHostAccess() {
         environment: environment) as? ACPProvider)
   }
 
-  @Test("ACP context usage replaces occupancy without charging it as token spending")
+  @Test("OpenCode ACP context usage excludes child sessions and billable spending")
   func acpContextUsage() async throws {
-    let provider = try providerFixture()
+    let provider = try providerFixture(adapter: "opencode")
     let first = try await provider.complete(.init(model: "large", messages: [.user("CONTEXT_USAGE")]))
     #expect(first.contextUsage == ContextUsage(usedTokens: 1200, windowTokens: 8192, isEstimated: false))
     #expect(first.usage == nil)

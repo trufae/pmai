@@ -46,7 +46,7 @@ public struct MaiProviderStatusTool: AgentTool {
     let refresh = arguments["refresh"]?.coercedBoolValue ?? false
     guard let status = try await resolve(provider, model, refresh) else {
       return ToolOutput(
-        text: "This provider does not report limits. Known: Ollama Cloud, Codex, and Claude Code.")
+        text: "Account quota information is unavailable for this provider.")
     }
     return ToolOutput(
       content: [.text(status.summary())],

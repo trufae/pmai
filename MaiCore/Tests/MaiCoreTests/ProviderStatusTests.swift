@@ -152,7 +152,7 @@ struct ProviderStatusTests {
       arguments: .object([:]), context: ToolExecutionContext(
         run: .init(runID: UUID(), parentRunID: nil, agentID: "main", depth: 0), modelTurn: 0,
         runTimeoutSeconds: nil))
-    #expect(empty.text.contains("does not report limits"))
+    #expect(empty.text == "Account quota information is unavailable for this provider.")
   }
 }
 

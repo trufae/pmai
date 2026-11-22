@@ -84,6 +84,7 @@ def main():
             assert '/8.2k (' in output and 'Context ~85% full' in output, output
             assert 'in $2.5' in output and 'out $10' in output, output
             assert 'Unknown provider' not in output, output
+            assert 'reports no limits' not in output and 'Known: Ollama Cloud' not in output, output
             assert json.loads(config.read_text())['ui']['usagewarn'] == 80, output
             chat_file = next((project_storage(root / 'home', root) / 'chats').glob('*.json'))
             chat = read_chat(chat_file)
