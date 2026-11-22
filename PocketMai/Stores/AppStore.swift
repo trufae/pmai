@@ -1544,6 +1544,20 @@ final class AppStore: ObservableObject {
       .prefix(3).map { ConversationPreviewMessage(message: $0) }
   }
 
+  /// Read a complete snapshot without changing the selected chat or its history window.
+  func conversationPreview(id: UUID) async throws -> Conversation {
+    if let loaded = conversation(withID: id), loaded.historyWindow == nil {
+      return loaded
+    }
+    let persistence = self.persistence
+    let loaded = await Task.detached(priority: .userInitiated) {
+      persistence.loadConversationHistory(id: id)
+    }.value
+    try Task.checkCancellation()
+    guard let loaded else { throw CocoaError(.fileReadNoSuchFile) }
+    return loaded
+  }
+
   func loadStoredConversationsForSearch() async {
     guard
       !hasLoadedPersistedConversations || conversations.contains(where: { $0.historyWindow != nil })

@@ -57,6 +57,42 @@ final class ConversationPagingTests: XCTestCase {
   }
 
   @MainActor
+  func testPreviewReadsCompleteHistoryWithoutChangingTheActiveChat() async throws {
+    let root = try directory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let persistence = PersistenceStore(localBaseURL: root)
+    let chat = conversation(count: 65)
+    let activeChat = conversation(count: 1)
+    let saved = expectation(description: "initial save")
+    persistence.saveConversations([chat, activeChat]) { saved.fulfill() }
+    await fulfillment(of: [saved], timeout: 5)
+    let store = AppStore(persistence: persistence)
+    let deadline = Date().addingTimeInterval(5)
+    while !store.conversationSummaries.contains(where: { $0.id == chat.id }), Date() < deadline {
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    await store.selectConversation(id: activeChat.id)
+    let preview = try await store.conversationPreview(id: chat.id)
+    XCTAssertEqual(preview.messages, chat.messages)
+    XCTAssertNil(preview.historyWindow)
+    XCTAssertEqual(store.selectedConversationID, activeChat.id)
+    XCTAssertEqual(store.currentConversation?.messages, activeChat.messages)
+    XCTAssertNil(store.conversation(withID: chat.id))
+
+    await store.selectConversation(id: chat.id)
+    let window = try XCTUnwrap(store.currentConversation?.historyWindow)
+    let pagedPreview = try await store.conversationPreview(id: chat.id)
+    XCTAssertEqual(pagedPreview.messages, chat.messages)
+    XCTAssertNil(pagedPreview.historyWindow)
+    XCTAssertEqual(store.selectedConversationID, chat.id)
+    XCTAssertEqual(store.currentConversation?.historyWindow, window)
+
+    await store.preloadConversation(id: chat.id)
+    let loadedPreview = try await store.conversationPreview(id: chat.id)
+    XCTAssertEqual(loadedPreview.messages, store.currentConversation?.messages)
+  }
+
+  @MainActor
   func testBrowsingKeepsABoundedWindowAndEditingHydratesBeforeSaving() async throws {
     let root = try directory()
     defer { try? FileManager.default.removeItem(at: root) }

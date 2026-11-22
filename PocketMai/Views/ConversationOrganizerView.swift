@@ -9,6 +9,7 @@ struct ConversationOrganizerView: View {
   @State private var offset = CGSize.zero
   @State private var isBusy = false
   @State private var showingFolders = false
+  @State private var previewConversation: ConversationSummary?
   @State private var pendingDeletion: PendingConversationDeletion?
   @State private var errorMessage: String?
 
@@ -24,12 +25,18 @@ struct ConversationOrganizerView: View {
   var body: some View {
     VStack(spacing: 16) {
       if let conversation = current {
-        Text("\(queue.count) remaining · Shuffled for this visit")
-          .font(.subheadline)
-          .foregroundStyle(.secondary)
-          .padding(.top, 64)
-
-        Spacer(minLength: 16)
+        VStack(spacing: 8) {
+          Text("Swipe the card to take action")
+            .font(.headline)
+          Text("Left to delete · Right to keep\nUp to move · Down to close")
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+          Text("\(queue.count) remaining · Shuffled for this visit")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+        .multilineTextAlignment(.center)
+        .padding(.top, 8)
 
         ZStack {
           RoundedRectangle(cornerRadius: 24)
@@ -41,7 +48,7 @@ struct ConversationOrganizerView: View {
             .offset(offset)
             .rotationEffect(.degrees(reduceMotion ? 0 : Double(offset.width / 24)))
             .gesture(
-              DragGesture(minimumDistance: 1)
+              DragGesture(minimumDistance: 10)
                 .onChanged { value in
                   guard !isBusy else { return }
                   offset = value.translation
@@ -67,8 +74,13 @@ struct ConversationOrganizerView: View {
                   }
                 }
             )
+            .onTapGesture { showPreview(conversation) }
             .accessibilityElement(children: .combine)
-            .accessibilityHint("Swipe left to delete, up to move, right to keep, or down to close.")
+            .accessibilityAddTraits(.isButton)
+            .accessibilityHint(
+              "Tap to read the full conversation. Swipe left to delete, up to move, right to keep, or down to close."
+            )
+            .accessibilityAction { showPreview(conversation) }
             .accessibilityAction(named: "Delete Conversation") { requestDeletion(conversation) }
             .accessibilityAction(named: "Move to Folder") { showingFolders = true }
             .accessibilityAction(named: "Keep Conversation") { advance(conversation.id) }
@@ -78,6 +90,11 @@ struct ConversationOrganizerView: View {
         .aspectRatio(2.0 / 3.0, contentMode: .fit)
         .frame(maxWidth: 300, maxHeight: 450)
         .padding(.horizontal, 48)
+
+        Text("Tap the card to read the full conversation")
+          .font(.footnote)
+          .foregroundStyle(.secondary)
+          .multilineTextAlignment(.center)
 
         Spacer(minLength: 16)
       } else {
@@ -117,6 +134,9 @@ struct ConversationOrganizerView: View {
       queue.removeAll { ids.contains($0) }
     }
     .errorAlert("Could Not Organize Chat", message: $errorMessage)
+    .sheet(item: $previewConversation) { conversation in
+      ConversationOrganizerPreview(conversationID: conversation.id)
+    }
     .sheet(isPresented: $showingFolders) {
       NavigationStack {
         List(store.conversationFolders) { folder in
@@ -171,6 +191,12 @@ struct ConversationOrganizerView: View {
     withAnimation(spring) { offset = .zero }
   }
 
+  private func showPreview(_ conversation: ConversationSummary) {
+    guard !isBusy else { return }
+    resetCard()
+    previewConversation = conversation
+  }
+
   private func requestDeletion(_ conversation: ConversationSummary) {
     resetCard()
     pendingDeletion = .single(conversation)
@@ -184,6 +210,57 @@ struct ConversationOrganizerView: View {
       queue.removeAll { $0 == id }
       offset = .zero
       isBusy = false
+    }
+  }
+}
+
+private struct ConversationOrganizerPreview: View {
+  @EnvironmentObject private var store: AppStore
+  @Environment(\.dismiss) private var dismiss
+  let conversationID: UUID
+  @State private var conversation: Conversation?
+  @State private var errorMessage: String?
+  @State private var loadID = UUID()
+
+  var body: some View {
+    NavigationStack {
+      Group {
+        if let conversation {
+          ScrollView {
+            ConversationImportTranscript(conversation: conversation)
+              .padding()
+              .textSelection(.enabled)
+          }
+        } else if let errorMessage {
+          ContentUnavailableView {
+            Label("Could Not Load Conversation", systemImage: "exclamationmark.triangle")
+          } description: {
+            Text(errorMessage)
+          } actions: {
+            Button("Try Again") { loadID = UUID() }
+          }
+        } else {
+          ProgressView("Loading conversation…")
+        }
+      }
+      .navigationTitle("Conversation Preview")
+      .navigationBarTitleDisplayMode(.inline)
+      .toolbar {
+        ToolbarItem(placement: .cancellationAction) {
+          Button("Done") { dismiss() }
+        }
+      }
+      .task(id: loadID) {
+        errorMessage = nil
+        do {
+          let loaded = try await store.conversationPreview(id: conversationID)
+          guard !Task.isCancelled else { return }
+          conversation = loaded
+        } catch {
+          guard !Task.isCancelled else { return }
+          errorMessage = "Could not read the full conversation. Try again after syncing."
+        }
+      }
     }
   }
 }

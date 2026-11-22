@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// A read-only transcript: importing never needs the live chat's actions or tool UI.
+/// A read-only transcript for previews without the live chat's actions or tool UI.
 struct ConversationImportTranscript: View {
   let conversation: Conversation
 
