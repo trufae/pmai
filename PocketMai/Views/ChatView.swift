@@ -1097,14 +1097,17 @@ struct ChatView: View {
                 width: scrollGeometry.size.width,
                 height: max(0, scrollGeometry.size.height - chatHeaderHeight)))
             } else {
-              ForEach(ConversationMessageRun.grouped(
-                renderedMessages, conversationID: currentConversationID)
+              StreamingConversationMessageRuns(
+                messages: renderedMessages, conversationID: currentConversationID,
+                streamingText: renderedMessages.last.map {
+                  store.streamingTextStore.textObject(for: $0.id)
+                } ?? StreamingText()
               ) { run in
                 MessageActivityGroup(
                   enabled: run.isActivity,
-                  title: "Activity · \(run.messages.count) updates",
-                  failedCount: run.isActivity
-                    ? run.messages.reduce(0) { $0 + MessageRenderCache.failedToolCount($1) } : 0,
+                  summary: run.isActivity
+                    ? MessageRenderCache.activitySummary(for: run.messages) : .init(),
+                  isLive: run.messages.last.map { isWaitingForResponse($0) } ?? false,
                   forceExpanded: isMessageSelectionMode
                 ) {
                   ForEach(run.messages) { message in

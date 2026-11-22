@@ -287,9 +287,8 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
           .id(ResponseScrollTarget(messageID: message.id, partID: part.id))
         default:
           MessageActivityGroup(
-            title: "Activity · \(range.count) updates",
-            timings: range.filter { prepared.parts[$0].isTool }.map { prepared.parts[$0].toolTiming },
-            failedCount: range.count { prepared.parts[$0].hasToolError },
+            summary: MessageActivitySummary(
+              parts: prepared.parts[range], stats: message.stats),
             isLive: isLiveAssistantResponse,
             forceExpanded: isFullChatScreenshotRendering
           ) {
@@ -370,29 +369,15 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
         onEdit: toolEditAction(for: entry, partID: partID, in: prepared),
         onDelete: toolDeleteAction(for: entry, section: section, partID: partID, in: prepared))
     case .reasoning(_, let section):
-      let compactDisplay = isStreaming && thinkingDisplay == .full ? .five : thinkingDisplay
-      FoldableMetaSection(
-        title: "Reasoning",
-        systemImage: "brain",
+      InlineReasoningText(
         content: section.content,
-        monospaced: false,
-        showsGenerationSpeed: true,
-        generationStats: message.stats,
-        collapsedStatus: showThinking && compactDisplay == .status && isStreaming
-          ? "Thinking…" : nil,
-        collapsedPreviewLines: showThinking && compactDisplay != .status
-          && compactDisplay != .full ? compactDisplay.lineCount : 0,
-        dimmedContent: true,
         initiallyExpanded: showThinking && thinkingDisplay == .full && !isStreaming,
-        italicContent: true,
-        markdownAppearance: canRenderMarkdown ? appearance : nil,
-        renderImages: renderImages,
-        expandedMaxHeight: 240,
         isStreaming: isStreaming,
-        compact: compactMetadata,
-        onDelete: hiddenSectionDeleteAction(
-          for: section, partID: part.id, in: prepared)
-      )
+        style: MetaSectionTextStyle(
+          monospaced: false, dimmed: true, italic: true,
+          markdownAppearance: canRenderMarkdown ? appearance : nil,
+          renderImages: renderImages),
+        onDelete: hiddenSectionDeleteAction(for: section, partID: part.id, in: prepared))
     case .transcript(_, let section):
       FoldableMetaSection(
         title: "Prompt Transcript",
@@ -1709,11 +1694,69 @@ private enum MessageRenderPart: Identifiable {
   }
 }
 
+struct MessageActivitySummary {
+  var updateCount = 0
+  var timings: [ToolRunTiming?] = []
+  var failedCount = 0
+  var reasoning = ""
+  var lastTool = ""
+  var stats: GenerationStats?
+
+  init() {}
+
+  fileprivate init(parts: ArraySlice<MessageRenderPart>, stats: GenerationStats? = nil) {
+    self.stats = stats
+    for part in parts {
+      updateCount += 1
+      switch part {
+      case .tool(_, let entry, let section):
+        timings.append(section.toolTiming)
+        if entry.hasError { failedCount += 1 }
+        lastTool =
+          entry.name + (entry.params.isEmpty ? "" : " · " + String(entry.params.prefix(120)))
+      case .reasoning(_, let section):
+        reasoning = section.content
+      default:
+        break
+      }
+    }
+  }
+
+  func title(isLive: Bool, now: Date) -> String {
+    let updates = "Activity · \(updateCount) updates"
+    guard !timings.isEmpty else { return updates }
+    let knownTimings = timings.map { isLive || $0?.finishedAt != nil ? $0 : nil }
+    return updates + " · " + ToolRunTiming.summary(knownTimings, now: now)
+  }
+
+  var reasoningPreview: String {
+    reasoning.suffix(240).split(whereSeparator: \.isWhitespace).joined(separator: " ")
+  }
+}
+
 enum MessageRenderCache {
   @MainActor
   static func isActivity(_ message: ChatMessage) -> Bool {
     guard message.role != .user, message.role != .error, message.attachments.isEmpty else { return false }
     return preparedContent(messageID: message.id, text: message.presentationText).hideBubble
+  }
+
+  @MainActor
+  static func activitySummary(for messages: [ChatMessage]) -> MessageActivitySummary {
+    var summary = MessageActivitySummary()
+    for message in messages {
+      let content = preparedContent(messageID: message.id, text: message.presentationText)
+      let next = MessageActivitySummary(parts: content.parts[...], stats: message.stats)
+      summary.updateCount += next.updateCount
+      summary.timings += next.timings
+      summary.failedCount += next.failedCount
+      if !next.reasoning.isEmpty { summary.reasoning = next.reasoning }
+      if !next.lastTool.isEmpty { summary.lastTool = next.lastTool }
+      if let stats = next.stats {
+        if summary.stats == nil { summary.stats = stats } else { summary.stats?.merge(stats) }
+      }
+    }
+    return summary
   }
 
   @MainActor
@@ -2257,6 +2300,59 @@ private struct FoldableMetaSection: View {
   }
 }
 
+private struct InlineReasoningText: View {
+  @Environment(\.messageActivityExpandedReasoning) private var revealReasoning
+  @Environment(\.isFullChatScreenshotRendering) private var isFullChatScreenshotRendering
+  let content: String
+  let initiallyExpanded: Bool
+  let isStreaming: Bool
+  let style: MetaSectionTextStyle
+  var onDelete: (() -> Void)?
+  @State private var expanded = false
+
+  private var preview: String {
+    content.prefix(400).split(separator: "\n", omittingEmptySubsequences: false)
+      .prefix(6).joined(separator: "\n")
+  }
+
+  private var isLong: Bool { !content.dropFirst(400).isEmpty || preview != content }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 0) {
+      if expanded || isFullChatScreenshotRendering || !isLong {
+        ScrollingMetaSectionContent(
+          content: content, isStreaming: isStreaming, maxHeight: 240, style: style
+        )
+        .onTapGesture { if isLong { expanded = false } }
+      } else {
+        Button {
+          expanded = true
+        } label: {
+          (Text(preview) + Text(" …").foregroundColor(.accentColor))
+            .font(.callout.italic())
+            .foregroundStyle(.secondary)
+            .multilineTextAlignment(.leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Read full reasoning")
+      }
+    }
+    .contextMenu {
+      Button("Copy Reasoning") { UIPasteboard.general.string = content }
+      if let onDelete { Button("Delete Reasoning", role: .destructive, action: onDelete) }
+    }
+    .onChange(of: initiallyExpanded, initial: true) { _, reveal in
+      if reveal { expanded = true }
+    }
+    .onChange(of: revealReasoning, initial: true) { _, reveal in
+      if reveal { expanded = true }
+    }
+  }
+}
+
 private struct ReasoningSpeedLabel: View {
   let content: String
   let isStreaming: Bool
@@ -2264,7 +2360,7 @@ private struct ReasoningSpeedLabel: View {
   @State private var rate = ReasoningGenerationRate()
 
   private var label: String {
-    if !isStreaming, let stats, let speed = stats.tokensPerSecond {
+    if let stats, let speed = stats.tokensPerSecond {
       return ModelUsageFormat.speed(speed, estimated: stats.tokensEstimated)
     }
     return rate.tokensPerSecond.map { ModelUsageFormat.speed($0, estimated: true) } ?? "— tok/s"
@@ -2450,62 +2546,99 @@ private struct VoiceRecordingPlaybackButton: View {
 
 extension EnvironmentValues {
   @Entry var messageActivityIsGrouped = false
+  @Entry var messageActivityExpandedReasoning = false
 }
 
 struct MessageActivityGroup<Content: View>: View {
   @Environment(\.messageActivityIsGrouped) private var alreadyGrouped
   @Environment(\.isFullChatScreenshotRendering) private var isFullChatScreenshotRendering
   var enabled = true
-  var title = "Activity"
-
-  var timings: [ToolRunTiming?] = []
-  var failedCount = 0
+  var summary = MessageActivitySummary()
   var isLive = false
   var forceExpanded = false
   @ViewBuilder var content: () -> Content
   @State private var expanded = false
+  @State private var revealReasoning = false
+
+  private var isExpanded: Bool { expanded || forceExpanded || isFullChatScreenshotRendering }
 
   var body: some View {
     if !enabled || alreadyGrouped {
       content()
     } else {
-      DisclosureGroup(isExpanded: Binding(
-        get: { expanded || forceExpanded || isFullChatScreenshotRendering }, set: { expanded = $0 }
-      )) {
-        if expanded || forceExpanded || isFullChatScreenshotRendering {
-          if isFullChatScreenshotRendering {
-            VStack(alignment: .leading, spacing: 0, content: content)
-              .environment(\.messageActivityIsGrouped, true)
-          } else {
-            ActivityScrollView(content: content)
-              .environment(\.messageActivityIsGrouped, true)
-              .activityScrollFrame()
+      VStack(alignment: .leading, spacing: 0) {
+        DisclosureGroup(
+          isExpanded: Binding(
+            get: { isExpanded },
+            set: {
+              expanded = $0
+              revealReasoning = false
+            }
+          )
+        ) {
+          if expanded || forceExpanded || isFullChatScreenshotRendering {
+            if isFullChatScreenshotRendering {
+              VStack(alignment: .leading, spacing: 0, content: content)
+                .environment(\.messageActivityIsGrouped, true)
+            } else {
+              ActivityScrollView(content: content)
+                .environment(\.messageActivityIsGrouped, true)
+                .activityScrollFrame()
+            }
+          }
+        } label: {
+          TimelineView(
+            .animation(
+              minimumInterval: 1,
+              paused: !isLive || summary.timings.allSatisfy { $0?.finishedAt != nil }
+            )
+          ) { context in
+            HStack(spacing: 4) {
+              Text(summary.title(isLive: isLive, now: context.date))
+                .truncationMode(.tail)
+              if summary.failedCount > 0 {
+                Text("· \(summary.failedCount) failed").foregroundStyle(Color.red)
+              }
+              Spacer(minLength: 8)
+              ReasoningSpeedLabel(
+                content: summary.reasoning, isStreaming: isLive, stats: summary.stats
+              )
+              .font(.caption2.monospacedDigit())
+              .foregroundStyle(.tertiary)
+              .fixedSize()
+            }
+            .font(.caption.monospacedDigit())
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .frame(minHeight: 44, alignment: .leading)
           }
         }
-      } label: {
-        TimelineView(.animation(
-          minimumInterval: 1, paused: !isLive || timings.allSatisfy { $0?.finishedAt != nil }
-        )) { context in
-          HStack(spacing: 4) {
-            Text(title)
-            if !timings.isEmpty {
-              Text("· " + ToolRunTiming.summary(
-                timings.map { timing in
-                  guard isLive || timing?.finishedAt != nil else { return nil }
-                  return timing
-                }, now: context.date))
+        .disclosureGroupStyle(ActivityDisclosureStyle())
+        if !isExpanded, !summary.reasoningPreview.isEmpty || !summary.lastTool.isEmpty {
+          Button {
+            revealReasoning = true
+            expanded = true
+          } label: {
+            VStack(alignment: .leading, spacing: 2) {
+              if !summary.reasoningPreview.isEmpty {
+                Text(summary.reasoningPreview)
+                  .lineLimit(summary.lastTool.isEmpty ? 3 : 2)
+              }
+              if !summary.lastTool.isEmpty {
+                Text(summary.lastTool).lineLimit(1)
+              }
             }
-            if failedCount > 0 {
-              Text("· \(failedCount) failed").foregroundStyle(Color.red)
-            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .multilineTextAlignment(.leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
           }
-          .font(.caption.monospacedDigit())
-          .foregroundStyle(.secondary)
-          .lineLimit(1)
-          .frame(minHeight: 44, alignment: .leading)
+          .buttonStyle(.plain)
+          .accessibilityLabel("Read latest activity and reasoning")
         }
       }
-      .disclosureGroupStyle(ActivityDisclosureStyle())
+      .environment(\.messageActivityExpandedReasoning, revealReasoning)
     }
   }
 }

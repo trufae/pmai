@@ -27,9 +27,15 @@ struct ConversationMessageRun: Identifiable {
   }
 
   @MainActor
-  static func grouped(_ messages: ArraySlice<ChatMessage>, conversationID: UUID?) -> [Self] {
+  static func grouped(
+    _ messages: ArraySlice<ChatMessage>, conversationID: UUID?, streamingText: String? = nil
+  ) -> [Self] {
     var runs: [Self] = []
-    for message in messages {
+    for var message in messages {
+      if message.id == messages.last?.id, let streamingText {
+        message.displayText = streamingText
+        message.text = streamingText
+      }
       let activity = MessageRenderCache.isActivity(message)
       if activity, runs.last?.isActivity == true {
         runs[runs.count - 1].messages.append(message)
@@ -44,6 +50,23 @@ struct ConversationMessageRun: Identifiable {
       }
     }
     return runs
+  }
+}
+
+/// Observe the throttled tail without rebuilding the surrounding chat for every chunk.
+struct StreamingConversationMessageRuns<Content: View>: View {
+  let messages: ArraySlice<ChatMessage>
+  let conversationID: UUID?
+  @ObservedObject var streamingText: StreamingText
+  @ViewBuilder var content: (ConversationMessageRun) -> Content
+
+  var body: some View {
+    ForEach(
+      ConversationMessageRun.grouped(
+        messages, conversationID: conversationID, streamingText: streamingText.text)
+    ) { run in
+      content(run)
+    }
   }
 }
 

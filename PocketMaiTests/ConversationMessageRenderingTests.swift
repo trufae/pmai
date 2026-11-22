@@ -31,6 +31,88 @@ func remoteHistoryCountsVisibleGroups() {
 
 final class ConversationMessageRenderingTests: XCTestCase {
   @MainActor
+  func testActivityCountsAndFinalAnswerUseLiveTextBeforeCommit() throws {
+    let thought = "<think>Check the file</think>"
+    let tool = "<tool_run>Shell tool ():\nError: failed\n</tool_run>"
+    let assistant = ChatMessage(role: .assistant, text: thought)
+    let messages = [ChatMessage(role: .user, text: "Question"), assistant]
+    let id = UUID()
+    let liveActivity = thought + "\n" + tool + "\n<think>Try another file</think>"
+    let runs = ConversationMessageRun.grouped(
+      messages[...], conversationID: id, streamingText: liveActivity)
+    XCTAssertTrue(try XCTUnwrap(runs.last).isActivity)
+    let summary = MessageRenderCache.activitySummary(for: try XCTUnwrap(runs.last).messages)
+    XCTAssertEqual(summary.updateCount, 3)
+    XCTAssertEqual(summary.timings.count, 1)
+    XCTAssertEqual(summary.failedCount, 1)
+    XCTAssertEqual(summary.reasoningPreview, "Try another file")
+    XCTAssertTrue(summary.lastTool.contains("Shell"))
+
+    // The first answer chunk must escape the outer activity disclosure immediately.
+    let answering = ConversationMessageRun.grouped(
+      messages[...], conversationID: id, streamingText: liveActivity + "\nThe answer is")
+    XCTAssertFalse(try XCTUnwrap(answering.last).isActivity)
+    XCTAssertEqual(answering.last?.messages.last?.id, assistant.id)
+    XCTAssertTrue(
+      answering.last?.messages.last?.presentationText.hasSuffix("The answer is") == true)
+    XCTAssertEqual(messages.last?.text, thought)
+    XCTAssertTrue(
+      try XCTUnwrap(
+        ConversationMessageRun.grouped(
+          messages[...], conversationID: id
+        ).last
+      ).isActivity)
+  }
+
+  @MainActor
+  func testCollapsedActivityRevealsTheAnswerWhileItIsStillStreaming() async throws {
+    let thought = "<think>Check the file</think>"
+    let assistant = ChatMessage(role: .assistant, text: thought)
+    let messages = [assistant]
+    let store = StreamingTextStore()
+    var visibleAnswer: String?
+    let host = UIHostingController(
+      rootView:
+        StreamingConversationMessageRuns(
+          messages: messages[...], conversationID: UUID(),
+          streamingText: store.textObject(for: assistant.id)
+        ) { run in
+          MessageActivityGroup(enabled: run.isActivity) {
+            Text(run.messages.last?.presentationText ?? "")
+              .onAppear { visibleAnswer = run.messages.last?.presentationText }
+          }
+        })
+    let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+    window.rootViewController = host
+    window.isHidden = false
+    defer { window.isHidden = true }
+    host.view.layoutIfNeeded()
+    XCTAssertNil(visibleAnswer)
+
+    let streamed = thought + "\nThe answer is arriving"
+    store.enqueue(streamed, for: assistant.id)
+    try await waitForLayout(host: host) { visibleAnswer == streamed }
+    XCTAssertEqual(visibleAnswer, streamed)
+    XCTAssertEqual(messages.last?.text, thought)
+  }
+
+  @MainActor
+  func testActivitySpeedUsesTotalTokensOverGenerationTime() throws {
+    let messages = [
+      ChatMessage(
+        role: .assistant, text: "<think>First</think>",
+        stats: GenerationStats(
+          providerLabel: "Test", modelID: "local", outputTokens: 100, generationSeconds: 2)),
+      ChatMessage(
+        role: .assistant, text: "<think>Second</think>",
+        stats: GenerationStats(
+          providerLabel: "Test", modelID: "local", outputTokens: 100, generationSeconds: 8)),
+    ]
+    let summary = MessageRenderCache.activitySummary(for: messages)
+    XCTAssertEqual(try XCTUnwrap(summary.stats?.tokensPerSecond), 20, accuracy: 0.001)
+  }
+
+  @MainActor
   func testFullPageScreenshotRendersBothThemesWithoutMenuPlaceholders() throws {
     var conversation = Conversation()
     conversation.messages = [
