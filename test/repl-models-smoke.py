@@ -195,15 +195,15 @@ def main():
                     elif path == '/v1/models':
                         wait_for('split.gguf')
                     else:
-                        wait_for('test.gguf — llamacpp')
+                        wait_for('Model')
+                        wait_for('test.gguf')
                     print(f'PASS model catalog {provider}', flush=True)
                 catalog['data'][0].update(capabilities=['tools', 'vision', 'thinking'], context_length=131072)
                 send('/models --tools --vision --context 128K test\n')
                 assert next_request()[0] == '/models'
                 wait_for('1 of 1 models')
-                wait_for('[Tools]')
-                wait_for('[Vision]')
-                wait_for('[128K context]')
+                wait_for('Tools, Vision')
+                wait_for('128K')
                 send('/models --voice\n')
                 assert next_request()[0] == '/models'
                 wait_for('No matching models.')
@@ -213,7 +213,8 @@ def main():
                 catalog['models'] = [{'model': 'fresh.gguf'}]
                 send('/models\n')
                 assert next_request()[0] == '/models'
-                wait_for('fresh.gguf — llamacpp')
+                wait_for('Model')
+                wait_for('fresh.gguf')
                 send('/model fre\t\n')
                 wait_for('Model: openai::fresh.gguf')
                 for task in ('compact', 'tool', 'approval', 'btw'):
@@ -281,7 +282,8 @@ def main():
                 send('catalog-draft')
                 wait_for('catalog-draft')
                 foreground_release.set()
-                wait_for('fresh.gguf — llamacpp')
+                wait_for('Model')
+                wait_for('fresh.gguf')
                 wait_for('Nothing to send: the editor left the file empty.')
                 wait_for('Set ctx.recent = 2002')
                 assert (root / 'editor-ran').read_text() == 'done'
