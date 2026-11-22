@@ -19,17 +19,17 @@ extension AgentRuntime {
     state: inout RunState
   ) async throws -> ModelTurn {
     let depth = state.context.depth
-    var definitions = offeredDefinitions
+    let hurrying = hurriedRuns.contains(state.pid)
+    var definitions = hurrying ? [] : offeredDefinitions
     // Once the run's tool budget is spent the model gets no tools and is
     // told to answer, instead of the run failing with a limit error.
     let hasToolBudget = state.request.limits.remainingToolCalls(used: state.toolCalls) > 0
     let toolBudgetExhausted =
-      !definitions.isEmpty
-      && (!hasToolBudget || state.repeatGuardTripped)
+      hurrying || (!definitions.isEmpty && (!hasToolBudget || state.repeatGuardTripped))
     // Resolve once at the call boundary, after compaction and queued input.
     // A task assignment changed during an await cannot mix one provider with
     // another agent's model or options.
-    let routedDecision = state.pendingDecision
+    let routedDecision = hurrying ? nil : state.pendingDecision
     state.pendingDecision = nil
     if let routedDecision {
       switch routedDecision {
@@ -46,8 +46,8 @@ extension AgentRuntime {
       routedDecision == nil && !state.usingPrimary && taskAgents.tool != nil && state.goal?.isActive != true
       && !primaryManagesTools
       && !concreteDefinitions.isEmpty
-      && hasToolBudget && !state.repeatGuardTripped
-    if state.request.context == .tools {
+      && hasToolBudget && !state.repeatGuardTripped && !hurrying
+    if state.request.context == .tools, !hurrying {
       let candidates = state.toolContext.pending(in: state.workingMessages)
       if !candidates.isEmpty {
         await supervisor.note(state.pid, activity: "summarizing tool results")
@@ -58,7 +58,7 @@ extension AgentRuntime {
             render: { AgentToolResultContext.prompt(outputs: $0, in: transcript) },
             state: &state, purpose: "tool-results")
           state.toolContext.store(summaries, for: candidates)
-        } catch let error where error is CancellationError || error is RunDeadlineExceeded {
+        } catch let error where error is CancellationError || error is RunDeadlineExceeded || error is HurryRequested {
           throw error
         } catch {
           state.toolContext.store(nil, for: candidates)
@@ -70,6 +70,7 @@ extension AgentRuntime {
     inference.messages =
       state.contextMessages
     if selectingTools { inference = try taskRequest(.tool, from: inference) }
+    if hurrying { inference.options = hurryOptions(inference.options) }
     guard let provider = providers[inference.provider] else {
       throw AgentRuntimeError.providerNotRegistered(inference.provider)
     }
@@ -93,7 +94,7 @@ extension AgentRuntime {
       throw AgentRuntimeError.systemOneConfiguration(
         "tool.systemone requires a System One provider in /model -tool.")
     }
-    if state.request.useSystemOne, taskAgents.tool == nil, !concreteDefinitions.isEmpty {
+    if !hurrying, state.request.useSystemOne, taskAgents.tool == nil, !concreteDefinitions.isEmpty {
       throw AgentRuntimeError.systemOneConfiguration(
         "Select a System One model with /model -tool PROVIDER::MODEL first.")
     }
@@ -129,7 +130,7 @@ extension AgentRuntime {
       insertSystem(AgentGoalPrompt.worker(effort: inference.options.reasoningEffort),
         into: &providerMessages)
     }
-    if let goal = state.goal, goal.isActive {
+    if !hurrying, let goal = state.goal, goal.isActive {
       insertSystem(AgentGoalPrompt.coordinator(goal, effort: inference.options.reasoningEffort),
         into: &providerMessages)
       if state.goalNeedsReview {
@@ -188,7 +189,9 @@ extension AgentRuntime {
         "Use the tool results to answer the user's request. If the task is unfinished, use the available tools to complete it before answering.",
         into: &providerMessages)
     }
-    if textToolMode != nil || toolBudgetExhausted {
+    if hurrying {
+      insertSystem(Self.hurryPrompt, into: &providerMessages)
+    } else if textToolMode != nil || toolBudgetExhausted {
       let prompt =
         toolBudgetExhausted
         ? (state.repeatGuardTripped ? Self.repeatedCallPrompt : Self.toolBudgetExhaustedPrompt)
@@ -214,7 +217,7 @@ extension AgentRuntime {
       providerRevisions[inference.provider] == revision {
       catalogContextWindows[inference.provider, default: [:]][inference.model] = localWindow
     }
-    if state.request.context == .smart || state.request.context == .adaptive,
+    if !hurrying, state.request.context == .smart || state.request.context == .adaptive,
       !managesToolLoop, !deciding
     {
       let adaptive = state.request.context == .adaptive
@@ -263,7 +266,7 @@ extension AgentRuntime {
             state: &state, outputLimit: min(8_000, max(2_048, threshold / 8)),
             purpose: "working-context", operationID: reductionID)
           outcome = state.smartContext.store(brief, for: evidence.messages) ? "applied" : "unchanged"
-        } catch let error where error is CancellationError || error is RunDeadlineExceeded {
+        } catch let error where error is CancellationError || error is RunDeadlineExceeded || error is HurryRequested {
           throw error
         } catch {
           await state.emit(.compactionFailed(state.context, error.localizedDescription))
@@ -293,6 +296,10 @@ extension AgentRuntime {
         }
       }
       providerRequest.messages = state.smartContext.messages(from: context)
+    }
+    // Do not race a final answer ahead of the broadcast's inbox delivery.
+    state.hurryApplied = hurrying && state.transcript.contains {
+      $0.role == .user && $0.text == Self.hurryPrompt
     }
     return ModelTurn(
       provider: provider, request: providerRequest, retry: inference.retry,

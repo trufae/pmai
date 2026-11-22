@@ -193,6 +193,7 @@ extension AgentRuntime {
     pid: AgentPID,
     retriesEmptyReply: Bool = true,
     systemContext: Bool? = nil,
+    hurryApplied: Bool = false,
     purpose: String = "conversation",
     emit: @escaping AgentEventHandler,
     onEvent: @escaping ProviderEventHandler
@@ -202,6 +203,7 @@ extension AgentRuntime {
     let callPurpose = AgentDiagnosticScope.current?.purpose ?? purpose
     var lastTransportError: ProviderTransportError?
     while true {
+      if !hurryApplied, hurriedRuns.contains(pid) { throw HurryRequested() }
       var outbound = providerRequest
       if redactionMode != .off, let redactor = ContentRedactor.current {
         if systemContext != false, !redactionRules.isEmpty {
@@ -234,28 +236,31 @@ extension AgentRuntime {
             provider: provider.descriptor.id, attempt: attemptNumber,
             callID: callID, purpose: callPurpose, sessionID: outgoingRequest.sessionID)
         })
+      if !hurryApplied, hurriedRuns.contains(pid) { throw HurryRequested() }
       do {
-        let response = try await withDeadline(budget) {
-          try await ProviderProcessScope.$current.withValue(
-            scope
-          ) {
-            try await provider.complete(outgoingRequest) { event in
-              if timing.note(event) {
-                let kind: String
-                switch event {
-                case .reasoningDelta: kind = "reasoning"
-                case .toolCallDelta: kind = "tool_call"
-                default: kind = "text"
+        let response = try await withHurryInterrupt(for: pid) {
+          try await self.withDeadline(budget) {
+            try await ProviderProcessScope.$current.withValue(
+              scope
+            ) {
+              try await provider.complete(outgoingRequest) { event in
+                if timing.note(event) {
+                  let kind: String
+                  switch event {
+                  case .reasoningDelta: kind = "reasoning"
+                  case .toolCallDelta: kind = "tool_call"
+                  default: kind = "text"
+                  }
+                  await scope.reportTransport("first_output", details: [
+                    "kind": .string(kind),
+                    "elapsedSeconds": .number(Date().timeIntervalSince(timing.observation.requestStart)),
+                  ], activity: "receiving model output")
                 }
-                await scope.reportTransport("first_output", details: [
-                  "kind": .string(kind),
-                  "elapsedSeconds": .number(Date().timeIntervalSince(timing.observation.requestStart)),
-                ], activity: "receiving model output")
-              }
-              if let display {
-                if let visible = await display.feed(event) { await onEvent(visible) }
-              } else {
-                await onEvent(event)
+                if let display {
+                  if let visible = await display.feed(event) { await onEvent(visible) }
+                } else {
+                  await onEvent(event)
+                }
               }
             }
           }
@@ -287,6 +292,8 @@ extension AgentRuntime {
         noteDiagnostic("model.response", context: context, sessionID: outgoingRequest.sessionID,
           purpose: callPurpose, callID: callID, value: .object(details))
         return ProviderCall(response: response, timing: timing.observation, ended: Date())
+      } catch is HurryRequested {
+        throw HurryRequested()
       } catch is CancellationError {
         noteDiagnostic("model.cancelled", context: context, sessionID: outgoingRequest.sessionID,
           purpose: callPurpose, callID: callID, value: .object(["attempt": .integer(attempt + 1)]))
@@ -352,7 +359,8 @@ extension AgentRuntime {
           started: delayStarted,
           process: pid,
           fallback: policy,
-          budget: budget)
+          budget: budget,
+          interruptForHurry: !hurryApplied)
         // Lowering retry.attempts while the delay is in progress cancels the
         // pending retry at once instead of making the run wait and call again.
         guard attempt <= updatedPolicy.attempts else { throw error }
@@ -372,6 +380,7 @@ extension AgentRuntime {
   }
 
   func callProvider(_ turn: ModelTurn, state: inout RunState) async throws -> ProviderCall? {
+    if hurriedRuns.contains(state.pid), !state.hurryApplied { throw HurryRequested() }
     let context = state.context
     let emit = state.emit
     state.modelTurns += 1
@@ -410,7 +419,7 @@ extension AgentRuntime {
         let definitions = try await self.visibleDefinitions(for: current, depth: context.depth)
         return try await AgentExecutionScope.$current.withValue(scope) {
           try await ContentRedactor.$current.withValue(redactor) {
-            try await self.execute(
+            try await self.executeHurryAware(
               call, definitions: definitions, request: current,
               execution: ToolExecutionContext(run: context, modelTurn: modelTurn), budget: budget,
               emit: { event in
@@ -424,6 +433,7 @@ extension AgentRuntime {
           turn.request, with: turn.provider, retry: turn.retry, budget: state.budget,
           context: context, pid: state.pid, retriesEmptyReply: !repairsEmptyReply,
           systemContext: state.request.systemContext,
+          hurryApplied: state.hurryApplied,
           purpose: turn.selectingTools ? "tool-selection" : "conversation", emit: emit
         ) { event in
           if turn.selectingTools {
@@ -462,6 +472,10 @@ extension AgentRuntime {
       state.rejectedContextTokens = nil
       state.contextRecoveryAttempts = 0
       return response
+    } catch is HurryRequested {
+      state.toolCalls = await toolCount.used
+      state.transcript += await toolCount.transcript
+      throw HurryRequested()
     } catch let error as ProviderContextLimitError {
       state.toolCalls = await toolCount.used
       guard state.contextRecoveryAttempts < 2 else { throw error }
@@ -517,10 +531,12 @@ extension AgentRuntime {
     started: ContinuousClock.Instant,
     process pid: AgentPID,
     fallback: AgentRetryPolicy,
-    budget: RunBudget
+    budget: RunBudget,
+    interruptForHurry: Bool
   ) async throws -> AgentRetryPolicy {
     while true {
       let revision = supervisor.changes.revision
+      if interruptForHurry, hurriedRuns.contains(pid) { throw HurryRequested() }
       let policy = liveRequests[pid]?.retry ?? fallback
       if attempt > policy.attempts { return policy }
       if await budget.deadlinePassed { throw RunDeadlineExceeded() }

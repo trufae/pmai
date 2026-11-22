@@ -120,6 +120,9 @@ extension AgentRuntime {
       liveChildRequest.applyRuntimeSettings(from: currentDefinition)
     }
     liveRequests[childPID] = liveChildRequest
+    if let parentPID = parent.pid, hurriedRuns.contains(parentPID) {
+      await hurry(processes: [childPID])
+    }
     if let derived { derivedRuns[childPID] = derived }
     runBudgets[childPID] = childBudget
     let task = Task {

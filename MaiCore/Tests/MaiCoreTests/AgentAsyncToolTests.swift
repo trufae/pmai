@@ -8,6 +8,57 @@ import Testing
 // parent's inbox, a run holds for such children instead of ending, and the
 // derived worker is a peer that can delegate until the depth limit.
 
+@Test("Hurry reaches all children without losing their final answers", .timeLimit(.minutes(1)))
+func hurryCollectsChildAnswers() async throws {
+  let runtime = AgentRuntime(approvalHandler: AllowAllApprovals())
+  let ready = AsyncStream<AgentPID>.makeStream()
+  defer { ready.continuation.finish() }
+  let provider = FixtureProvider { request in
+    let results = request.messages.flatMap(\.toolResults)
+    if let name = agentName(of: request) {
+      if results.isEmpty {
+        return ProviderResponse(message: AgentMessage(role: .assistant, content: [
+          .toolCall(ToolCall(id: "long", name: "long_test", arguments: .object([:])))
+        ]), stopReason: .toolCall)
+      }
+      return ProviderResponse(message: .assistant("\(name) available findings"), stopReason: .stop)
+    }
+    if results.isEmpty {
+      return ProviderResponse(message: AgentMessage(role: .assistant, content: [
+        .toolCall(startCall(id: "first", task: "First child")),
+        .toolCall(startCall(id: "second", task: "Second child")),
+      ]), stopReason: .toolCall)
+    }
+    return ProviderResponse(message: .assistant(results.map(\.text).joined(separator: " | ")), stopReason: .stop)
+  }
+  try await runtime.register(provider)
+  try await runtime.register(tool: ClosureTool(definition: ToolDefinition(
+    name: "long_test", description: "A running test", inputSchema: .object(["type": .string("object")]),
+    annotations: ToolAnnotations(approval: .automatic))
+  ) { _, context in
+    ready.continuation.yield(try #require(context.run.pid))
+    try await Task.sleep(for: .seconds(3600))
+    return ToolOutput(text: "should have been interrupted")
+  })
+  var request = delegatingRequest(prompt: "Delegate")
+  request.toolNames.insert("long_test")
+  request.options.reasoningEffort = "high"
+  let running = Task { try await runtime.run(request) }
+  defer { running.cancel() }
+  var iterator = ready.stream.makeAsyncIterator()
+  let first = try #require(await iterator.next())
+  let second = try #require(await iterator.next())
+  #expect(first != second)
+  #expect(await runtime.hurry().count == 3)
+  let result = try await running.value
+  #expect(result.response.text.components(separatedBy: "available findings").count == 3)
+  let children = await runtime.supervisor.processes().filter { $0.depth == 1 }
+  #expect(children.count == 2 && children.allSatisfy { $0.state == .completed })
+  let finals = await provider.requests.filter { $0.messages.contains { $0.text == AgentRuntime.hurryPrompt } }
+  #expect(finals.count == 3)
+  #expect(finals.allSatisfy { $0.tools.isEmpty && $0.options.reasoningEffort == "low" })
+}
+
 @Test("Every agent tool is a concurrent call, and use.plan adds the plan-first sentence")
 func agentToolsAreConcurrentAndPlanFirstIsOptional() throws {
   let plain = AgentProcessTools.definitions(offering: [], delegating: true)

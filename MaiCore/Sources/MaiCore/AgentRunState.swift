@@ -40,6 +40,7 @@ extension AgentRuntime {
     var goal: AgentGoal?
     var goalReviews = 0
     var goalNeedsReview = false
+    var hurryApplied = false
 
     init(
       _ request: AgentRequest, context: AgentEventContext, pid: AgentPID,

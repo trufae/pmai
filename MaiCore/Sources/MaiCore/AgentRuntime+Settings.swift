@@ -229,6 +229,8 @@ extension AgentRuntime {
     derivedRuns[pid] = nil
     runBudgets[pid] = nil
     pendingReconfigurations[pid] = nil
+    hurriedRuns.remove(pid)
+    hurryInterrupts[pid] = nil
   }
 
   /// The agent MaiCore invents when a delegating agent does not name a child:

@@ -37,7 +37,9 @@ class Provider(BaseHTTPRequestHandler):
         if slow:
             release.wait(30)
         message = {'role': 'assistant', 'content': 'answer'}
-        if texts[-1:] in (['limit'], ['limit followup']):
+        if any('We are late. Stop calling tools now' in (text or '') for text in texts[-1:]):
+            message = {'role': 'assistant', 'content': 'HURRY-DONE'}
+        elif texts[-1:] in (['limit'], ['limit followup']):
             message['content'] = texts[-1] + ' finished'
             last_user = max(i for i, m in enumerate(request['messages']) if m['role'] == 'user')
             calls = sum(m['role'] == 'tool' for m in request['messages'][last_user + 1:])
@@ -111,6 +113,7 @@ def main():
         for choice in sys.argv[2:] or ('continue', 'submit', 'ignore', 'clear', 'stop',
                        'limit-extend', 'limit-yolo-tools', 'limit-yolo-turns',
                        'hey', 'hey-empty', 'hey-idle', 'hey-approval', 'hey-shell', 'hey-all', 'hey-target', 'hey-child', 'hey-background',
+                       'hurry-shell', 'hurry-child', 'hurry-approval', 'hurry-model',
                        'approval-eof', 'edit-eof', 'approval-exit', 'edit-exit',
                        'approval-quit', 'edit-quit', 'approval-interrupt', 'edit-interrupt',
                        'child-interrupt', 'child-edit-interrupt', 'child-kill',
@@ -131,10 +134,12 @@ def main():
                     'agents': [{'id': 'smoke', 'provider': 'smoke', 'model': 'smoke',
                                 'toolNames': ['files_write', 'run_shell'], 'toolGroupNames': ['agents'], 'enabled': True,
                                 'subagentNames': ['worker'],
+                                'options': {'reasoningEffort': 'high'} if choice.startswith('hurry-') else {},
                                 'retry': {'attempts': 0}},
                                {'id': 'worker', 'provider': 'smoke', 'model': 'worker',
                                 'toolNames': ['files_write', 'run_shell'], 'toolGroupNames': [], 'enabled': True,
                                 'stream': False,
+                                'options': {'reasoningEffort': 'high'} if choice.startswith('hurry-') else {},
                                 'retry': {'attempts': 0}}],
                     'approvals': {'mode': 'ask'},
                     'memory': {'enabled': False, 'scope': 'project'}, 'use': {'plan': False},
@@ -148,7 +153,7 @@ def main():
                 env.update(TERM='xterm-256color', NO_PROXY='127.0.0.1,localhost')
                 process = subprocess.Popen(
                     [binary, '--config', str(config), '--home', str(root / 'home'),
-                     '--no-stream', '--no-markdown'] + (['--tool-approval', 'yolo'] if choice.startswith(('shell-', 'limit-')) or choice == 'hey-shell' else []), cwd=root, env=env,
+                     '--no-stream', '--no-markdown'] + (['--tool-approval', 'yolo'] if choice.startswith(('shell-', 'limit-')) or choice in ('hey-shell', 'hurry-shell', 'hurry-child') else []), cwd=root, env=env,
                     stdin=slave, stdout=slave, stderr=slave, start_new_session=True)
                 os.close(slave)
                 output = bytearray()
@@ -214,6 +219,43 @@ def main():
 
                 try:
                     wait_for('> ')
+                    if choice.startswith('hurry-'):
+                        send('/hurry\n')
+                        wait_for('No running task to hurry.')
+                        prompt = {'hurry-shell': 'shell', 'hurry-child': 'shell-child',
+                                  'hurry-approval': 'approval', 'hurry-model': 'slow'}[choice]
+                        send(prompt + '\n')
+                        first = next_request(requests)
+                        assert first.get('reasoning_effort') == 'high', first
+                        if choice in ('hurry-shell', 'hurry-child'):
+                            child_pid = shell_pid()
+                            if choice == 'hurry-child':
+                                assert next_request(requests)['model'] == 'worker'
+                        elif choice == 'hurry-approval':
+                            wait_for("wants to run confirm tool 'files_write'")
+                        send('/hurry\n')
+                        finals = [next_request(requests) for _ in range(2 if choice == 'hurry-child' else 1)]
+                        for request in finals:
+                            assert not request.get('tools'), request
+                            assert request.get('reasoning_effort') == 'low', request
+                            assert any('We are late. Stop calling tools now' in (m.get('content') or '')
+                                       for m in request['messages']), request
+                        wait_for('HURRY-DONE')
+                        wait_for('✓ took')
+                        if child_pid is not None:
+                            assert_child_stopped()
+                        assert not (root / 'unapproved.txt').exists(), 'Hurry approved a pending tool'
+                        release.set()
+                        send('new task after hurry\n')
+                        next_task = next_request(requests)
+                        assert next_task.get('reasoning_effort') == 'high', next_task
+                        assert next_task.get('tools'), next_task
+                        wait_for('answer')
+                        send('/exit\n')
+                        wait_for_exit()
+                        assert process.returncode == 0, process.returncode
+                        print(f'PASS {choice}: interrupted work, final answer, restored settings', flush=True)
+                        continue
                     if choice.startswith('limit-'):
                         # Resuming must use and save the new allowance, so this
                         # run, later prompts and resumed chats don't hit the old cap.

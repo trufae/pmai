@@ -268,6 +268,8 @@ extension MaiCLI {
         await terminal.line(queueHelp)
       case "hey", "/hey":
         await terminal.line(heyHelp)
+      case "hurry", "/hurry":
+        await terminal.line(hurryHelp)
       case "export", "/export":
         await terminal.line(exportHelp)
       case "import", "/import":
@@ -617,6 +619,8 @@ extension MaiCLI {
         "Use /stop at the chat prompt to interrupt the running turn and keep its queue.")
     case "/hey":
       await terminal.line("Use /hey at the chat prompt.\n" + heyHelp)
+    case "/hurry":
+      await terminal.line("Use /hurry at the chat prompt.\n" + hurryHelp)
     case "/continue":
       // Hosted commands can queue input, but resuming belongs to the chat prompt.
       if argument.isEmpty {

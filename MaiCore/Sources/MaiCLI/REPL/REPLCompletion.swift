@@ -94,7 +94,7 @@ extension MaiCLI {
       "/set ctx.strategy ", "/set ctx.strategy cache", "/set ctx.strategy size", "/set ctx.strategy smart",
       "/set ctx.strategy tools",
       "/set ctx.strategy adaptive",
-      "/continue", "/stop",
+      "/continue", "/stop", "/hurry", "/help hurry",
       "/set tool.", "/set tool.calling off", "/set tool.calling automatic", "/set tool.calling native",
       "/set tool.calling text", "/set tool.calling xml", "/set tool.calling json",
       "/set tool.systemone true", "/set tool.systemone false",

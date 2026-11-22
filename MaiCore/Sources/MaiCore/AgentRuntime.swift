@@ -21,6 +21,9 @@ public actor AgentRuntime {
   /// Covers the tiny interval after a host starts a task but before the run
   /// has installed its request in this actor.
   var pendingReconfigurations: [AgentPID: AgentRequest] = [:]
+  /// Temporary controls for active work; never copied into saved profiles.
+  var hurriedRuns: Set<AgentPID> = []
+  var hurryInterrupts: [AgentPID: [UUID: @Sendable () -> Void]] = [:]
   /// Limits learned from rejected requests are scoped to the exact backend and model.
   var contextWindows: [ProviderID: [String: Int]] = [:]
   /// Catalog limits are hints; explicit settings and backend rejections take precedence.
@@ -253,7 +256,7 @@ public actor AgentRuntime {
       await budget.update(limits: state.request.limits)
       do {
         try await applyPendingInput(to: &state)
-        if try await autocompact(&state) { continue }
+        if !hurriedRuns.contains(pid), try await autocompact(&state) { continue }
         state.request = currentRequest(state.request, for: pid)
         await budget.update(limits: state.request.limits)
         var concreteDefinitions = try visibleDefinitions(for: state.request, depth: depth)
@@ -261,7 +264,7 @@ public actor AgentRuntime {
           for: concreteDefinitions,
           exposing: exposedTools(in: concreteDefinitions, request: state.request),
           hiding: hiddenTools(for: state.request))
-        if state.goal?.isActive == true, toolsEnabled, state.request.toolCallingStrategy != .off {
+        if !hurriedRuns.contains(pid), state.goal?.isActive == true, toolsEnabled, state.request.toolCallingStrategy != .off {
           concreteDefinitions.append(Self.goalReviewDefinition)
           definitions.append(Self.goalReviewDefinition)
         }
@@ -278,7 +281,7 @@ public actor AgentRuntime {
         if let interruption = await budget.exhausted() {
           return await finishRun(state, interruption: interruption)
         }
-        if pauseOnToolLimit, depth == 0, state.request.limits.remainingToolCalls(used: state.toolCalls) == 0,
+        if !hurriedRuns.contains(pid), pauseOnToolLimit, depth == 0, state.request.limits.remainingToolCalls(used: state.toolCalls) == 0,
           !definitions.isEmpty,
           !state.repeatGuardTripped
         {
@@ -288,6 +291,7 @@ public actor AgentRuntime {
         let turn = try await prepareTurn(
           concreteDefinitions: listedDefinitions(in: concreteDefinitions, request: state.request),
           definitions: definitions, state: &state)
+        if hurriedRuns.contains(pid), !state.hurryApplied { continue }
         if let rejected = state.rejectedContextTokens,
           Self.contextTokens(turn.request) >= rejected
         {
@@ -316,7 +320,7 @@ public actor AgentRuntime {
         else { continue }
         let calls = response.message.toolCalls.filter { !$0.name.isEmpty }
         if !calls.isEmpty {
-          if try await reviewGoal(calls, state: &state) {
+          if !hurriedRuns.contains(pid), try await reviewGoal(calls, state: &state) {
             if let goal = state.goal, !goal.isActive {
               let answer = AgentMessage.assistant(goal.report)
               state.transcript.append(answer)
@@ -337,12 +341,17 @@ public actor AgentRuntime {
         {
           continue
         }
-        if state.goal?.isActive == true, toolsEnabled, !turn.toolBudgetExhausted,
+        // A hurry received during this model call needs a final turn with
+        // its message and reduced reasoning, even if cancellation raced a reply.
+        if hurriedRuns.contains(pid), !state.hurryApplied { continue }
+        if !hurriedRuns.contains(pid), state.goal?.isActive == true, toolsEnabled, !turn.toolBudgetExhausted,
           state.request.toolCallingStrategy != .off {
           state.goalNeedsReview = true
           continue
         }
         return await finishRun(state, response: response)
+      } catch is HurryRequested {
+        continue
       } catch is RunDeadlineExceeded {
         return await finishRun(state, interruption: await budget.timeInterruption)
       }

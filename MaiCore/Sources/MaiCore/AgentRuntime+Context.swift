@@ -83,7 +83,7 @@ extension AgentRuntime {
             of: selection, focus: Self.requestedFocus(focus),
             state: &state)
           resolved.append(.compact(messageIDs: selection, summary: text))
-        } catch let error where error is CancellationError || error is RunDeadlineExceeded {
+        } catch let error where error is CancellationError || error is RunDeadlineExceeded || error is HurryRequested {
           throw error
         } catch {
           await state.emit(.compactionFailed(state.context, error.localizedDescription))
@@ -250,7 +250,7 @@ extension AgentRuntime {
           state.lastUsage = nil
           await state.emit(.transcriptEdited(state.context, applied.report))
           await supervisor.note(state.pid, transcript: state.transcript)
-        } catch let error where error is CancellationError || error is RunDeadlineExceeded {
+        } catch let error where error is CancellationError || error is RunDeadlineExceeded || error is HurryRequested {
           throw error
         } catch {
           // The run goes on with what it has; the next boundary tries again

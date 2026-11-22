@@ -6,6 +6,83 @@ import Testing
 // Messages a person queues for a running process reach it between model
 // turns; a host that starts turns itself folds them into the next request.
 
+@Test("Hurry interrupts a tool, keeps gathered results, blocks further calls, and restores effort for the next task", .timeLimit(.minutes(1)))
+func hurryInterruptsToolsAndRestoresSettings() async throws {
+  let runtime = AgentRuntime()
+  let call = { (id: String, name: String) in
+    ContentPart.toolCall(ToolCall(id: id, name: name, arguments: .object([:])))
+  }
+  let provider = InboxScriptedProvider(responses: [
+    ProviderResponse(message: AgentMessage(role: .assistant, content: [
+      call("gather", "evidence"), call("running", "long_test"), call("skipped", "forbidden"),
+    ]), stopReason: .toolCall),
+    // A model that ignores the instruction still cannot run another tool.
+    ProviderResponse(message: AgentMessage(role: .assistant, content: [call("ignored", "forbidden")]), stopReason: .toolCall),
+    ProviderResponse(message: .assistant("Finished using existing evidence."), stopReason: .stop),
+    ProviderResponse(message: .assistant("Next task."), stopReason: .stop),
+  ])
+  try await runtime.register(provider)
+  for name in ["evidence", "long_test", "forbidden"] {
+    try await runtime.register(tool: ClosureTool(definition: ToolDefinition(
+      name: name, description: name, inputSchema: .object(["type": .string("object")]),
+      annotations: ToolAnnotations(approval: .automatic))
+    ) { _, _ in
+      if name == "evidence" { return ToolOutput(text: "already gathered") }
+      if name == "long_test" {
+        await runtime.hurry()
+        try await Task.sleep(for: .seconds(3600))
+      }
+      Issue.record("A tool ran after /hurry")
+      return ToolOutput(text: "unexpected")
+    })
+  }
+  let pid = await runtime.allocateProcess(agentID: "main")
+  var request = AgentRequest(provider: "inbox-scripted", model: "fixture", messages: [.user("finish")],
+    toolNames: ["evidence", "long_test", "forbidden"],
+    options: GenerationOptions(reasoningEffort: "high", reasoningGuidance: "Think thoroughly.",
+      additional: ["reasoning_effort": .string("high")]))
+  let result = try await runtime.run(request, process: pid)
+  #expect(result.response.text == "Finished using existing evidence.")
+  let results = result.transcript.flatMap(\.toolResults)
+  #expect(results.map(\.callID) == ["gather", "running", "skipped", "ignored"])
+  #expect(results.first?.text == "already gathered")
+  #expect(results.dropFirst().allSatisfy { $0.isError })
+  let requests = await provider.requests
+  #expect(requests.dropFirst().allSatisfy { $0.tools.isEmpty && $0.toolChoice == .none })
+  #expect(requests.dropFirst().allSatisfy { $0.options.reasoningEffort == "low" })
+  #expect(requests.dropFirst().allSatisfy { $0.options.additional["reasoning_effort"] == nil })
+  #expect(result.transcript.contains { $0.role == .user && $0.text == AgentRuntime.hurryPrompt })
+
+  request.messages = result.transcript + [.user("a new task")]
+  _ = try await runtime.run(request, process: pid)
+  let next = try #require(await provider.requests.last)
+  #expect(!next.tools.isEmpty)
+  #expect(next.options.reasoningEffort == "high")
+  #expect(next.options.reasoningGuidance == "Think thoroughly.")
+  #expect(next.options.additional["reasoning_effort"] == .string("high"))
+}
+
+@Test("Hurry interrupts an in-flight model and requests its final answer with low reasoning", .timeLimit(.minutes(1)))
+func hurryInterruptsModel() async throws {
+  let runtime = AgentRuntime()
+  let provider = InboxScriptedProvider(responses: [
+    ProviderResponse(message: .assistant("Finished promptly."), stopReason: .stop)
+  ], onRequest: { index in
+    if index == 0 {
+      await runtime.hurry()
+      try await Task.sleep(for: .seconds(3600))
+    }
+  })
+  try await runtime.register(provider)
+  let result = try await runtime.run(AgentRequest(
+    provider: "inbox-scripted", model: "fixture", messages: [.user("work")],
+    options: GenerationOptions(reasoningEffort: "high")))
+  #expect(result.response.text == "Finished promptly.")
+  let final = try #require(await provider.requests.last)
+  #expect(final.options.reasoningEffort == "low")
+  #expect(final.messages.contains { $0.text.contains(AgentRuntime.hurryPrompt) })
+}
+
 @Test("A queued message joins the transcript after the tool results of the turn it arrived in")
 func queuedMessageJoinsRunBetweenTurns() async throws {
   let provider = InboxScriptedProvider(responses: [
@@ -371,10 +448,10 @@ private actor InboxScriptedProvider: ChatProvider {
     displayName: "Inbox scripted",
     capabilities: [.streaming, .nativeToolCalling])
   private var responses: [ProviderResponse]
-  private let onRequest: (@Sendable (Int) async -> Void)?
+  private let onRequest: (@Sendable (Int) async throws -> Void)?
   private(set) var requests: [ProviderRequest] = []
 
-  init(responses: [ProviderResponse], onRequest: (@Sendable (Int) async -> Void)? = nil) {
+  init(responses: [ProviderResponse], onRequest: (@Sendable (Int) async throws -> Void)? = nil) {
     self.responses = responses
     self.onRequest = onRequest
   }
@@ -385,7 +462,7 @@ private actor InboxScriptedProvider: ChatProvider {
   ) async throws -> ProviderResponse {
     let index = requests.count
     requests.append(request)
-    await onRequest?(index)
+    try await onRequest?(index)
     guard !responses.isEmpty else { throw InboxTestError.missingResponse }
     let response = responses.removeFirst()
     if !response.message.text.isEmpty { await emit(.textDelta(response.message.text)) }

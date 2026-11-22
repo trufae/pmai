@@ -280,9 +280,15 @@ extension AgentRuntime {
     guard toolsEnabled else {
       return await fail(approvedCall, "all tools are disabled globally (/tools off).", parent: context, emit: emit)
     }
+    if let pid = context.pid, hurriedRuns.contains(pid) {
+      return await fail(approvedCall, "interrupted by /hurry; no more tools may run for this task.", parent: context, emit: emit)
+    }
     await emit(.toolStarted(context, approvedCall))
     guard toolsEnabled else {
       return await fail(approvedCall, "all tools are disabled globally (/tools off).", parent: context, emit: emit)
+    }
+    if let pid = context.pid, hurriedRuns.contains(pid) {
+      return await fail(approvedCall, "interrupted by /hurry; no more tools may run for this task.", parent: context, emit: emit)
     }
     // Approval and event handlers can yield while the user switches modes.
     guard internetAccess.allows(definition, in: availableToolGroups()) else {
@@ -293,6 +299,10 @@ extension AgentRuntime {
       tools[definition.name] != nil || Self.agentToolNames.contains(definition.name)
     {
       await recordToolUse(definition.name)
+    }
+    try Task.checkCancellation()
+    if let pid = context.pid, hurriedRuns.contains(pid) {
+      return await fail(approvedCall, "skipped by /hurry; no more tools may run for this task.", parent: context, emit: emit)
     }
     let result: ToolResult
     switch definition.name {
@@ -391,6 +401,10 @@ extension AgentRuntime {
       for (index, call) in calls.enumerated() {
         try Task.checkCancellation()
         try await holdWhilePaused(pid)
+        if hurriedRuns.contains(pid) {
+          results[index] = await fail(call, "skipped by /hurry; finish using the available information without more tools.", parent: context, emit: emit)
+          continue
+        }
         // A prior sequential tool may have taken minutes. Refresh again for
         // every call so commands typed while it ran affect the next one.
         state.request = currentRequest(state.request, for: pid)
@@ -467,7 +481,7 @@ extension AgentRuntime {
             defer { gate.open() }
             return (
               index,
-              try await self.execute(
+              try await self.executeHurryAware(
                 call,
                 definitions: callDefinitions,
                 request: callRequest,
@@ -481,7 +495,7 @@ extension AgentRuntime {
           // started together get their pids, and their slots, in call order.
           await gate.wait()
         } else {
-          results[index] = try await execute(
+          results[index] = try await executeHurryAware(
             call,
             definitions: callDefinitions,
             request: callRequest,

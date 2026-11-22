@@ -301,6 +301,15 @@ extension MaiCLI {
     /about shows this message again. https://github.com/trufae/pmai
     """#
 
+  static let hurryHelp: String = """
+    /hurry interrupts running programs and asks all active agents to finish
+    with the information already available. Further tool calls, tests,
+    research, and delegation are disabled for the current task. Reasoning
+    is capped at low until the run finishes; configured settings are kept
+    for the next task. Completed actions and collected results are kept.
+    @PID /hurry limits this to one agent and its descendants.
+    """
+
   static let heyHelp: String = """
     /hey [TEXT] interrupts the focused agent and resubmits its prompt,
     appending TEXT on a new line. With no text, it resubmits the same prompt.
@@ -362,6 +371,7 @@ extension MaiCLI {
     /skills                Manage or send skills
     /stats                 Show model usage and performance
     /stop                  Interrupt the current turn
+    /hurry                 Interrupt programs; finish all agents without more tools
     /subagents [PID|main]  List or switch agent conversations
     /theme                 List, apply, or customize terminal themes
     /then [LINE]           Queue a prompt or command until all tasks finish; no args lists it

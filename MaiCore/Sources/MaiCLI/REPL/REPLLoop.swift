@@ -1420,7 +1420,12 @@ extension MaiCLI {
           case .line(let raw, let heredoc, let promptID, let pasted, _):
             loop.readerParked = true
             let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !heredoc, text == "/stop" {
+            if !heredoc, text == "/hurry" {
+              // Stop a foreground program before replaying hurry to the
+              // agent loops once this command has unwound.
+              task.cancel()
+              deferredEvents.append(.line(raw, heredoc: false, promptID: promptID, pasted: pasted, inputReleased: true))
+            } else if !heredoc, text == "/stop" {
               interruptHandler.requestInterrupt()
             } else if appSession, !heredoc, await answerAppModal(text) {
               await refreshStatus()
@@ -2524,7 +2529,7 @@ extension MaiCLI {
         }
         let commandFields = text.split(whereSeparator: \Character.isWhitespace).map(String.init)
         let metadataCommands = [
-          "/help", "/history", "/version", "/about", "/then", "/unthen", "/stop", "/view", "/highlight",
+          "/help", "/history", "/version", "/about", "/then", "/unthen", "/stop", "/hurry", "/view", "/highlight",
           "/projects", "/project", "/box", "/remote", "/shell", "/exit", "/quit",
         ]
         let chatNavigation =
@@ -2540,6 +2545,34 @@ extension MaiCLI {
             await releaseIfIdle(workspace: workspace)
             return false
           }
+        }
+        if !heredoc, commandFields.first == "/hurry" {
+          if commandFields.count != 1 {
+            await terminal.line("Usage: /hurry")
+          } else {
+            let affected = Set(await runtime.hurry(processes: loop.commandTarget.map { [$0] }))
+            // Wake approvals without cancelling the owning agent turn.
+            loop.approvals.removeAll { waiting in
+              guard waiting.request.run.pid.map(affected.contains) == true else { return false }
+              waiting.reply.resume(with: .deny(reason: "Finishing with /hurry."))
+              return true
+            }
+            if let waiting = loop.editingApproval,
+              waiting.request.run.pid.map(affected.contains) == true {
+              waiting.reply.resume(with: .deny(reason: "Finishing with /hurry."))
+              loop.editingApproval = nil
+            }
+            loop.compactions.removeAll { waiting in
+              guard waiting.request.run.pid.map(affected.contains) == true else { return false }
+              waiting.reply.resume(with: .continueWithoutCompacting)
+              return true
+            }
+            await terminal.note(affected.isEmpty ? "No running task to hurry."
+              : "Hurrying \(affected.count) agent(s): interrupted running work, disabled further tools, and lowered reasoning for this task.")
+          }
+          await refreshStatus()
+          await releaseIfIdle(workspace: workspace)
+          return false
         }
         if !heredoc, text == "/stop" {
           loop.aliasLines.removeAll()
