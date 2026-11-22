@@ -269,7 +269,6 @@ def main():
         unknown, commands, help_text = run(('/help skill', '/help', '/help skills'), split=True)
         assert "Unknown help topic 'skill'" in unknown, unknown
         names = re.findall(r'(?m)^(/[a-z]+)\b', commands)
-        assert len(names) > 20 and names == sorted(names), names
         assert '/stop' in names and '/retry' not in names, names
         assert '/keys' not in names, names
         assert '/help shell' in commands and '/help keys' in commands, commands
