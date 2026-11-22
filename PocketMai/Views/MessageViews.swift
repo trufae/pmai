@@ -2612,6 +2612,8 @@ struct MessageActivityGroup<Content: View>: View {
             .lineLimit(1)
             .frame(minHeight: 44, alignment: .leading)
           }
+          .frame(maxWidth: .infinity)
+          .layoutPriority(1)
         }
         .disclosureGroupStyle(ActivityDisclosureStyle())
         if !isExpanded, !summary.reasoningPreview.isEmpty || !summary.lastTool.isEmpty {
