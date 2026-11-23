@@ -415,7 +415,7 @@ actor RemoteREPLServer {
         "Scan this QR in PocketMai → Hosts, or use /remote pair on another pmai. Accept the client here with /remote accept:"
       )
       var qr = ""
-      try QRGenerator.show(uri, output: nil, write: { qr += $0 + "\n" })
+      try await QRGenerator.show(uri, output: nil, write: { qr += $0 + "\n" })
       await terminal.line(qr)
       await terminal.line(uri)
       await terminal.line("Connection profile: \(file.path) · /remote stop stops sharing.")

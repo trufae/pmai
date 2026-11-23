@@ -1,16 +1,7 @@
 import Foundation
 import MaiACP
 import MaiCore
-
-#if canImport(Android)
-  import Android
-#elseif canImport(Musl)
-  import Musl
-#elseif canImport(Glibc)
-  import Glibc
-#elseif canImport(Darwin)
-  import Darwin
-#endif
+import MaiStandardTools
 
 /// Owns a dedicated CLI profile, so stopping pmai never stops another app's tunnel.
 /// The identity is retained across runs to keep the public address stable.
@@ -67,48 +58,10 @@ struct RemoteOpenTunnel: Sendable {
   }
 
   private func run(_ arguments: [String], timeout: Int = 180) async throws -> String {
-    try Task.checkCancellation()
-    let file = directory.appendingPathComponent("opentunnel-\(UUID()).log")
-    guard FileManager.default.createFile(
-      atPath: file.path, contents: nil, attributes: [.posixPermissions: 0o600])
-    else { throw JSONRPCError.internalError("Cannot capture OpenTunnel output") }
-    let output = try FileHandle(forWritingTo: file)
-    defer {
-      try? output.close()
-      try? FileManager.default.removeItem(at: file)
-    }
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: command)
-    process.arguments = ["--profile", profile] + arguments
-    process.standardInput = FileHandle.nullDevice
-    process.standardOutput = output
-    process.standardError = output
-    try process.run()
-    defer {
-      if process.isRunning {
-        #if os(Windows)
-          process.terminate()
-        #else
-          _ = kill(process.processIdentifier, SIGKILL)
-        #endif
-        process.waitUntilExit()
-      }
-    }
-    let deadline = ContinuousClock.now + .seconds(timeout)
-    while process.isRunning {
-      guard ContinuousClock.now < deadline else {
-        throw JSONRPCError.invalidParams("OpenTunnel \(arguments[0]) timed out")
-      }
-      try await Task.sleep(for: .milliseconds(100))
-    }
-    try Task.checkCancellation()
-    let input = try FileHandle(forReadingFrom: file)
-    defer { try? input.close() }
-    let text = String(decoding: try input.read(upToCount: 64 * 1024) ?? Data(), as: UTF8.self)
+    let result = try await CapturedProcess.run(
+      command, arguments: ["--profile", profile] + arguments, directory: directory,
+      timeout: TimeInterval(timeout), outputLimit: 64 * 1024)
+    return String(decoding: result.stdout + result.stderr, as: UTF8.self)
       .trimmingCharacters(in: .whitespacesAndNewlines)
-    guard process.terminationStatus == 0 else {
-      throw JSONRPCError.invalidParams("OpenTunnel failed: \(text)")
-    }
-    return text
   }
 }

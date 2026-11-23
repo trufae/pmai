@@ -201,7 +201,7 @@ public struct MaiRunTool: AgentTool {
         arguments: launchArguments,
         workingDirectory: workingDirectory,
         environment: environment,
-        stdin: stdin,
+        stdin: stdin.map { Data($0.utf8) },
         timeout: timeout,
         outputLimit: configuration.outputLimit,
         outputMode: outputMode, command: script,
@@ -516,8 +516,8 @@ enum MaiRunToolError: LocalizedError {
       arguments: [String],
       workingDirectory: URL,
       environment: [String: String],
-      stdin: String?,
-      timeout: TimeInterval,
+      stdin: Data?,
+      timeout: TimeInterval?,
       outputLimit: Int,
       outputMode: MaiRunTool.OutputMode,
       command: String? = nil,
@@ -535,8 +535,8 @@ enum MaiRunToolError: LocalizedError {
         try Task.checkCancellation()
         try session.start()
         if let stdin { session.send(stdin) }
-        let watchdog = session.scheduleTimeout(after: timeout)
-        defer { watchdog.cancel() }
+        let watchdog = timeout.map { session.scheduleTimeout(after: $0) }
+        defer { watchdog?.cancel() }
         await session.wait()
         try Task.checkCancellation()
         return try session.outcome
@@ -884,7 +884,7 @@ enum MaiRunToolError: LocalizedError {
       }
       #endif
 
-      func send(_ input: String) {
+      func send(_ input: Data) {
         guard let handle = stdinPipe?.fileHandleForWriting else { return }
         #if os(macOS)
           _ = fcntl(handle.fileDescriptor, F_SETNOSIGPIPE, 1)
@@ -892,7 +892,7 @@ enum MaiRunToolError: LocalizedError {
           signal(SIGPIPE, SIG_IGN)
         #endif
         DispatchQueue.global(qos: .utility).async {
-          try? handle.write(contentsOf: Data(input.utf8))
+          try? handle.write(contentsOf: input)
           try? handle.close()
         }
       }

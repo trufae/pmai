@@ -2,6 +2,7 @@ import Crypto
 import Foundation
 import MaiCore
 import MaiDocuments
+import MaiStandardTools
 
 #if canImport(FoundationNetworking)
   import FoundationNetworking
@@ -115,6 +116,7 @@ public enum CLIUpdater {
   }
 
   static func run(currentVersion: String, executable: String, environment: [String: String]) async throws {
+    try Task.checkCancellation()
     let fm = FileManager.default
     let platform = try releasePlatform(environment: environment)
     #if os(Windows)
@@ -132,7 +134,8 @@ public enum CLIUpdater {
     cleanWindowsBackups(in: directory)
     #endif
     let target = directory.appendingPathComponent(binaryName)
-    let installedVersion = try? runBinary(target, argument: "--version", environment: environment)
+    let installedVersion = try? await runBinary(target, argument: "--version", environment: environment)
+    try Task.checkCancellation()
     let oldVersion = normalizedVersion(installedVersion ?? currentVersion)
     let releases = try releasesURL(environment: environment)
     var tag = setting("PMAI_VERSION", in: environment) ?? "latest"
@@ -222,11 +225,12 @@ public enum CLIUpdater {
       #endif
     }
     let stagedBinary = staging.appendingPathComponent(binaryName)
-    let verifiedVersion = try runBinary(stagedBinary, argument: "--version", environment: environment)
+    let verifiedVersion = try await runBinary(stagedBinary, argument: "--version", environment: environment)
     guard normalizedVersion(verifiedVersion) == newVersion else {
       throw Failure.message("release version mismatch: expected \(newVersion), got \(verifiedVersion)")
     }
-    _ = try runBinary(stagedBinary, argument: "--help", environment: environment)
+    _ = try await runBinary(stagedBinary, argument: "--help", environment: environment)
+    try Task.checkCancellation()
     #if os(Windows)
     try installWindowsFiles(files.map(\.name), from: staging, into: directory)
     #else
@@ -409,22 +413,15 @@ public enum CLIUpdater {
     throw URLError(.unknown)
   }
 
-  private static func runBinary(_ url: URL, argument: String, environment: [String: String]) throws -> String {
-    let process = Process()
-    let output = Pipe()
-    process.executableURL = url
-    process.arguments = [argument]
-    process.environment = environment
-    process.standardInput = FileHandle.nullDevice
-    process.standardOutput = output
-    process.standardError = FileHandle.nullDevice
-    try process.run()
-    let data = output.fileHandleForReading.readDataToEndOfFile()
-    process.waitUntilExit()
-    guard process.terminationStatus == 0 else {
+  static func runBinary(
+    _ url: URL, argument: String, environment: [String: String], timeout: TimeInterval = 10
+  ) async throws -> String {
+    let result = try await CapturedProcess.run(
+      url.path, arguments: [argument], environment: environment, timeout: timeout, checkExit: false)
+    guard result.exitCode == 0 else {
       throw Failure.message("\(url.lastPathComponent) failed its startup check (\(argument))")
     }
-    return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+    return String(decoding: result.stdout, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
   }
 
   private static func releasePlatform(environment: [String: String]) throws -> String {

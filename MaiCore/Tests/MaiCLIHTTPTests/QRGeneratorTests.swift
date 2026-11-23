@@ -10,9 +10,9 @@ import Testing
   "Hello, QR! Bon dia ☀️",
   "pmai-acp://connect/" + String(repeating: "aBcD0123-_", count: 70),
 ])
-func terminalQRRoundTrip(_ text: String) throws {
+func terminalQRRoundTrip(_ text: String) async throws {
   var lines: [String] = []
-  try QRGenerator.show(text, output: nil) { lines.append($0) }
+  try await QRGenerator.show(text, output: nil) { lines.append($0) }
   let rows = lines.map {
     Array($0.replacingOccurrences(of: "\u{1B}\\[[0-9;]*[A-Za-z]", with: "", options: .regularExpression))
   }

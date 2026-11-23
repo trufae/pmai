@@ -1,6 +1,7 @@
 import Foundation
 import MaiACP
 import MaiCore
+import MaiStandardTools
 #if canImport(Android)
   import Android
 #elseif canImport(Musl)
@@ -72,7 +73,7 @@ enum TailcatCLI {
     // Registry administration remains available if Tailcat is not installed.
     if command == "invite" {
       guard args.isEmpty else { throw Error.message(usage) }
-      try showInvite(store, options: options)
+      try await showInvite(store, options: options)
       return
     }
     if command == "revoke" {
@@ -110,7 +111,7 @@ enum TailcatCLI {
       guard args.count == 1, let remote = try store.read().remotes[args[0]] else {
         throw Error.message("Choose a remote from pmai tailcat status")
       }
-      let key = try clientKey(store, tailcat: tailcat)
+      let key = try await clientKey(store, tailcat: tailcat)
       let childArguments = ["--key=" + key.path, remote.address, "80"]
       if command == "connect" {
         let process = Process()
@@ -149,7 +150,7 @@ enum TailcatCLI {
       name: options.values["--name"] ?? ProcessInfo.processInfo.hostName, workspace: workspace)
     let key = store.directory.appendingPathComponent("worker.private.json")
     if !FileManager.default.fileExists(atPath: key.path) {
-      _ = try capture(tailcat, ["genkey", "--key=" + key.path, "--fixed-region"])
+      _ = try await capture(tailcat, ["genkey", "--key=" + key.path, "--fixed-region"])
     }
     let addressFile = store.directory.appendingPathComponent("listen-address")
     try Data().write(to: addressFile, options: .atomic)
@@ -179,12 +180,12 @@ enum TailcatCLI {
     guard let address else { throw Error.message("Tailcat did not become ready within 60 seconds") }
     try store.transaction { state in state.worker?.address = address }
     print("Serving \(worker.name) from \(worker.workspace).")
-    if !worker.peers.contains(where: { !$0.revoked }) { try showInvite(store, options: options) }
+    if !worker.peers.contains(where: { !$0.revoked }) { try await showInvite(store, options: options) }
     else { print("Paired controllers can connect. Use pmai tailcat invite to add another.") }
     try await wait(process)
   }
 
-  private static func showInvite(_ store: TailcatStore, options: Options) throws {
+  private static func showInvite(_ store: TailcatStore, options: Options) async throws {
     guard let lifetime = Double(options.values["--expires"] ?? "300") else {
       throw Error.message("--expires must be a number of seconds")
     }
@@ -192,7 +193,7 @@ enum TailcatCLI {
     print("Pairing invite for \(invite.name); expires \(ISO8601DateFormatter().string(from: Date(timeIntervalSince1970: invite.expires))).")
     print(invite.url)
     let output = options.values["--qr"].map { URL(fileURLWithPath: NSString(string: $0).expandingTildeInPath) }
-    try QRGenerator.show(invite.url, output: output)
+    try await QRGenerator.show(invite.url, output: output)
   }
 
   private static func pair(_ name: String, value: String, store: TailcatStore, home: URL,
@@ -212,7 +213,7 @@ enum TailcatCLI {
       && !configuration.agents.contains(where: { $0.id == name })) else {
       throw Error.message("That name already belongs to another agent; choose a new name")
     }
-    let key = try clientKey(store, tailcat: tailcat)
+    let key = try await clientKey(store, tailcat: tailcat)
     let transport = try StdioJSONRPCTransport.spawn(command: tailcat,
       arguments: ["--key=" + key.path, invite.address, "80"])
     let peer = JSONRPCPeer(transport: transport)
@@ -258,30 +259,22 @@ enum TailcatCLI {
     return URL(fileURLWithPath: AgentHome.expandUserPath(path, environment: environment))
   }
 
-  private static func clientKey(_ store: TailcatStore, tailcat: String) throws -> URL {
+  private static func clientKey(_ store: TailcatStore, tailcat: String) async throws -> URL {
     let lock = try ACPFileLock(url: store.directory.appendingPathComponent("key.lock"), wait: true)
-    return try withExtendedLifetime(lock) {
-      let url = store.directory.appendingPathComponent("client.private.json")
-      if !FileManager.default.fileExists(atPath: url.path) {
-        _ = try capture(tailcat, ["genkey", "--client", "--key=" + url.path])
-      }
-      return url
+    defer { withExtendedLifetime(lock) {} }
+    let url = store.directory.appendingPathComponent("client.private.json")
+    if !FileManager.default.fileExists(atPath: url.path) {
+      _ = try await capture(tailcat, ["genkey", "--client", "--key=" + url.path])
     }
+    return url
   }
 
-  static func capture(_ command: String, _ arguments: [String], input: Data? = nil) throws -> String {
-    let process = Process(), output = Pipe(), stdin = Pipe()
-    process.executableURL = URL(fileURLWithPath: command)
-    process.arguments = arguments
-    process.standardInput = input == nil ? FileHandle.nullDevice : stdin.fileHandleForReading
-    process.standardOutput = output
-    process.standardError = FileHandle.standardError
-    try process.run()
-    if let input { try stdin.fileHandleForWriting.write(contentsOf: input); try stdin.fileHandleForWriting.close() }
-    let data = output.fileHandleForReading.readDataToEndOfFile()
-    process.waitUntilExit()
-    guard process.terminationStatus == 0 else { throw Error.message("\(URL(fileURLWithPath: command).lastPathComponent) exited with status \(process.terminationStatus)") }
-    return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+  static func capture(
+    _ command: String, _ arguments: [String], input: Data? = nil, timeout: TimeInterval = 30
+  ) async throws -> String {
+    let result = try await CapturedProcess.run(command, arguments: arguments, input: input, timeout: timeout)
+    if !result.stderr.isEmpty { try FileHandle.standardError.write(contentsOf: result.stderr) }
+    return String(decoding: result.stdout, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
   }
 
   private static func wait(_ process: Process) async throws {

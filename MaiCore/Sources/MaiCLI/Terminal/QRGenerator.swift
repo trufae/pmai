@@ -7,7 +7,7 @@ import QRCodeGenerator
 #endif
 
 enum QRGenerator {
-  static func show(_ text: String, output: URL?, write: (String) -> Void = { print($0) }) throws {
+  static func show(_ text: String, output: URL?, write: (String) -> Void = { print($0) }) async throws {
     let qr = try QRCode.encode(text: text, ecl: .low)
     let size = qr.size
     for y in stride(from: -4, to: size + 4, by: 2) {
@@ -50,7 +50,7 @@ enum QRGenerator {
             NSLocalizedDescriptionKey: "Install qrencode to export PNG, or use an .svg output file.",
           ])
         }
-        _ = try TailcatCLI.capture(executable, ["-t", "PNG", "-o", output.path], input: Data(text.utf8))
+        _ = try await TailcatCLI.capture(executable, ["-t", "PNG", "-o", output.path], input: Data(text.utf8))
       #endif
     }
     try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: output.path)

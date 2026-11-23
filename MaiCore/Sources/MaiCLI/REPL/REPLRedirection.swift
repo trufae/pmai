@@ -84,9 +84,10 @@ final class REPLRedirection: @unchecked Sendable {
   private let handle: FileHandle
   private var closed = false
   private var failure: (any Error)?
-  private let process: Process?
-  private let output: Task<Data, Never>?
-  private let errors: Task<Data, Never>?
+  private typealias FilterOutput = (stdout: Data, stderr: Data, exitCode: Int32)
+  private var filterTask: Task<FilterOutput, any Error>?
+  private var cancelled = false
+  private var usesTerminal = false
   private var terminalCommand: String?
   private var temporaryInput: URL?
 
@@ -105,90 +106,38 @@ final class REPLRedirection: @unchecked Sendable {
       guard fd >= 0 else { throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno)) }
       handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
     #endif
-    process = nil
-    output = nil
-    errors = nil
   }
 
   init(command: String) throws {
-    // A pager must see the tty, and the editor must not consume its keys.
-    // Spool first so a full pipe cannot block the command before the handoff.
+    // Spool before launching the filter: a helper that never reads stdin must
+    // not block a terminal write or prevent the command from being cancelled.
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent("pmai-pipe-\(UUID())")
+    guard FileManager.default.createFile(atPath: url.path, contents: nil,
+      attributes: [.posixPermissions: 0o600]) else {
+      throw REPLRedirectError("Cannot create pipeline input")
+    }
+    handle = try FileHandle(forWritingTo: url)
+    terminalCommand = command
+    temporaryInput = url
     #if !os(Windows)
-    if isatty(STDIN_FILENO) != 0, isatty(STDOUT_FILENO) != 0 {
-      let url = FileManager.default.temporaryDirectory.appendingPathComponent("pmai-pipe-\(UUID())")
-      guard FileManager.default.createFile(atPath: url.path, contents: nil, attributes: [.posixPermissions: 0o600]) else {
-        throw REPLRedirectError("Cannot create pipeline input")
-      }
-      handle = try FileHandle(forWritingTo: url)
-      process = nil
-      output = nil
-      errors = nil
-      terminalCommand = command
-      temporaryInput = url
-      return
-    }
+      usesTerminal = isatty(STDIN_FILENO) != 0 && isatty(STDOUT_FILENO) != 0
     #endif
-    let child = Process()
-    #if canImport(Android)
-      child.executableURL = URL(fileURLWithPath: "/system/bin/sh")
-    #elseif os(Windows)
-      child.executableURL = URL(fileURLWithPath: ProcessInfo.processInfo.environment["COMSPEC"] ?? "cmd.exe")
-    #else
-      child.executableURL = URL(fileURLWithPath: "/bin/sh")
-    #endif
-    #if os(Windows)
-      child.arguments = ["/c", command]
-    #else
-      child.arguments = ["-c", command]
-    #endif
-    let input = Pipe(), stdout = Pipe(), stderr = Pipe()
-    child.standardInput = input
-    child.standardOutput = stdout
-    child.standardError = stderr
-    child.currentDirectoryURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-    handle = input.fileHandleForWriting
-    #if canImport(Darwin)
-      _ = fcntl(handle.fileDescriptor, F_SETNOSIGPIPE, 1)
-    #elseif !os(Windows)
-      signal(SIGPIPE, SIG_IGN)
-    #endif
-    try child.run()
-    process = child
-    // Drain both pipes concurrently so a filter producing more than a pipe's
-    // capacity cannot deadlock the producer. Display its output on completion.
-    output = Self.drain(stdout.fileHandleForReading)
-    errors = Self.drain(stderr.fileHandleForReading)
-  }
-
-  private static func drain(_ handle: FileHandle) -> Task<Data, Never> {
-    Task.detached {
-      await withCheckedContinuation { continuation in
-        DispatchQueue.global(qos: .utility).async {
-          defer { try? handle.close() }
-          continuation.resume(returning: (try? handle.readToEnd()) ?? Data())
-        }
-      }
-    }
   }
 
   func write(_ text: String) {
     lock.withLock {
-      guard !closed, failure == nil else { return }
+      guard !closed, !cancelled, failure == nil else { return }
       do { try handle.write(contentsOf: Data(text.utf8)) }
-      catch {
-        // A filter such as head may successfully finish before its producer.
-        if process == nil || (error as NSError).code != Int(POSIXErrorCode.EPIPE.rawValue) { failure = error }
-      }
+      catch { failure = error }
     }
   }
 
   func cancel() {
-    guard let process, process.isRunning else { return }
-    #if !os(Windows)
-      let pid = process.processIdentifier
-      if getpgid(pid) == pid { _ = kill(-pid, SIGKILL); return }
-    #endif
-    process.terminate()
+    let task = lock.withLock {
+      cancelled = true
+      return filterTask
+    }
+    task?.cancel()
   }
 
   /// Park the editor without pre-emptively releasing the buffer. The filter's
@@ -221,29 +170,44 @@ final class REPLRedirection: @unchecked Sendable {
     guard didClose else { return }
     if let command = terminalCommand, let url = temporaryInput {
       defer { try? FileManager.default.removeItem(at: url) }
-      let quoted = "'" + url.path.replacingOccurrences(of: "'", with: "'\"'\"'") + "'"
+      guard !lock.withLock({ cancelled }), !Task.isCancelled else { return }
       do {
-        let status = try await Self.runFilter("(\(command)) < \(quoted)", inputGate: inputGate)
-        if status != 0 { throw REPLRedirectError("pipe exited with status \(status >> 8)") }
-      } catch {
-        await terminal.note("redirection: \(error.localizedDescription)", tone: .error)
-      }
-    }
-    if let process {
-      await withTaskCancellationHandler {
-        await withCheckedContinuation { continuation in
-          DispatchQueue.global(qos: .utility).async {
-            process.waitUntilExit()
-            continuation.resume()
+        if usesTerminal {
+          let quoted = "'" + url.path.replacingOccurrences(of: "'", with: "'\"'\"'") + "'"
+          let status = try await Self.runFilter("(\(command)) < \(quoted)", inputGate: inputGate)
+          if status != 0 { throw REPLRedirectError("pipe exited with status \(status >> 8)") }
+        } else {
+          #if canImport(Android)
+            let shell = "/system/bin/sh", arguments = ["-c", command]
+          #elseif os(Windows)
+            let shell = ProcessInfo.processInfo.environment["COMSPEC"] ?? "cmd.exe"
+            let arguments = ["/c", command]
+          #else
+            let shell = "/bin/sh", arguments = ["-c", command]
+          #endif
+          let task = Task {
+            try await CapturedProcess.run(shell, arguments: arguments, input: Data(contentsOf: url),
+              timeout: nil, outputLimit: Int.max, checkExit: false)
+          }
+          let alreadyCancelled = lock.withLock {
+            filterTask = task
+            return cancelled
+          }
+          if alreadyCancelled { task.cancel() }
+          defer { lock.withLock { filterTask = nil } }
+          let result = try await withTaskCancellationHandler {
+            try await task.value
+          } onCancel: { task.cancel() }
+          await terminal.rawOutput(result.stdout)
+          await terminal.rawOutput(result.stderr, to: .standardError)
+          if result.exitCode != 0 {
+            await terminal.note("pipe exited with status \(result.exitCode)", tone: .error)
           }
         }
-      } onCancel: {
-        self.cancel()
-      }
-      if let output { await terminal.rawOutput(await output.value) }
-      if let errors { await terminal.rawOutput(await errors.value, to: .standardError) }
-      if process.terminationStatus != 0 {
-        await terminal.note("pipe exited with status \(process.terminationStatus)", tone: .error)
+      } catch is CancellationError {
+        // The foreground command owns the cancellation notice.
+      } catch {
+        await terminal.note("redirection: \(error.localizedDescription)", tone: .error)
       }
     }
     if let failure = lock.withLock({ failure }) {
