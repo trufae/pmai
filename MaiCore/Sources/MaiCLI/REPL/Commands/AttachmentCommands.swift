@@ -141,11 +141,13 @@ extension MaiCLI {
       if let path = command.path {
         destination = try writeCopiedText(result.text, to: path).path
       } else {
-        try SystemClipboard.write(result.text)
+        try await SystemClipboard.write(result.text)
         destination = "the clipboard"
       }
       await terminal.line(
         "Copied \(subject) (\(result.text.count) characters) to \(destination).")
+    } catch is CancellationError {
+      // The foreground command reports cancellation after releasing the input.
     } catch let error as TranscriptCopyError {
       await terminal.line("error: \(error.localizedDescription)", to: .standardError)
       if case .invalidCount = error { await terminal.line("Usage: /copy [N] [PATH] (/help copy)") }

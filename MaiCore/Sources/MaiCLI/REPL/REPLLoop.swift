@@ -1985,7 +1985,11 @@ extension MaiCLI {
           await terminal.note("This older saved job has no conversation settings. Select main or create a new fork.")
         }
       } else if name == "/copy" {
-        await copyToClipboard(argument, session: focused, terminal: terminal)
+        let copySession = focused
+        let command = await runForeground(name) {
+          await copyToClipboard(argument, session: copySession, terminal: terminal)
+        }
+        if command.interrupted { await terminal.note("cancelled \(name)") }
       } else {
         let readOnly = name == "/last" || ["list", "log", "last", "pins", "pinlist"].contains(action)
         guard readOnly || info.state.isTerminal else {

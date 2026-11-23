@@ -8,7 +8,7 @@ import WinSDK
 // PowerShell: $env:PMAI_TEST_CLIPBOARD='1'; swift test --package-path MaiCore --filter windowsClipboardRoundTrip
 @Test("Windows clipboard preserves Unicode and empty text after its owner window closes",
   .enabled(if: ProcessInfo.processInfo.environment["PMAI_TEST_CLIPBOARD"] == "1"))
-func windowsClipboardRoundTrip() throws {
+func windowsClipboardRoundTrip() async throws {
   func readText() throws -> String {
     let deadline = GetTickCount64() + 2000
     while !OpenClipboard(nil) {
@@ -31,10 +31,10 @@ func windowsClipboardRoundTrip() throws {
     ("", ""),
     ("first\nsecond\r\nthird\rfourth", "first\r\nsecond\r\nthird\r\nfourth"),
   ] {
-    try SystemClipboard.write(text)
+    try await SystemClipboard.write(text)
     #expect(try readText() == expected)
   }
-  #expect(throws: ClipboardError.self) { try SystemClipboard.write("before\0after") }
+  await #expect(throws: ClipboardError.self) { try await SystemClipboard.write("before\0after") }
   #expect(try readText() == "first\r\nsecond\r\nthird\r\nfourth")
 }
 #endif

@@ -1,6 +1,19 @@
 import Foundation
 import MaiCore
 
+#if !os(Windows)
+  import CMaiTerminal
+  #if canImport(Android)
+    import Android
+  #elseif canImport(Musl)
+    import Musl
+  #elseif canImport(Glibc)
+    import Glibc
+  #else
+    import Darwin
+  #endif
+#endif
+
 #if canImport(AppKit)
   import AppKit
 #elseif os(Windows)
@@ -8,9 +21,10 @@ import MaiCore
 #endif
 
 /// Writes text to the system clipboard. macOS and Windows use native APIs;
-/// other platforms shell out to the first available clipboard tool.
+/// other platforms try the available clipboard tools.
 enum SystemClipboard {
-  static func write(_ text: String) throws {
+  static func write(_ text: String) async throws {
+    try Task.checkCancellation()
     #if canImport(AppKit)
       let pasteboard = NSPasteboard.general
       pasteboard.clearContents()
@@ -20,7 +34,7 @@ enum SystemClipboard {
     #elseif os(Windows)
       try writeWindowsText(text)
     #else
-      try writeUsingExternalTool(text)
+      try await writeUsingExternalTool(text)
     #endif
   }
 
@@ -76,38 +90,107 @@ enum SystemClipboard {
 
   /// Command lines tried in order on platforms without a native pasteboard API.
   static let externalTools: [[String]] = [
-    ["wl-copy"],
-    ["xclip", "-selection", "clipboard"],
+    ["wl-copy", "--type", "text/plain;charset=utf-8"],
+    ["xclip", "-selection", "clipboard", "-in", "-silent"],
     ["xsel", "--clipboard", "--input"],
     ["pbcopy"],
     ["clip.exe"],
   ]
 
+  #if !os(Windows)
   static func writeUsingExternalTool(
     _ text: String,
-    searchPath: [String] = LocalExecutable.searchPath()
-  ) throws {
-    guard let command = externalTools.compactMap({ resolve($0, searchPath: searchPath) }).first
-    else {
+    searchPath: [String] = LocalExecutable.searchPath(),
+    timeout: Duration = .seconds(5)
+  ) async throws {
+    try Task.checkCancellation()
+    let commands = externalTools.compactMap { resolve($0, searchPath: searchPath) }
+    guard !commands.isEmpty else {
       let names = externalTools.map { $0[0] }.joined(separator: ", ")
       throw ClipboardError.unavailable("No clipboard tool found in PATH (tried \(names)).")
     }
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: command[0])
-    process.arguments = Array(command.dropFirst())
-    let input = Pipe()
-    process.standardInput = input
-    process.standardOutput = FileHandle.nullDevice
-    process.standardError = FileHandle.nullDevice
-    try process.run()
-    input.fileHandleForWriting.write(Data(text.utf8))
-    try input.fileHandleForWriting.close()
-    process.waitUntilExit()
-    guard process.terminationStatus == 0 else {
-      throw ClipboardError.writeFailed(
-        "\(command[0]) exited with status \(process.terminationStatus).")
+
+    // A regular file cannot block on a helper that never reads stdin, and
+    // avoids SIGPIPE if it exits early. Unlink it immediately to keep copies
+    // private and leave no transcript on disk after a crash or cancellation.
+    var template = Array(FileManager.default.temporaryDirectory
+      .appendingPathComponent("pmai-clipboard-XXXXXX").path.utf8CString)
+    let descriptor = mkstemp(&template)
+    guard descriptor >= 0 else { throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno)) }
+    let input = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+    defer { try? input.close() }
+    guard unlink(template) == 0 else {
+      throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+    }
+    try input.write(contentsOf: Data(text.utf8))
+    let output = try FileHandle(forWritingTo: URL(fileURLWithPath: "/dev/null"))
+    defer { try? output.close() }
+    var failures: [String] = []
+    for command in commands {
+      try Task.checkCancellation()
+      try input.seek(toOffset: 0)
+      do {
+        try await run(command, input: input, output: output, timeout: timeout)
+        return
+      } catch is CancellationError {
+        throw CancellationError()
+      } catch ClipboardError.writeFailed(let reason) {
+        failures.append(reason)
+      } catch {
+        failures.append(error.localizedDescription)
+      }
+    }
+    throw ClipboardError.writeFailed(failures.joined(separator: "; "))
+  }
+
+  private static func run(
+    _ command: [String], input: FileHandle, output: FileHandle, timeout: Duration
+  ) async throws {
+    let arguments = command.map { strdup($0) } + [nil]
+    let environment = ProcessInfo.processInfo.environment.map { strdup("\($0.key)=\($0.value)") } + [nil]
+    defer { for pointer in arguments + environment { free(pointer) } }
+    // On Linux, Foundation Process tracks exit through an inherited socket.
+    // Clipboard daemons retain that socket after forking, so even a successful
+    // parent exit may never complete. Reap only the direct child with waitpid.
+    let child = mai_process_spawn(
+      command[0], arguments, environment, FileManager.default.currentDirectoryPath,
+      input.fileDescriptor, output.fileDescriptor, output.fileDescriptor)
+    guard child > 0 else { throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno)) }
+    var reaped = false
+    defer {
+      if !reaped {
+        // Kill the session's process group as well as the helper, including
+        // children that ignore SIGTERM. Successful clipboard owners stay alive.
+        _ = kill(-child, SIGKILL)
+        _ = kill(child, SIGKILL)
+        while waitpid(child, nil, 0) == -1 && errno == EINTR {}
+      }
+    }
+    let deadline = ContinuousClock.now + timeout
+    while true {
+      try Task.checkCancellation()
+      var status: Int32 = 0
+      let waited = waitpid(child, &status, WNOHANG)
+      if waited == child {
+        reaped = true
+        guard status == 0 else {
+          let signal = status & 0x7f
+          let reason = signal == 0
+            ? "exited with status \((status >> 8) & 0xff)" : "was terminated by signal \(signal)"
+          throw ClipboardError.writeFailed("\(command[0]) \(reason).")
+        }
+        return
+      }
+      if waited == -1 && errno != EINTR {
+        throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+      }
+      guard ContinuousClock.now < deadline else {
+        throw ClipboardError.writeFailed("\(command[0]) timed out waiting for the clipboard.")
+      }
+      try await Task.sleep(for: .milliseconds(25))
     }
   }
+  #endif
 
   private static func resolve(_ command: [String], searchPath: [String]) -> [String]? {
     guard let name = command.first,
