@@ -106,6 +106,7 @@ struct ChatSearchState {
 
 struct ChatSearchBar: View {
   @Binding var search: ChatSearchState
+  var onClose: () -> Void = {}
   @FocusState private var isFocused: Bool
 
   var body: some View {
@@ -149,6 +150,7 @@ struct ChatSearchBar: View {
       }
       searchButton("xmark", label: "Close search") {
         withAnimation(.snappy) { search.cancel() }
+        onClose()
       }
     }
     .padding(.horizontal, 12)

@@ -29,6 +29,7 @@ struct ContentView: View {
   @State private var sidebarSelectionGeneration = 0
   @State private var isShowingBookmarksFolder = false
   @State private var sidebarIsCollapsed = false
+  @State private var keyboardNavigation = false
 
   private struct RemoteConnectionLifecycle: Equatable {
     let phase: ScenePhase
@@ -62,6 +63,7 @@ struct ContentView: View {
         if isHostsPanelMounted {
           HostsView(hosts: hosts, onSelectHost: selectHost)
             .equatable()
+            .environment(\.sidebarKeyboardActive, keyboardNavigation && hostsVisible && keyboardShortcutsEnabled)
             .ignoresSafeArea(.container, edges: .horizontal)
             .frame(width: panelWidth).frame(maxHeight: .infinity)
             .background { SidebarPanelBackground() }
@@ -109,6 +111,7 @@ struct ContentView: View {
               .equatable()
             }
           }
+          .environment(\.sidebarKeyboardActive, keyboardNavigation && foldersVisible && !showingHosts && keyboardShortcutsEnabled)
           .ignoresSafeArea(.container, edges: .horizontal)
           .frame(width: panelWidth)
           .frame(maxHeight: .infinity)
@@ -150,6 +153,7 @@ struct ContentView: View {
               .equatable()
             }
           }
+          .environment(\.sidebarKeyboardActive, keyboardNavigation && historyVisible && !showingFolders && keyboardShortcutsEnabled)
           .ignoresSafeArea(.container, edges: .horizontal)
           .frame(width: panelWidth)
           .frame(maxHeight: .infinity)
@@ -204,6 +208,8 @@ struct ContentView: View {
               )
             }
             .equatable()
+            .environment(\.chatKeyboardActive, keyboardShortcutsEnabled && !keyboardNavigation
+              && (layout.pinsSidebar || !showingHistory))
             .id(
               hosts.selectedHost.map {
                 "\($0.id):\($0.url):\($0.revision?.uuidString ?? ""):\(hosts.selectedConversationID?.uuidString ?? "")"
@@ -246,6 +252,7 @@ struct ContentView: View {
         .zIndex(2)
       }
       .background(Color(uiColor: .systemGroupedBackground))
+      .background { keyboardShortcuts(in: layout, depth: drawerDepth) }
       .background {
         HistoryPanelPanBridge(
           isEnabled: !layout.pinsSidebar && !showingSettings && store.activeToolCallApprovalRequest == nil
@@ -424,6 +431,57 @@ struct ContentView: View {
     .environment(hosts)
   }
 
+  private var keyboardShortcutsEnabled: Bool {
+    !showingSettings && fileBrowserLocation == nil && remoteFolderPickerHost == nil
+      && remoteTerminalLocation == nil && store.pendingConversationImportFiles.isEmpty
+      && !store.showingWebXDCApps && store.commandOutput == nil
+      && store.activeToolCallApprovalRequest == nil
+      && store.activeAutocompactionApprovalRequest == nil && store.activeRunLimitRequest == nil
+      && store.activeLongRunningOperationTimeoutRequest == nil
+  }
+
+  @ViewBuilder
+  private func keyboardShortcuts(in layout: AdaptiveChatLayout, depth: Int) -> some View {
+    if keyboardShortcutsEnabled {
+      KeyboardAction(title: "Settings", key: ",") { showingSettings = true }
+      KeyboardAction(title: "Focus Message", key: "l") {
+        closeHistoryPanel { store.requestComposerFocus() }
+      }
+      KeyboardAction(title: "New Chat", key: "n") {
+        if hosts.selectedHost == nil { newLocalConversation() } else { newRemoteConversation() }
+      }
+      .disabled(store.selectedConversationIsLoading || hosts.selectedHost?.requiresApproval == true)
+      KeyboardAction(title: "Toggle Sidebar", key: "s", modifiers: [.command, .control]) {
+        if keyboardNavigation {
+          if layout.pinsSidebar { sidebarIsCollapsed = true }
+          closeHistoryPanel()
+        } else {
+          sidebarIsCollapsed = false
+          keyboardNavigation = true
+          setDrawerDepth(max(depth, 1), animation: historyPanelAnimation)
+        }
+      }
+      KeyboardAction(title: "Back to Folders or Hosts", key: "[") {
+        sidebarIsCollapsed = false
+        keyboardNavigation = true
+        setDrawerDepth(min(depth + 1, 3), animation: historyPanelAnimation)
+      }
+      if showingHistory || keyboardNavigation {
+        KeyboardAction(title: "Forward to Chat", key: "]") {
+          if depth > 1 {
+            keyboardNavigation = true
+            setDrawerDepth(depth - 1, animation: historyPanelAnimation)
+          } else {
+            closeHistoryPanel()
+          }
+        }
+        KeyboardAction(title: "Close Sidebar", key: .escape, modifiers: []) {
+          closeHistoryPanel()
+        }
+      }
+    }
+  }
+
   private func updateRemoteConnections() async {
     guard !Task.isCancelled else { return }
     if store.settings.isOffline {
@@ -507,7 +565,12 @@ struct ContentView: View {
   }
 
   private func closeHistoryPanel(completion: (() -> Void)? = nil) {
-    setDrawerDepth(0, animation: historyPanelAnimation, completion: completion)
+    let restoreFocus = keyboardNavigation
+    keyboardNavigation = false
+    setDrawerDepth(0, animation: historyPanelAnimation) {
+      completion?()
+      if restoreFocus { store.requestComposerFocus() }
+    }
   }
 
   private func selectHost(_ id: UUID?) {

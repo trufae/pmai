@@ -30,6 +30,7 @@ struct HostsView: View, Equatable {
   @EnvironmentObject private var appStore: AppStore
   let hosts: HostNavigationStore
   let onSelectHost: (UUID?) -> Void
+  @State private var keyboardSelection: String?
   @State private var adding = false
   @State private var editing: RemoteAgentBookmark?
   @State private var renaming: RemoteAgentBookmark?
@@ -41,14 +42,14 @@ struct HostsView: View, Equatable {
   }
 
   var body: some View {
+    let pinned = hosts.remotes.connections.filter { hosts.isHostPinned($0.id) }
+    let online = hosts.remotes.connections.filter {
+      !hosts.isHostPinned($0.id) && connectionState($0.id) == .connected
+    }
+    let offline = hosts.remotes.connections.filter {
+      !hosts.isHostPinned($0.id) && connectionState($0.id) != .connected
+    }
     SidebarPanel(title: "Hosts") {
-      let pinned = hosts.remotes.connections.filter { hosts.isHostPinned($0.id) }
-      let online = hosts.remotes.connections.filter {
-        !hosts.isHostPinned($0.id) && connectionState($0.id) == .connected
-      }
-      let offline = hosts.remotes.connections.filter {
-        !hosts.isHostPinned($0.id) && connectionState($0.id) != .connected
-      }
       SidebarGroupedRows(items: pinned, groupTitle: { _ in "Pinned" }, row: remoteRow)
       SidebarGroupHeader(title: "Online")
       row(title: "Local", subtitle: "This PocketMai", image: "iphone", id: nil)
@@ -65,6 +66,12 @@ struct HostsView: View, Equatable {
       .adaptiveGlassButtonStyle()
       .frame(maxWidth: .infinity, alignment: .leading)
     }
+    .modifier(SidebarKeyboardNavigation(
+      items: pinned.map { $0.id.uuidString } + ["local"] + (online + offline).map { $0.id.uuidString },
+      selection: $keyboardSelection
+    ) {
+      onSelectHost(UUID(uuidString: $0))
+    })
     .sheet(isPresented: $adding) {
       RemoteAgentConnectionView(
         onAdded: { id in
@@ -112,6 +119,7 @@ struct HostsView: View, Equatable {
       onSelectHost(id)
     }
     .sidebarRow(isSelected: selected)
+    .keyboardSidebarRow(id?.uuidString ?? "local", selection: keyboardSelection)
   }
 }
 
@@ -124,6 +132,7 @@ struct RemoteFoldersView: View, Equatable {
   var isVisible = true
   var onBrowseFiles: (String) -> Void = { _ in }
   var onOpenTerminal: (String) -> Void = { _ in }
+  @State private var keyboardSelection: String?
   @State private var filter = ""
   @AppStorage("remoteFolderSortOrder") private var sortOrder: RemoteFolderSortOrder = .updated
   @State private var showingSortOptions = false
@@ -159,6 +168,7 @@ struct RemoteFoldersView: View, Equatable {
           onSelectFolder(folder.cwd)
         }
         .sidebarRow(isSelected: selected)
+        .keyboardSidebarRow(folder.cwd, selection: keyboardSelection)
         .contextMenu {
           SidebarFolderActions(
             isPinned: pinned,
@@ -218,6 +228,9 @@ struct RemoteFoldersView: View, Equatable {
         }.disabled(isOffline || hosts.selectedHost?.requiresApproval == true)
       }
     }
+    .modifier(SidebarKeyboardNavigation(
+      items: hosts.folders(matching: filter, sortedBy: sortOrder).map(\.cwd),
+      selection: $keyboardSelection, activate: onSelectFolder))
     .refreshable { hosts.refresh(isOffline: isOffline) }
     .onChange(of: isVisible) { _, visible in if !visible { filterFocused = false } }
   }
@@ -238,6 +251,7 @@ struct RemoteConversationsView: View, Equatable {
   let onSelectConversation: (UUID) -> Void
   let onShowSettings: () -> Void
   var isVisible = true
+  @State private var keyboardSelection: UUID?
   @State private var search = ""
   @FocusState private var searchFocused: Bool
 
@@ -277,6 +291,10 @@ struct RemoteConversationsView: View, Equatable {
           onShowSettings: onShowSettings)
       }
     }
+    .modifier(SidebarKeyboardNavigation(
+      items: hosts.selectedHost?.requiresApproval == true || hosts.selectedFolderID == nil
+        ? [] : conversations.map(\.id),
+      selection: $keyboardSelection, activate: onSelectConversation))
     .onChange(of: isVisible) { _, visible in if !visible { searchFocused = false } }
   }
 
@@ -295,6 +313,7 @@ struct RemoteConversationsView: View, Equatable {
         }
         .disabled(hosts.selectedHost?.requiresApproval == true || hosts.selectedFolderID == nil)
         .sidebarRow(isSelected: selected)
+        .keyboardSidebarRow(chat.id, selection: keyboardSelection)
         .modifier(
           ConversationSummaryActionsModifier(
             store: appStore,

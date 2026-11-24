@@ -214,7 +214,7 @@ struct SettingsView: View {
         }
 
         ToolbarItem(placement: .confirmationAction) {
-          Button("Done") { saveAndDismiss() }
+          Button("Done") { saveAndDismiss() }.keyboardShortcut(.cancelAction)
         }
       }
       .toast($toastMessage)
