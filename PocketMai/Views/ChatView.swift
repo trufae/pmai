@@ -79,6 +79,7 @@ struct ChatView: View {
   @ObservedObject var storeObservation: AppStoreViewObservation
   @State var remoteChat: RemoteAgentChat? = nil
   @AppStorage(AwakeController.preferenceKey) private var keepAwake = false
+  @Environment(\.chatKeyboardActive) private var chatKeyboardActive
   @Environment(\.scenePhase) private var scenePhase
   @Environment(\.verticalSizeClass) private var verticalSizeClass
   @Environment(\.horizontalSizeClass) private var horizontalSizeClass
@@ -140,6 +141,7 @@ struct ChatView: View {
 
   var body: some View {
     chatViewWithAlerts
+      .background { chatKeyboardShortcuts }
       .task(id: conversationActivitySnapshot) {
         refreshContextUsage()
         if let conversation = currentConversation, remoteChat == nil, !currentChatIsResponding,
@@ -196,6 +198,30 @@ struct ChatView: View {
       .onChange(of: store.settings.isOffline) { _, enabled in
         if enabled { remoteChat?.disconnect() } else { reconnectRemoteChat() }
       }
+  }
+
+  @ViewBuilder
+  private var chatKeyboardShortcuts: some View {
+    if chatKeyboardActive, !showingProviderModelSheet, !showingSubagents,
+      !showingRenameAlert, !isLoadingConversation {
+      KeyboardAction(title: "Chat Settings", key: ",", modifiers: [.command, .shift],
+        action: showChatSettings)
+      if !liveVoiceSession.isActive {
+        if !currentConversationIsEmpty {
+          KeyboardAction(title: "Find in Chat", key: "f", action: beginChatSearch)
+        }
+      }
+      if chatSearch.isActive {
+        KeyboardAction(title: "Next Match", key: "g") { chatSearch.move(by: 1) }
+        KeyboardAction(title: "Previous Match", key: "g", modifiers: [.command, .shift]) {
+          chatSearch.move(by: -1)
+        }
+        KeyboardAction(title: "Close Search", key: .escape, modifiers: []) {
+          chatSearch.cancel()
+          store.requestComposerFocus()
+        }
+      }
+    }
   }
 
   private func reconnectRemoteChat() {
@@ -404,6 +430,7 @@ struct ChatView: View {
         landscapeComposerExpanded = false
       }
       .onChange(of: store.composerFocusRequestID) { _, _ in
+        chatSearch.cancel()
         chatHeaderHidden = false
         landscapeComposerExpanded = true
       }
@@ -628,7 +655,7 @@ struct ChatView: View {
   @ViewBuilder
   private var bottomControls: some View {
     if chatSearch.isActive {
-      ChatSearchBar(search: $chatSearch)
+      ChatSearchBar(search: $chatSearch) { store.requestComposerFocus() }
     } else if isLoadingConversation {
       Color.clear
         .frame(height: 82)

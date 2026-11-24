@@ -5,6 +5,37 @@
 See the [feature overview](features.md) for device tools, documents, the browser,
 and WebXDC apps, or [remote hosts](remote-hosts.md) to connect to a workstation.
 
+## Hardware keyboards
+
+With a Bluetooth or wired keyboard, the message field keeps focus after sending
+or queuing a message. Return sends; Shift-Return inserts a newline. The on-screen
+keyboard keeps its existing behavior.
+
+Hold Command to see the available shortcuts for the current screen.
+
+| Shortcut | Action |
+| --- | --- |
+| Command-N | New chat |
+| Command-L | Return to the message field |
+| Command-comma | App settings |
+| Command-Shift-comma | Chat settings |
+| Command-K | Open the (+) message actions |
+| Command-F | Find text in the current chat |
+| Command-G / Command-Shift-G | Next / previous search match |
+| Control-Command-S | Open/focus the sidebar; press again to close it |
+| Command-[ / Command-] | Move toward folders/hosts or back toward the chat |
+| Up / Down, then Return | Highlight and open an item in the focused sidebar |
+| Escape | Close search, message actions, settings, or the sidebar |
+
+Sidebar navigation shows an outline around the highlighted row and scrolls it
+into view. It follows the displayed order, including pinned items, filters and
+bookmarks. Arrow keys in text fields still edit text normally. Command-L returns
+to typing from any sidebar.
+
+For keyboard navigation of all buttons and forms, including settings and the
+message actions popover, enable iOS **Settings → Accessibility → Keyboards → Full
+Keyboard Access**. Use the system's Tab/Shift-Tab and activation commands there.
+
 ## Share a conversation between devices
 
 Tap the chat title, or long-press a chat in the left sidebar, then choose

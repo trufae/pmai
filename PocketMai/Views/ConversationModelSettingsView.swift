@@ -147,7 +147,7 @@ struct ConversationModelSettingsView: View {
       .navigationTitle("Chat Settings")
       .toolbar {
         ToolbarItem(placement: .confirmationAction) {
-          Button("Done") { dismiss() }
+          Button("Done") { dismiss() }.keyboardShortcut(.cancelAction)
         }
       }
     }

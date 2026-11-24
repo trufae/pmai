@@ -21,6 +21,11 @@ struct ConversationFoldersView: View, Equatable {
   let onSelectBookmarks: () -> Void
   let onShowHosts: () -> Void
   var onBrowseFiles: (String) -> Void = { _ in }
+  private enum KeyboardItem: Hashable {
+    case folder(String)
+    case bookmarks
+  }
+  @State private var keyboardSelection: KeyboardItem?
   @State private var showingFolderManager = false
   @State private var showingGallery = false
 
@@ -55,6 +60,7 @@ struct ConversationFoldersView: View, Equatable {
         }
         .disabled(!store.canUseConversationFolder(folder.id))
         .sidebarRow(isSelected: isSelected)
+        .keyboardSidebarRow(KeyboardItem.folder(folder.id), selection: keyboardSelection)
         .contextMenu {
           SidebarFolderActions(
             isPinned: store.isFolderPinned(folder.id),
@@ -74,9 +80,19 @@ struct ConversationFoldersView: View, Equatable {
         action: onSelectBookmarks
       )
       .sidebarRow(isSelected: isShowingBookmarks)
+      .keyboardSidebarRow(KeyboardItem.bookmarks, selection: keyboardSelection)
     } actions: { compact in
       floatingActions(compact: compact)
     }
+    .modifier(SidebarKeyboardNavigation(
+      items: folders.filter { store.canUseConversationFolder($0.id) }.map { KeyboardItem.folder($0.id) }
+        + [.bookmarks], selection: $keyboardSelection
+    ) { item in
+      switch item {
+      case .folder(let id): onSelectFolder(id)
+      case .bookmarks: onSelectBookmarks()
+      }
+    })
     .sheet(isPresented: $showingFolderManager) {
       ConversationFolderManagementView()
         .environmentObject(store)
@@ -122,6 +138,7 @@ struct SidebarView: View {
   @Binding var showingSettings: Bool
   @Binding var isShowingBookmarks: Bool
   let isVisible: Bool
+  @State private var keyboardSelection: String?
   @State private var searchText = ""
   @State private var isSelectionMode = false
   @State private var selectedIDs: Set<UUID> = []
@@ -150,6 +167,18 @@ struct SidebarView: View {
     } actions: { compact in
       floatingActions(compact: compact)
     }
+    .modifier(SidebarKeyboardNavigation(
+      items: isShowingBookmarks ? visibleBookmarks.map(\.id)
+        : visibleConversations.map { $0.id.uuidString }, selection: $keyboardSelection
+    ) { id in
+      if isShowingBookmarks {
+        if let item = visibleBookmarks.first(where: { $0.id == id }) {
+          onSelectBookmarkedMessage(item.bookmark.conversationID, item.bookmark.messageID)
+        }
+      } else if let id = UUID(uuidString: id) {
+        if isSelectionMode { toggleSelection(of: id) } else { onSelectConversation(id) }
+      }
+    })
     .conversationDeletionAlert($pendingDeletion) { ids in
       store.deleteConversations(ids)
       withAnimation {
@@ -445,6 +474,7 @@ struct SidebarView: View {
     }
     .sidebarRow()
     .background(Color(uiColor: .secondarySystemGroupedBackground))
+    .keyboardSidebarRow(item.id, selection: keyboardSelection)
   }
 
   @ViewBuilder
@@ -479,6 +509,7 @@ struct SidebarView: View {
         onAfterClone: onDismiss)
     )
     .sidebarRow(isSelected: isSelected && !isSelectionMode)
+    .keyboardSidebarRow(conversation.id.uuidString, selection: keyboardSelection)
   }
 
   private var emptyMessage: String? {

@@ -86,7 +86,7 @@ struct RemoteChatSettingsView: View {
       .navigationBarTitleDisplayMode(.inline)
       .toolbar {
         ToolbarItem(placement: .confirmationAction) {
-          Button("Done") { dismiss() }.disabled(chat.settingsSaving)
+          Button("Done") { dismiss() }.keyboardShortcut(.cancelAction).disabled(chat.settingsSaving)
         }
       }
       .task(id: chat.connected) { await chat.refreshConfiguration() }

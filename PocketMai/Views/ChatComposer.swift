@@ -1,3 +1,4 @@
+import GameController
 import MaiCore
 import MaiDocuments
 import PhotosUI
@@ -20,6 +21,7 @@ struct ChatComposer: View {
   private static let draftAutosaveDelayNanoseconds: UInt64 = 3_000_000_000
 
   @EnvironmentObject private var ttsPlayer: TTSPlayer
+  @Environment(\.chatKeyboardActive) private var chatKeyboardActive
   @Environment(\.scenePhase) private var scenePhase
   let store: AppStore
   let remoteChat: RemoteAgentChat?
@@ -180,6 +182,13 @@ struct ChatComposer: View {
 
   var body: some View {
     composerImportDialogs
+      .background {
+        if chatKeyboardActive, !liveVoiceSession.isActive {
+          KeyboardAction(title: "Message Actions", key: "k") {
+            showingToolMenu.toggle()
+          }
+        }
+      }
   }
 
   private var composerPromptUpdates: some View {
@@ -267,6 +276,7 @@ struct ChatComposer: View {
     .padding(.bottom, isKeyboardVisible ? 8 : 0)
     .onAppear {
       draftText = store.draftText(for: conversationID)
+      if GCKeyboard.coalesced != nil { composerFocused = true }
       if let message = queuedMessagePendingEdit {
         restoreQueuedMessageToComposer(message)
         queuedMessagePendingEdit = nil
@@ -937,7 +947,7 @@ struct ChatComposer: View {
       return
     }
     guard canSubmitDraft else { return }
-    composerFocused = false
+    if GCKeyboard.coalesced == nil { composerFocused = false }
     let submitted = draftText
     let submittedIsCommand = isBTW || isVersionCommand
     let submittedAttachments = submittedIsCommand ? [] : pendingAttachments
@@ -959,7 +969,7 @@ struct ChatComposer: View {
 
   private func queueDraft(in conversationID: UUID) {
     guard canQueueDraft else { return }
-    composerFocused = false
+    if GCKeyboard.coalesced == nil { composerFocused = false }
     let submitted = draftText
     let submittedAttachments = pendingAttachments
     draftText = ""
@@ -1095,6 +1105,12 @@ struct ChatComposer: View {
     .background { composerInputBackground }
     .popover(isPresented: $showingToolMenu, attachmentAnchor: .rect(.bounds), arrowEdge: .bottom) {
       toolMenuPopover
+        .background {
+          KeyboardAction(title: "Close Message Actions", key: .escape, modifiers: []) {
+            showingToolMenu = false
+            composerFocused = true
+          }
+        }
         .presentationCompactAdaptation(.popover)
     }
     .popover(isPresented: $showingToolPicker, attachmentAnchor: .rect(.bounds), arrowEdge: .bottom)
