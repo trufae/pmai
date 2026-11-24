@@ -565,12 +565,7 @@ struct ContentView: View {
   }
 
   private func closeHistoryPanel(completion: (() -> Void)? = nil) {
-    let restoreFocus = keyboardNavigation
-    keyboardNavigation = false
-    setDrawerDepth(0, animation: historyPanelAnimation) {
-      completion?()
-      if restoreFocus { store.requestComposerFocus() }
-    }
+    setDrawerDepth(0, animation: historyPanelAnimation, completion: completion)
   }
 
   private func selectHost(_ id: UUID?) {
@@ -648,6 +643,8 @@ struct ContentView: View {
     completion: (() -> Void)? = nil
   ) {
     let depth = min(max(requestedDepth, 0), 3)
+    let restoreFocus = depth == 0 && keyboardNavigation
+    if depth == 0 { keyboardNavigation = false }
     drawerTransitionGeneration += 1
     let transitionGeneration = drawerTransitionGeneration
     if depth > 0 {
@@ -671,6 +668,7 @@ struct ContentView: View {
       }
       // Retain lazily mounted panels, including their scroll and search state.
       completion?()
+      if restoreFocus { store.requestComposerFocus() }
     }
   }
 

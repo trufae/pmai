@@ -276,7 +276,7 @@ struct ChatComposer: View {
     .padding(.bottom, isKeyboardVisible ? 8 : 0)
     .onAppear {
       draftText = store.draftText(for: conversationID)
-      if GCKeyboard.coalesced != nil { composerFocused = true }
+      if chatKeyboardActive, GCKeyboard.coalesced != nil { composerFocused = true }
       if let message = queuedMessagePendingEdit {
         restoreQueuedMessageToComposer(message)
         queuedMessagePendingEdit = nil
