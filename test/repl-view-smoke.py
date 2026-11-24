@@ -152,7 +152,7 @@ def main(binary):
 
             def bottom_output():
                 return '\n'.join(line for line in bottom().splitlines()
-                                 if not re.match(r'^pmai[^>]*> ', line))
+                                 if not re.match(r'^pmai[^>]*> ', line) and not line.lstrip().startswith('/'))
 
             def resize(height, width):
                 nonlocal rows, columns
@@ -387,12 +387,25 @@ def main(binary):
                 send('/view tools\r')
                 wait_for('── view: tools')
                 # Command bubbles can push the completed reasoning above the
-                # chat viewport; page back before checking it is restored.
-                send('\x1b[5~')
-                wait_for('FOLLOWED_THOUGHT')
+                # chat viewport. Page back until it is visible, even if a
+                # cached row does not need to be emitted again.
+                for _ in range(20):
+                    if 'FOLLOWED_THOUGHT' in bottom():
+                        break
+                    previous = bottom()
+                    send('\x1b[5~')
+                    deadline = time.monotonic() + 15
+                    while bottom() == previous:
+                        assert process.poll() is None, captured.decode(errors='replace')
+                        assert time.monotonic() < deadline, screen
+                        read_for(.05)
                 assert 'FOLLOWED_THOUGHT' in bottom(), screen
                 send('\x1b[62;6u')
-                wait_for('/view tools')
+                deadline = time.monotonic() + 15
+                while 'PgDn to latest' in screen.get(rows - 1, '') or '/view tools' not in bottom():
+                    assert process.poll() is None, captured.decode(errors='replace')
+                    assert time.monotonic() < deadline, screen
+                    read_for(.05)
                 send('/view thinking\r')
                 wait_for('── view: thinking')
                 assert 'FOLLOWED_THOUGHT' not in bottom(), screen
@@ -634,8 +647,11 @@ def main(binary):
                 wait_for('✓ took')
                 send('/jobs focus main\r')
                 wait_for('Messages go to this chat again.')
+                # Both agents' retained conversations can exceed the old split height.
+                drag_separator(30)
                 assert 'CHILD_BACKGROUND' in top() and 'SECOND_OUTPUT' in top(), screen
                 assert '── chat:' not in top(), screen
+                drag_separator(12)
                 send(f'/jobs focus {child_pid}\r')
                 wait_for('Messages go to agent#')
                 send('\t')

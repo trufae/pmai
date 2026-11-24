@@ -183,6 +183,9 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   private var displayedActivitySecond: UInt64 = 0
   private var animator = BrailleAnimator.randomStyle()
   private var paintedActivityMarker = ""
+  private var paintedActivityTimer = ""
+  /// Static status content, with the independently updated marker and timer masked.
+  private var paintedStatusKey: String?
   /// Keystrokes that arrived while the terminal was asked for its cursor
   /// position, kept for the editor.
   private var typeahead: [UInt8] = []
@@ -1305,7 +1308,14 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       if ui.mode == .buffer {
         transcript.follow()
         outputEndedLine = true
-        redrawBuffer()
+        if previousCount != 1 {
+          redrawBuffer()
+        } else {
+          drawOutputRows()
+          drawStatusRow()
+          drawInputRows()
+          placeCaret()
+        }
         return
       }
       var out = Self.restoreCursor
@@ -1611,6 +1621,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     paintedOutputRows = []
     paintedViewRows = []
     paintedPanelRows = []
+    paintedStatusKey = nil
     write("\u{1B}[1;\(regionBottom)r")
     drawOutputRows()
     drawStatusRow()
@@ -1755,7 +1766,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       let row = separator && isVerticalView ? statusRow : index + 1
       out += clearPaneRow(row: row, column: column, width: paneWidth) + text + Self.reset
     }
-    if isVerticalView {
+    if isVerticalView && paintedViewRows.isEmpty {
       for row in 1...height {
         out += move(row: row, column: viewColumn - 1) + Self.reset + backgroundStyle + "│"
       }
@@ -1822,16 +1833,18 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     writeFixedRows(out)
   }
 
-  private func drawStatusLine(clear: Bool = true) {
+  private func drawStatusLine() {
     let width = statusColumns
     let marker = animatingStatus ? animator.frame() : String(statusText.prefix(1))
     let timer: String
+    let activitySecond: UInt64?
     if let activityStartedAt {
       let elapsed = (DispatchTime.now().uptimeNanoseconds - activityStartedAt) / 1_000_000_000
       timer = " \(elapsed / 60)m\(elapsed % 60)s "
-      displayedActivitySecond = elapsed
+      activitySecond = elapsed
     } else {
       timer = ""
+      activitySecond = nil
     }
     let scrollHint = TerminalConversationScope.$id.withValue(nil) {
       guard ui.mode == .buffer, !transcript.isFollowing else { return "" }
@@ -1847,24 +1860,41 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     let prefix = leftWidth > 0 ? " " + shownMarker : ""
     let left = prefix + Self.truncated("\(scrollHint)\(statusText.dropFirst()) ",
       width: max(0, leftWidth - Self.displayWidth(prefix)))
-    paintedActivityMarker = completionMenu == nil ? shownMarker : ""
     let content = left + String(repeating: " ", count: max(0,
       width - Self.displayWidth(left) - Self.displayWidth(right))) + right
     let colors = colorsEnabled
-    var out = ""
-    out += move(row: statusRow, column: 1)
-    out += Self.reset + (colors ? TerminalThemeStyle.base(ui) : "")
-    if clear && !isVerticalView { out += Self.clearLine }
+    var prefixSequence = move(row: statusRow, column: 1)
+    prefixSequence += Self.reset + (colors ? TerminalThemeStyle.base(ui) : "")
+    if !isVerticalView { prefixSequence += Self.clearLine }
+    let body: String
+    let keyBody: String
     if let menu = completionMenu {
-      out += completionMenuRow(menu, width: width, colors: colors)
-    } else if statusNeedsAttention {
-      let warning = colors ? TerminalLineEditor.foregroundColorCode(ui.warningForeground) : nil
-      let codes = ["1", "7"] + [warning].compactMap { $0 }
-      out += "\u{1B}[" + codes.joined(separator: ";") + "m" + content + Self.reset
+      body = completionMenuRow(menu, width: width, colors: colors)
+      keyBody = body
     } else {
-      out += statusLineStyle + content + Self.reset
+      body = statusContentStyle + content + Self.reset
+      let maskedLeft = (leftWidth > 0 ? " " : "")
+        + (animatingStatus ? String(repeating: " ", count: Self.displayWidth(shownMarker)) : shownMarker)
+        + Self.truncated("\(scrollHint)\(statusText.dropFirst()) ",
+          width: max(0, leftWidth - Self.displayWidth(prefix)))
+      let masked = maskedLeft + String(repeating: " ", count: max(0,
+        width - Self.displayWidth(maskedLeft)))
+      keyBody = statusContentStyle + masked + Self.reset
     }
-    writeFixedRows(out)
+    let key = (completionMenu == nil ? "status\(animatingStatus)" : "menu") + prefixSequence + keyBody
+      + "|\(Self.displayWidth(right))|\(Self.displayWidth(shownMarker))"
+    if ui.mode == .buffer, paintedStatusKey == key { return }
+    paintedStatusKey = ui.mode == .buffer ? key : nil
+    paintedActivityMarker = completionMenu == nil ? shownMarker : ""
+    paintedActivityTimer = completionMenu == nil ? right : ""
+    if let activitySecond { displayedActivitySecond = activitySecond }
+    writeFixedRows(prefixSequence + body)
+  }
+
+  private var statusContentStyle: String {
+    guard statusNeedsAttention else { return statusLineStyle }
+    let warning = colorsEnabled ? TerminalLineEditor.foregroundColorCode(ui.warningForeground) : nil
+    return "\u{1B}[" + (["1", "7"] + [warning].compactMap { $0 }).joined(separator: ";") + "m"
   }
 
   private var statusLineStyle: String {
@@ -1959,25 +1989,54 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
         statusColumns > 2
       else { return }
       let elapsed = (DispatchTime.now().uptimeNanoseconds - activityStartedAt) / 1_000_000_000
+      var out = ""
       if elapsed != displayedActivitySecond {
         if ui.mode == .buffer, ui.toolGroups, transcript.hasRunningTools {
           transcript.refreshToolGroupTimes()
           drawOutputRows()
         }
-        drawStatusLine(clear: false)
-        placeCaret()
-        return
+        let timer = Self.truncated(" \(elapsed / 60)m\(elapsed % 60)s ", width: statusColumns)
+        if Self.displayWidth(timer) != Self.displayWidth(paintedActivityTimer) {
+          paintedStatusKey = nil
+          drawStatusLine()
+          return
+        }
+        let old = Array(paintedActivityTimer)
+        let new = Array(timer)
+        let first = zip(old, new).prefix { $0 == $1 }.count
+        let last = zip(old.dropFirst(first).reversed(), new.dropFirst(first).reversed())
+          .prefix { $0 == $1 }.count
+        if first + last < new.count {
+          out += move(row: statusRow, column: statusColumns - new.count + first + 1)
+            + Self.reset + (colorsEnabled ? TerminalThemeStyle.base(ui) : "") + statusContentStyle
+            + String(new[first..<(new.count - last)]) + Self.reset
+        }
+        paintedActivityTimer = timer
+        displayedActivitySecond = elapsed
       }
-      guard animatingStatus else { return }
-      let timerWidth = Self.displayWidth(Self.truncated(" \(elapsed / 60)m\(elapsed % 60)s ", width: statusColumns))
-      let markerWidth = min(animator.width, statusColumns - timerWidth - 1)
-      guard markerWidth > 0 else { return }
-      let marker = String(animator.frame().prefix(markerWidth))
-      guard marker != paintedActivityMarker else { return }
-      paintedActivityMarker = marker
-      writeFixedRows(
-        move(row: statusRow, column: 2)
-          + backgroundStyle + statusLineStyle + marker + Self.reset)
+      if animatingStatus {
+        let markerWidth = min(animator.width, statusColumns - Self.displayWidth(paintedActivityTimer) - 1)
+        if markerWidth > 0 {
+          let marker = Array(animator.frame().prefix(markerWidth))
+          let previous = Array(paintedActivityMarker)
+          var index = 0
+          while index < marker.count {
+            if index < previous.count && marker[index] == previous[index] {
+              index += 1
+              continue
+            }
+            let start = index
+            while index < marker.count && (index >= previous.count || marker[index] != previous[index]) {
+              index += 1
+            }
+            out += move(row: statusRow, column: start + 2)
+              + Self.reset + (colorsEnabled ? TerminalThemeStyle.base(ui) : "") + statusContentStyle
+              + String(marker[start..<index]) + Self.reset
+          }
+          paintedActivityMarker = String(marker)
+        }
+      }
+      writeFixedRows(out)
     }
   }
 
