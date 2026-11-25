@@ -29,35 +29,51 @@ extension MaiCLI {
     let startup = CLIStartupTiming(started: started, environment: environment)
     startup.mark("main entered")
     let commandLineArguments = platformCommandLineArguments(environment: environment)
-    #if os(macOS) || os(Linux)
+    let arguments = Array(commandLineArguments.dropFirst())
+    let flags = arguments.prefix { $0 != "--" }
+    let showHelp = flags.contains("--help") || flags.contains("-h")
+    let showVersion = flags.contains("--version") || flags.contains("-v")
+    let standalone = arguments.starts(with: ["app", "run"])
+      || arguments.first == "acp-gateway" || arguments.first == "tailcat"
+    let launchOptions: CLIOptions?
     // Route before loading project configuration, plugins, tools or credentials.
     // All execution (including descendants) belongs to the worker process.
     do {
-      let arguments = Array(commandLineArguments.dropFirst())
+      #if os(macOS) || os(Linux)
       var boxEnvironment = environment
       if let index = arguments.firstIndex(of: "--home"), index + 1 < arguments.count {
         boxEnvironment[AgentHome.environmentVariable] = arguments[index + 1]
       }
-      let home = AgentHome.resolve(environment: boxEnvironment)
-      let directory = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
       if arguments.first == "box" {
-        print(try await BoxCLI.run(Array(arguments.dropFirst()), home: home,
-          directory: directory, environment: environment))
+        print(try await BoxCLI.run(Array(arguments.dropFirst()),
+          home: AgentHome.resolve(environment: boxEnvironment),
+          directory: AgentExecutionScope.directory, environment: environment))
         return
       }
+      #endif
+      launchOptions = standalone || showHelp || showVersion ? nil
+        : try CLIOptions(arguments: arguments, environment: environment)
+      if let path = launchOptions?.workingDirectory {
+        let directory = try startupDirectory(path, option: "--cd", environment: environment)
+        try enterStartupDirectory(directory)
+      }
+      #if os(macOS) || os(Linux)
+      let home = launchOptions.map { resolvedHome(options: $0, environment: environment) }
+        ?? AgentHome.resolve(environment: boxEnvironment)
+      let directory = AgentExecutionScope.directory
       let boxes = ProjectBoxes(home: home, environment: environment)
-      if let box = try boxes.find(at: directory), box.enabled,
-        !arguments.contains("--help"), !arguments.contains("-h"),
-        !arguments.contains("--version"), !arguments.contains("-v") {
-        try await BoxCLI.launch(box, boxes: boxes, arguments: arguments, cwd: directory,
-          tty: isatty(STDIN_FILENO) != 0 && !arguments.contains("--acp") && !arguments.contains("--mcp"))
+      if let box = try boxes.find(at: directory), box.enabled, !showHelp, !showVersion {
+        let handled = launchOptions?.workingDirectoryArguments ?? IndexSet()
+        let forwarded = arguments.enumerated().compactMap { handled.contains($0.offset) ? nil : $0.element }
+        try await BoxCLI.launch(box, boxes: boxes, arguments: forwarded, cwd: directory,
+          tty: isatty(STDIN_FILENO) != 0 && !flags.contains("--acp") && !flags.contains("--mcp"))
         return
       }
+      #endif
     } catch {
       FileHandle.standardError.write(Data("error: \(error.localizedDescription)\n".utf8))
       exit(2)
     }
-    #endif
     if commandLineArguments.dropFirst().starts(with: ["app", "run"]) {
       let arguments = commandLineArguments.dropFirst(3)
       if Array(arguments) == ["--help"] {
@@ -94,19 +110,17 @@ extension MaiCLI {
       }
       return
     }
-    if commandLineArguments.dropFirst().contains(where: { $0 == "--help" || $0 == "-h" }) {
+    if showHelp {
       printUsage()
       return
     }
-    if commandLineArguments.dropFirst().contains(where: { $0 == "--version" || $0 == "-v" }) {
+    if showVersion {
       print(version)
       return
     }
 
     do {
-      let options = try CLIOptions(
-        arguments: Array(commandLineArguments.dropFirst()),
-        environment: environment)
+      guard var options = launchOptions else { return }
       if let action = options.vimAction {
         try VimIntegration.run(action, directory: options.vimDirectory, environment: environment)
         return
@@ -146,6 +160,16 @@ extension MaiCLI {
       }
 
       let home = resolvedHome(options: options, environment: environment)
+      var seenDirectories = Set<String>()
+      let additionalDirectories = try options.additionalDirectories.map {
+        try startupDirectory($0, option: "--add-dir", environment: environment)
+      }.filter { seenDirectories.insert($0.path).inserted }
+      if let name = options.worktree {
+        options.resolveWorktreeLaunchPaths(home: home, environment: environment)
+        let checkout = try createStartupWorktree(name: name, environment: environment)
+        try enterStartupDirectory(checkout)
+        FileHandle.standardError.write(Data("Created worktree at \(checkout.path)\n".utf8))
+      }
       let loaded = try loadConfiguration(options: options, environment: environment)
       let configurationPath = loaded?.path ?? defaultConfigurationPath(environment: environment, home: home)
       var configuration = loaded?.configuration
@@ -188,7 +212,7 @@ extension MaiCLI {
         pausesOnToolLimit: options.initialPrompt == nil && options.serve == nil)
       let promptFileAccess = PromptFileAccess(
         approvalHandler: approvalHandler, settings: configuration?.fileAccess ?? .init(),
-        environment: environment, home: home)
+        environment: environment, home: home, approvedURLs: additionalDirectories)
       if await approvalHandler.isDebugEnabled() {
         do {
           await runtime.configureDebugLog(

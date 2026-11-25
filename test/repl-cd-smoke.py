@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Keep model context and tool cwd aligned after /cd, without a live model."""
+"""Keep model context and tool cwd aligned with the selected workspace."""
 import json
 from http.server import ThreadingHTTPServer
+import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import threading
@@ -95,6 +97,32 @@ def main():
                 for chat_path in (project_storage(base / 'home', first) / 'chats').glob('*.json'):
                     assert '<execution_context>' not in json.dumps(read_chat(chat_path)['messages']), chat_path
                 print(f'PASS {mode}: model context, shell cwd, project rules, and failed /cd')
+
+            # Start in a real linked checkout and leave local edits in the source tree.
+            repository = base / 'worktree source'
+            repository.mkdir()
+            rules = repository / 'AGENTS.md'
+            rules.write_text('COMMITTED WORKTREE RULES\n')
+            git_env = {key: value for key, value in env.items() if not key.startswith('GIT_')}
+            git_env.update(GIT_CONFIG_NOSYSTEM='1', GIT_CONFIG_GLOBAL=os.devnull)
+            subprocess.run(['git', 'init', '-q'], cwd=repository, env=git_env, check=True)
+            subprocess.run(['git', 'add', 'AGENTS.md'], cwd=repository, env=git_env, check=True)
+            subprocess.run(['git', '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test',
+                            '-c', 'commit.gpgsign=false', 'commit', '-qm', 'Fixture'],
+                           cwd=repository, env=git_env, check=True)
+            rules.write_text('UNCOMMITTED SOURCE RULES\n')
+            requests.clear()
+            output = run_repl([
+                binary, '-C', repository.name, '--worktree', 'launch-test',
+                '--config', '../config.json', '--home', '../home', '--no-stream', '--no-markdown'],
+                ['/pwd', 'Check the current repository'], cwd=base, env=git_env)
+            checkout = Path(output.split('Created worktree at ', 1)[1].splitlines()[0])
+            assert not checkout.samefile(repository), output
+            assert (checkout / '.git').is_file(), checkout
+            assert (checkout / 'AGENTS.md').read_text() == 'COMMITTED WORKTREE RULES\n', checkout
+            assert rules.read_text() == 'UNCOMMITTED SOURCE RULES\n', rules
+            assert canonical(requests[-1]['messages'][-1]['content']).strip() == canonical(checkout), requests
+            print('PASS: startup worktree uses committed files and runs tools in the linked checkout')
     finally:
         server.shutdown()
         server.server_close()

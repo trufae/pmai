@@ -235,8 +235,12 @@ extension MaiCLI {
     / for a new directory. Deny overrides ask and allow; ask overrides allow.
     On first startup, /etc, /root, ~/.ssh, ~/.gnupg, ~/.config, hidden paths,
     and key/credential/encrypted filenames default to ask.
-    Rules and /path edits are saved in configuration; prompt grants last for this
-    session. Explicit rules override the hidden-path default. These checks apply
+    Start pmai with --add-dir DIR to grant access to an existing directory for
+    this session. Repeat the flag to add more directories. Relative flag paths
+    use the launch directory selected by --cd. These grants appear under
+    Additional paths and can be removed with /path del PATH.
+    Rules and /path policy edits are saved in configuration. Explicit rules
+    override the hidden-path default. These checks apply
     to Files and vdb, including child agents. /tmp (including its resolved alias)
     is allowed by default, even with saved configurations; explicit rules override it.
     At tool prompts, t saves yolo for only that tool in this project; path policies
@@ -1124,11 +1128,13 @@ extension MaiCLI {
         --acp               serve pmai as an ACP agent on stdio (for IDEs)
         --acp-root DIR      restrict ACP session directories to this workspace
         --acp-sessions DIR  directory for persistent ACP sessions (default: PMAI_HOME/acp)
+        --add-dir DIR       grant Files and vdb access for this session (repeatable; see /path)
         tailcat ...         pair and serve remote agents; pmai tailcat --help
         acp-gateway ...     bridge WebSocket clients to an ACP agent; pmai acp-gateway --help
         -a, --agent ID      select a configured agent
         --api-key KEY       prefer an environment variable or config reference
         --base-url URL      ad-hoc OpenAI-compatible endpoint
+        -C, --cd DIR        start in DIR before discovering the project and configuration
         --config PATH       load plugins, providers, tools, MCPs, agents, and approvals
         -E                  edit the user config in $EDITOR (or vim, nano, notepad) and exit
         -h, --help          show this help
@@ -1162,6 +1168,7 @@ extension MaiCLI {
         -U, --update        check for updates and install the latest release
         --vim ACTION        install, update, or uninstall the bundled Vim integration
         --vim-dir DIR       Vim runtime directory (default: ~/.vim; ~/vimfiles on Windows)
+        -w, --worktree [NAME]  start in a new Git worktree at HEAD; use -- before a prompt
         -v, --version       print the pmai version
         --tool-approval MODE yolo, ask, or smart for this run; /set tool.approval saves the project default
 

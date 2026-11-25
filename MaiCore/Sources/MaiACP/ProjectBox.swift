@@ -325,6 +325,7 @@ public struct ProjectBoxes: Sendable {
     var forwarded: [String] = []
     var index = 0
     while index < arguments.count {
+      if arguments[index] == "--" { forwarded += arguments[index...]; break }
       if ["--home", "--config"].contains(arguments[index]) { index += 2; continue }
       forwarded.append(arguments[index]); index += 1
     }

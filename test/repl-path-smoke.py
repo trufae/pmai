@@ -87,6 +87,34 @@ def main():
             command = [binary, '--config', str(config), '--home', str(base / 'home'),
                        '--no-stream', '--no-markdown']
 
+            # Launch grants are active on the first turn, retain saved rules,
+            # and can be revoked without being saved as configuration rules.
+            notes = user_home / 'notes'
+            notes.mkdir()
+            (notes / 'private.txt').write_text('DENIED LAUNCH FIXTURE')
+            launch_config = json.loads(original_config)
+            launch_config['fileAccess'] = {'outside': 'deny', 'rules': [
+                {'path': str(notes / 'private.txt'), 'access': 'deny', 'descendants': False}]}
+            config.write_text(json.dumps(launch_config))
+            launch = [binary, '--cd', 'workspace', '--config', '../config.json',
+                      '--home', str(base / 'home'), '--no-stream', '--no-markdown',
+                      '--add-dir', '../external dir', '--add-dir', '~/notes']
+            enqueue(call('files_read', path=str(external / 'outside.txt')))
+            enqueue(call('files_read', path=str(notes / 'private.txt')))
+            granted, _, _, _, revoked = run_repl(launch, ['/path', 'Read shared file', 'Read denied file',
+                '/path del "../external dir"', '/path'], cwd=base, env=env, split=True)
+            assert canonical(f'Files workspace:   {root}') in canonical(granted), granted
+            assert canonical(f'allow {external} [session grant]') in canonical(granted), granted
+            assert canonical(f'allow {notes} [session grant]') in canonical(granted), granted
+            assert canonical(f'{external} [session grant]') not in canonical(revoked), revoked
+            assert 'EXTERNAL SECRET' in json.dumps(requests[1]), requests[1]
+            assert 'Files access denied' in json.dumps(requests[-1]), requests[-1]
+            saved = json.loads(config.read_text())['fileAccess']['rules']
+            assert canonical(json.dumps(saved, sort_keys=True)) == canonical(
+                json.dumps(launch_config['fileAccess']['rules'], sort_keys=True)), saved
+            config.write_text(original_config)
+            requests.clear()
+
             # A filesystem-root grant must not hang while recording symlink
             # provenance for an ordinary file outside the workspace.
             enqueue(call('files_read', path=str(external / 'outside.txt')))

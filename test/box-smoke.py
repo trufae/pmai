@@ -84,6 +84,9 @@ if sys.argv[1] == "exec":
     assert 'BOX_WORKER' in run('--acp')
     assert 'BOX_WORKER' in run('--home', str(root / 'home'), 'hello', extra={'PMAI_HOME': str(root / 'other')})
     assert 'BOX_WORKER' in run('hello', cwd=project / 'src')
+    worker = json.loads(run('--cd', f"{project.name}/src", 'hello', cwd=root).split('BOX_WORKER ', 1)[1])
+    assert Path(worker[worker.index('--workdir') + 1]).samefile(project / 'src'), worker
+    assert worker[-2:] == ['/opt/pmai/pmai', 'hello'], worker
     status = run('box', 'status', cwd=checkout)
     assert 'enabled' in status, (status, str(checkout), record)
     assert 'BOX_WORKER' in run('hello', cwd=checkout)

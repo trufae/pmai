@@ -41,6 +41,11 @@ struct CLIOptions {
   /// Directory holding this project's chat files; nil follows the project's local or central storage.
   var statePath: String?
   var historyPath: String?
+  var workingDirectory: String?
+  var workingDirectoryArguments = IndexSet()
+  var additionalDirectories: [String] = []
+  /// Nil disables worktree creation; an empty name requests a generated name.
+  var worktree: String?
   var agentOverride: String?
   var providerOverride: ProviderID?
   var modelOverride: String?
@@ -105,6 +110,20 @@ struct CLIOptions {
         historyPath = try Self.value(after: argument, in: arguments, index: &index)
       case "--home":
         homePath = try Self.value(after: argument, in: arguments, index: &index)
+      case "-C", "--cd":
+        let optionIndex = index
+        workingDirectory = try Self.directory(after: argument, in: arguments, index: &index)
+        workingDirectoryArguments.insert(integersIn: optionIndex..<(index + 1))
+      case "--add-dir":
+        additionalDirectories.append(try Self.directory(after: argument, in: arguments, index: &index))
+      case "-w", "--worktree":
+        worktree = ""
+        if index + 1 < arguments.count, !arguments[index + 1].hasPrefix("-") {
+          index += 1
+          worktree = arguments[index]
+        }
+      case let option where option.hasPrefix("--worktree="):
+        worktree = String(option.dropFirst("--worktree=".count))
       case "--projects":
         listProjects = true
       case "-l", "--list":
@@ -199,6 +218,9 @@ struct CLIOptions {
         serve = .acp
       case "--mcp":
         serve = .mcp
+      case "--":
+        positional.append(contentsOf: arguments.dropFirst(index + 1))
+        index = arguments.count
       default:
         guard !argument.hasPrefix("-") else { throw CLIError.unknownOption(argument) }
         positional.append(argument)
@@ -213,6 +235,10 @@ struct CLIOptions {
     }
     if !positional.isEmpty { initialPrompt = positional.joined(separator: " ") }
     if readStdin, serve != nil { throw CLIError.stdinServesProtocol }
+    if serve != nil {
+      if worktree != nil { throw CLIError.replOnlyOption("--worktree") }
+      if !additionalDirectories.isEmpty { throw CLIError.replOnlyOption("--add-dir") }
+    }
     if vimDirectory != nil, vimAction == nil {
       throw CLIError.unknownOption("--vim-dir requires --vim")
     }
@@ -237,6 +263,14 @@ struct CLIOptions {
     let raw = try value(after: option, in: arguments, index: &index)
     guard let count = Int(raw), count >= 0 else { throw CLIError.invalidCount(option, raw) }
     return count
+  }
+
+  private static func directory(
+    after option: String, in arguments: [String], index: inout Int
+  ) throws -> String {
+    let path = try value(after: option, in: arguments, index: &index)
+    guard !path.isEmpty, !path.hasPrefix("-") else { throw CLIError.missingValue(option) }
+    return path
   }
 
   /// Applies command-line run limits on top of a configured agent.
@@ -285,6 +319,11 @@ enum CLIError: LocalizedError {
   case invalidImage(String)
   case isDirectory(String)
   case missingFolder(String)
+  case notDirectory(String, String)
+  case cannotChangeDirectory(String)
+  case invalidWorktreeName(String)
+  case worktreeFailed(Int32)
+  case replOnlyOption(String)
   case stdinServesProtocol
   case stdinWithoutTerminal
   case apiKeySourcesConflict
@@ -311,6 +350,12 @@ enum CLIError: LocalizedError {
     case .invalidImage(let path): "Unable to load image: \(path)"
     case .isDirectory(let path): "\(path) is a folder; give a file name."
     case .missingFolder(let path): "The folder \(path) does not exist; create it first."
+    case .notDirectory(let option, let path): "\(option) expects an existing directory: \(path)"
+    case .cannotChangeDirectory(let path): "Could not change directory to \(path)."
+    case .invalidWorktreeName(let name):
+      "Invalid worktree name '\(name)'. Start with a letter or digit and use letters, digits, dots, underscores, or hyphens (up to 64 characters)."
+    case .worktreeFailed(let status): "git worktree add failed (exit \(status))."
+    case .replOnlyOption(let option): "\(option) cannot be combined with --acp or --mcp."
     }
   }
 }

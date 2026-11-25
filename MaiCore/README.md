@@ -1949,8 +1949,8 @@ directory, and an absolute path is accepted as long as it lies inside it, so a
 model can reuse a path a shell command printed; a path error names the directory
 so the model can correct itself.
 
-`/path` lists the current directory, effective Files workspace, external paths
-granted from prompts, and access rules, grouped into Workspace, Defaults,
+`/path` lists the current directory, effective Files workspace, session grants,
+and access rules, grouped into Workspace, Defaults,
 Additional paths, and Saved rules. Access labels use the theme's success (`allow`),
 warning (`ask`), and error (`deny`) colors; pipes, redirects, and `NO_COLOR` stay
 plain. `/help path` contains the commands and policy explanations.
@@ -1967,6 +1967,20 @@ parent permissions still apply. Denials override prompts and grants, and prompts
 override grants. Directories include descendants; file grants cover just that
 file. Relative paths resolve from the Files workspace, and quoted paths support
 spaces. A trailing `/` marks a directory that does not yet exist.
+
+Use `pmai --cd PROJECT --add-dir ../shared --add-dir ~/notes` to start in a
+project and grant Files and `vdb` access to additional existing directories.
+Relative `--add-dir` paths resolve from the launch directory selected by `--cd`
+(`-C`). Grants appear under Additional paths. You can remove them with
+`/path del PATH`, using an absolute path if the Files workspace or current
+directory has changed. Existing path rules and hidden and sensitive checks apply.
+
+Use `pmai --cd PROJECT --worktree [NAME]` (`-w`) to start in a separate Git
+checkout of the current `HEAD`, on a new `pmai/NAME` branch. Omit `NAME` to
+generate one. pmai reports the checkout path on stderr. The worktree and branch
+remain after exit, and you can reopen the checkout with `--cd`. Use `--` before
+an initial prompt, as in `pmai --worktree -- "Review this project"`.
+
 `/path hidden ask|deny|allow` changes the hidden-path default; explicit path
 rules override it, so `/path allow .env` can permit one hidden file. An explicit
 parent grant also covers its hidden descendants. Searches still skip hidden
@@ -1989,7 +2003,7 @@ automatically, while `ask` and `smart` ask the person. Each addition prints a
 `outside deny` blocks these automatic additions; `outside ask` requires a person.
 Rules and the hidden, sensitive, symlink, and outside policies are saved under
 `fileAccess` in the active configuration and survive restarts. Automatic prompt
-grants remain session-only. The policy applies to Files and `vdb` tools including
+grants and `--add-dir` grants remain session-only. The policy applies to Files and `vdb` tools including
 child agents, and checks resolved symlink targets. Searches omit denied subtrees, and
 directory moves or deletions cannot bypass a protected descendant. Models can
 inspect `/path` through `pmai_run`, but cannot change its policies or the Files
