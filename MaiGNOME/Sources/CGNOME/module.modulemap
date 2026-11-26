@@ -1,0 +1,4 @@
+module CGNOME [system] {
+  header "shim.h"
+  export *
+}

@@ -39,6 +39,10 @@ BINDIR ?= $(HOME)/.local/bin
 .PHONY: all build test list run uninstall repl repl-build repl-install repl-uninstall repl-musl themeeditor plugin-fixture fmt clean check-shared-tooling aitest-build
 .PHONY: android android-test android-kotlin android-kotlin-release test-core test-unit test-cli
 .PHONY: mac mac-dmg mac-install mac-run
+.PHONY: gnome gnome-run
+GNOME_JOBS ?= 1
+GNOME_BUILD_FLAGS = --package-path MaiGNOME --scratch-path MaiCore/.build \
+	--build-system native $(SWIFT_BUILD_FLAGS) -c debug -j $(GNOME_JOBS)
 TEST_PROFILE ?= platform
 TEST_ARGS ?=
 
@@ -58,6 +62,12 @@ mac-install: mac
 
 mac-run: mac
 	open '$(MAC_APP)'
+
+gnome:
+	$(SWIFT) build $(GNOME_BUILD_FLAGS) --product pmai-gnome
+
+gnome-run: gnome
+	"$$($(SWIFT) build $(GNOME_BUILD_FLAGS) --show-bin-path)/pmai-gnome" $(ARGS)
 
 test-core:
 	python3 test/run-tests.py core $(TEST_ARGS)

@@ -1550,35 +1550,12 @@ public actor ACPServer {
   /// PocketMai consumes this extension to replace optimistic streaming rows
   /// with durable transcript entries. Standard ACP clients simply ignore it.
   private func messageSnapshot(session id: String) async {
-    guard let transcript = sessions[id]?.saved.transcript else { return }
-    var messages: [JSONValue] = []
-    var calls: [String: ToolCall] = [:]
-    for message in transcript {
-      for call in message.toolCalls { calls[call.id] = call }
-      if message.role == .tool {
-        for result in message.toolResults {
-          let call = calls[result.callID]
-          messages.append(.object([
-            "remoteID": .string(message.id + "/" + result.callID), "role": .string("tool"),
-            "toolID": .string(result.callID), "toolName": .string(call?.name ?? "Tool"),
-            "toolInput": sessions[id]?.saved.toolInputs?[result.callID] ?? call?.arguments ?? .null,
-            "status": .string(result.isError ? "failed" : "completed"), "text": .string(result.text),
-          ]))
-        }
-      } else if (message.role == .user || message.role == .assistant), !message.text.isEmpty {
-        messages.append(.object([
-          "remoteID": .string(message.id), "role": .string(message.role.rawValue),
-          "text": .string(message.text),
-        ]))
-      }
-    }
+    guard let saved = sessions[id]?.saved else { return }
     try? peer?.notify(
       ACP.Method.sessionUpdate,
       params: .object([
         "sessionId": .string(id),
-        "update": .object([
-          "sessionUpdate": .string("_pmai/message_snapshot"), "messages": .array(messages),
-        ]),
+        "update": ACPConversationTranscript.snapshot(saved.transcript, toolInputs: saved.toolInputs ?? [:]),
       ]))
   }
 

@@ -136,13 +136,24 @@ extension ACPWorkspaceRepository {
 /// before a remote client connected. Workspace authorization remains in ACPServer.
 public struct AgentHomeACPWorkspace: ACPWorkspaceRepository {
   public let home: AgentHome
+  private let stateOverride: (workingDirectory: String, store: AgentChatStore)?
 
-  public init(home: AgentHome) { self.home = home }
+  public init(home: AgentHome, stateOverride: (workingDirectory: String, store: AgentChatStore)? = nil) {
+    self.home = home
+    self.stateOverride = stateOverride
+  }
+
+  private func chatStore(for project: AgentProject) -> AgentChatStore {
+    if let stateOverride, project.workingDirectory == stateOverride.workingDirectory {
+      return stateOverride.store
+    }
+    return home.chatStore(for: project)
+  }
 
   public func organize(sessionID: String, cwd: String, action: ACPSessionAction) async throws -> ACPSessionInfo {
     guard let id = UUID(uuidString: sessionID),
       let project = try home.loadProject(atWorkingDirectory: URL(fileURLWithPath: cwd)),
-      var chat = try home.chatStore(for: project).loadChat(id: id)
+      var chat = try chatStore(for: project).loadChat(id: id)
     else { throw JSONRPCError.invalidParams("Unknown conversation") }
     switch action {
     case .pin: chat.isPinned = true
@@ -155,7 +166,7 @@ public struct AgentHomeACPWorkspace: ACPWorkspaceRepository {
     case .rename, .delete, .move: throw JSONRPCError.invalidParams("Use conversation management to rename, delete or move")
     }
     chat.touch()
-    try home.chatStore(for: project).save(chat)
+    try chatStore(for: project).save(chat)
     return .init(sessionID: chat.id.uuidString.lowercased(), cwd: cwd, title: chat.displayTitle,
       updatedAt: chat.updatedAt, isPinned: chat.isPinned, isArchived: chat.isArchived)
   }
@@ -164,7 +175,7 @@ public struct AgentHomeACPWorkspace: ACPWorkspaceRepository {
     guard let id = UUID(uuidString: sessionID),
       let project = try home.loadProject(atWorkingDirectory: URL(fileURLWithPath: cwd))
     else { throw JSONRPCError.invalidParams("Unknown conversation") }
-    _ = try home.chatStore(for: project).delete(id: id)
+    _ = try chatStore(for: project).delete(id: id)
   }
 
   public func move(sessionID: String, cwd: String, destinationCwd: String) async throws -> ACPSessionInfo {
@@ -172,16 +183,16 @@ public struct AgentHomeACPWorkspace: ACPWorkspaceRepository {
       let source = try home.loadProject(atWorkingDirectory: URL(fileURLWithPath: cwd)),
       let destination = try home.loadProject(atWorkingDirectory: URL(fileURLWithPath: destinationCwd)),
       source.id != destination.id,
-      let chat = try home.chatStore(for: source).loadChat(id: id)
+      let chat = try chatStore(for: source).loadChat(id: id)
     else { throw JSONRPCError.invalidParams("Choose another existing folder for this conversation") }
-    let target = home.chatStore(for: destination)
+    let target = chatStore(for: destination)
     guard !target.fileExists(for: id) else {
       throw JSONRPCError.invalidParams("This conversation already exists in the destination folder")
     }
     // Load and save through the store so chunked histories and all chat settings
     // travel together. Never remove the source before the destination is durable.
     try target.save(chat, evenIfDisposable: true)
-    try home.chatStore(for: source).delete(id: id)
+    try chatStore(for: source).delete(id: id)
     return .init(sessionID: sessionID, cwd: destinationCwd, title: chat.displayTitle,
       updatedAt: chat.updatedAt, isPinned: chat.isPinned, isArchived: chat.isArchived)
   }
@@ -193,7 +204,7 @@ public struct AgentHomeACPWorkspace: ACPWorkspaceRepository {
     var folders: [ACPWorkspaceFolder] = []
     var sessions: [ACPSessionInfo] = []
     for project in projects {
-      let summaries = try home.chatStore(for: project).loadSummaries()
+      let summaries = try chatStore(for: project).loadSummaries()
       folders.append(
         .init(
           cwd: project.workingDirectory, name: project.displayName,
@@ -215,9 +226,8 @@ public struct AgentHomeACPWorkspace: ACPWorkspaceRepository {
   public func load(sessionID: String, cwd: String) async throws -> ACPWorkspaceConversation? {
     guard let id = UUID(uuidString: sessionID),
       let project = try home.loadProject(atWorkingDirectory: URL(fileURLWithPath: cwd)),
-      home.chatStore(for: project).fileExists(for: id)
+      let chat = try chatStore(for: project).loadChat(id: id)
     else { return nil }
-    guard let chat = try home.chatStore(for: project).loadChat(id: id) else { return nil }
     return .init(
       info: .init(
         sessionID: sessionID, cwd: cwd, title: chat.displayTitle,
@@ -231,7 +241,7 @@ public struct AgentHomeACPWorkspace: ACPWorkspaceRepository {
     }
     let project = try home.openProject(
       atWorkingDirectory: URL(fileURLWithPath: conversation.info.cwd))
-    let store = home.chatStore(for: project)
+    let store = chatStore(for: project)
     var chat =
       try store.loadChat(id: id)
       ?? AgentChat(

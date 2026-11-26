@@ -24,6 +24,7 @@ extension MaiCLI {
     agent: AgentDefinition,
     configuration: MaiConfiguration?,
     configurationPath: String,
+    stateOverride: (workingDirectory: String, store: AgentChatStore)?,
     options: CLIOptions,
     environment: [String: String]
   ) async throws {
@@ -105,7 +106,7 @@ extension MaiCLI {
         sessionDirectory: directory, workspaceRoot: root,
         workspaceRoots: options.tailcatGateway == nil && !options.acpPaths.isEmpty
           ? options.acpPaths.map { URL(fileURLWithPath: AgentHome.expandUserPath($0), isDirectory: true) } : nil,
-        workspace: AgentHomeACPWorkspace(home: resolvedHome(options: options, environment: environment)),
+        workspace: AgentHomeACPWorkspace(home: home, stateOverride: stateOverride),
         fileConfiguration: files,
         profileDocument: options.tailcatGateway == nil
           ? try ConfigurationDocument(url: URL(fileURLWithPath: configurationPath),

@@ -462,6 +462,7 @@ extension MaiCLI {
           agent: profile.agentDefinition,
           configuration: configuration,
           configurationPath: configurationPath,
+          stateOverride: options.statePath.map { _ in (project.workingDirectory, store) },
           options: options, environment: environment)
         return
       }

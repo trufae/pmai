@@ -50,6 +50,38 @@ public struct ACPConversationMessage: Codable, Identifiable, Equatable, Sendable
 }
 
 public enum ACPConversationTranscript {
+  /// Presents persisted pmai messages before a live session is available.
+  public static func saved(_ transcript: [AgentMessage]) -> [ACPConversationMessage] {
+    var messages: [ACPConversationMessage] = []
+    apply(snapshot(transcript), to: &messages)
+    return messages
+  }
+
+  static func snapshot(_ transcript: [AgentMessage], toolInputs: [String: JSONValue] = [:]) -> JSONValue {
+    var messages: [JSONValue] = []
+    var calls: [String: ToolCall] = [:]
+    for message in transcript {
+      for call in message.toolCalls { calls[call.id] = call }
+      if message.role == .tool {
+        for result in message.toolResults {
+          let call = calls[result.callID]
+          messages.append(.object([
+            "remoteID": .string(message.id + "/" + result.callID), "role": .string("tool"),
+            "toolID": .string(result.callID), "toolName": .string(call?.name ?? "Tool"),
+            "toolInput": toolInputs[result.callID] ?? call?.arguments ?? .null,
+            "status": .string(result.isError ? "failed" : "completed"), "text": .string(result.text),
+          ]))
+        }
+      } else if (message.role == .user || message.role == .assistant), !message.text.isEmpty {
+        messages.append(.object([
+          "remoteID": .string(message.id), "role": .string(message.role.rawValue),
+          "text": .string(message.text),
+        ]))
+      }
+    }
+    return .object(["sessionUpdate": .string("_pmai/message_snapshot"), "messages": .array(messages)])
+  }
+
   /// Reduces standard ACP transcript events and pmai snapshots. Connection state,
   /// permissions, persistence, and rendering belong to the caller.
   public static func apply(_ update: JSONValue, to messages: inout [ACPConversationMessage]) {

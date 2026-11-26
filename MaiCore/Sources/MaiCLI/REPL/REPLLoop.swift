@@ -2759,7 +2759,7 @@ extension MaiCLI {
           await releaseIfIdle(workspace: workspace)
           return false
         }
-        if !heredoc, text.hasPrefix("/") {
+        func handleSlashCommand() async -> Bool {
           let command = text.split(maxSplits: 1, whereSeparator: \Character.isWhitespace)
           let name = String(command[0])
           let argument =
@@ -3686,6 +3686,7 @@ extension MaiCLI {
           if !commandWasInterrupted { await releaseIfIdle(workspace: workspace) }
           return false
         }
+        if !heredoc, text.hasPrefix("/") { return await handleSlashCommand() }
         if configuration?.ui.broadcast == true {
           await deliver(text, to: [.active])
         } else {

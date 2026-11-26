@@ -35,6 +35,7 @@ model, keep conversations by project, and use your workstation from your phone.
 | Interface | Platforms | Get it |
 | --- | --- | --- |
 | **pmai CLI** | macOS, Linux, Windows (beta), Android/Termux | [Install below](#install) · [CLI guide](MaiCore/README.md) |
+| **PocketMai for GNOME** | Linux | [Build and run](MaiGNOME/README.md) |
 | **pmai for Mac** | Native macOS app | [Releases](https://github.com/trufae/pmai/releases) · [Build guide](doc/mac-app.md) |
 | **PocketMai for iOS** | iPhone and iPad, iOS 18+ | [App Store](https://apps.apple.com/es/app/pocketmai/id6764296742) |
 | **PocketMai for Android** | Native Kotlin/Compose app, arm64 | [Download APK](https://trufae.github.io/pmai/downloads/PocketMai-Android.apk) · [Android guide](PocketMaiKotlin/README.md) |
