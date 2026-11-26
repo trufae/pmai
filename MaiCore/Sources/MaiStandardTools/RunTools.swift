@@ -717,7 +717,8 @@ enum MaiRunToolError: LocalizedError {
       // cooperative executor, including the interactive wait above.
       func scheduleTimeout(after seconds: TimeInterval) -> DispatchWorkItem {
         let watchdog = DispatchWorkItem { [weak self] in self?.stop(timedOut: true) }
-        DispatchQueue.global(qos: .userInitiated).asyncAfter(
+        // Keep deadlines on one queue so a watchdog cannot overtake exit draining.
+        readerQueue.asyncAfter(
           deadline: .now() + seconds, execute: watchdog)
         return watchdog
       }
@@ -928,7 +929,7 @@ enum MaiRunToolError: LocalizedError {
         #endif
         lock.withLock { killSent = true }
         finishIfComplete()
-        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 1) { [self] in
+        readerQueue.asyncAfter(deadline: .now() + 1) { [self] in
           finish()
         }
         return true
@@ -1039,7 +1040,7 @@ enum MaiRunToolError: LocalizedError {
           finish()
         } else if action.scheduleDrain {
           let grace = MaiHostProcess.terminationGrace
-          DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + grace) { [weak self] in
+          readerQueue.asyncAfter(deadline: .now() + grace) { [weak self] in
             self?.finish()
           }
         }
