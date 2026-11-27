@@ -41,6 +41,9 @@ class Provider(JSONProvider):
         answer = 'Saved facts: ' + ' '.join(markers) if markers else 'Ready.'
         response = {'choices': [{'message': {'role': 'assistant', 'content': answer},
                                  'finish_reason': 'stop'}]}
+        if 'FILTERED_MEMORY_FIXTURE' in text:
+            response['choices'][0].update(message={'role': 'assistant', 'content': 'Partial notes'},
+                                          finish_reason='content_filter')
         if 'CONTEXT_USAGE_FIXTURE' in text:
             response['usage'] = {'prompt_tokens': 7000, 'completion_tokens': 2, 'total_tokens': 7002}
         self.respond(response)
@@ -86,6 +89,10 @@ def main():
             assert 'Unknown provider' not in output, output
             assert 'reports no limits' not in output and 'Known: Ollama Cloud' not in output, output
             assert json.loads(config.read_text())['ui']['usagewarn'] == 80, output
+            output = run(['/memory set Keep the existing notes.', '/memory learn FILTERED_MEMORY_FIXTURE',
+                          '/memory show'])
+            assert 'contentFilter' in output and 'Keep the existing notes.' in output, output
+            assert 'Keep the existing notes.' in run(['/memory show'])
             chat_file = next((project_storage(root / 'home', root) / 'chats').glob('*.json'))
             chat = read_chat(chat_file)
             source = '\n'.join(f'KEEP-{index} ' + 'evidence ' * 6000 for index in range(12))

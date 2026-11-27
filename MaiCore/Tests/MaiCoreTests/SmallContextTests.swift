@@ -147,8 +147,9 @@ func smallContextEscapedSummary() async throws {
 }
 
 @Test(
-  "Known windows compact before a chat request and retain instructions and the latest user request")
-func smallContextPreflight() async throws {
+  "Known windows compact before a chat request and retain instructions and the latest user request",
+  arguments: [AgentContextMode.cache, .tools])
+func smallContextPreflight(mode: AgentContextMode) async throws {
   let provider = SmallContextProvider(window: 32_768)
   let runtime = AgentRuntime()
   try await runtime.register(provider)
@@ -166,12 +167,14 @@ func smallContextPreflight() async throws {
     AgentRequest(
       provider: "small", model: "fixture", messages: messages,
       options: .init(contextWindowTokens: 32_768),
-      autocompact: .init(tokens: 100_000), context: .cache))
+      autocompact: .init(tokens: 100_000), context: mode))
   #expect(result.response.text == "done")
   #expect(result.transcript.first == messages.first)
   #expect(result.transcript.contains(latest))
   #expect(AgentConversationContext.messages(from: result.transcript).count < messages.count)
   #expect(messages.allSatisfy { original in result.transcript.contains { $0.id == original.id && $0.content == original.content } })
+  let chat = try #require(await provider.requests.first { $0.stream })
+  #expect(!chat.messages.contains(messages[2]))
   #expect(await provider.rejections == 0)
 }
 
@@ -215,6 +218,34 @@ func smallContextSplitAtOutputCap() async throws {
   let requests = await provider.requests
   #expect(requests.count >= 4 && requests.allSatisfy { ($0.options.maxOutputTokens ?? 0) <= 256 })
   #expect(await provider.rejections == 0)
+}
+
+@Test("Tool-result summaries stay with their calls across input and output limits",
+  arguments: [2_048, 32_768])
+func toolResultCompactionBoundaries(compactWindow: Int) async throws {
+  let runtime = AgentRuntime()
+  let provider = SmallContextProvider(window: 32_768, maximumSummaryInputBytes: 4_500)
+  try await runtime.register(provider)
+  try await runtime.register(agent: .init(id: "summarizer", provider: "small", model: "fixture",
+    options: .init(maxOutputTokens: 256, contextWindowTokens: compactWindow)))
+  await runtime.configureTaskAgents(.init(compact: "summarizer"))
+  let results = (0..<2).map { index in
+    ToolResult(callID: "read-\(index)", text: "KEEP-\(index) " + String(repeating: "source ", count: 700)
+      + " KEEP-\(index + 2)")
+  }
+  let history: [AgentMessage] = [.user("Read both files."),
+    .init(role: .assistant, content: results.map { .toolCall(.init(id: $0.callID, name: "read", arguments: .object([:]))) }),
+    .init(role: .tool, content: results.map(ContentPart.toolResult)), .assistant("Read both."),
+    .user("Compare the results.")]
+  let result = try await runtime.run(.init(provider: "small", model: "fixture", messages: history, context: .tools))
+  #expect(result.transcript.flatMap(\.toolResults) == results)
+  let chat = try #require(await provider.requests.first { $0.stream })
+  let summaries = chat.messages.flatMap(\.toolResults)
+  #expect(summaries.map(\.callID) == results.map(\.callID))
+  #expect(summaries.map(\.text) == [
+    "[Summary of earlier tool result]\nSaved facts: KEEP-0 KEEP-2",
+    "[Summary of earlier tool result]\nSaved facts: KEEP-1 KEEP-3",
+  ])
 }
 
 @Test("A reasoning-only summary reports output exhaustion and preserves the source")

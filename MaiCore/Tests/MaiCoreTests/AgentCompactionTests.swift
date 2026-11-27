@@ -41,6 +41,14 @@ func compactionRetainsRecentExchanges() throws {
   #expect(!next.contains(user.id))
   #expect(next.contains(compacted[1].id))
   #expect(AgentAutocompaction.selection(in: messages, preservingRecentTokens: 100_000) == nil)
+
+  var parallel = exchange("first", count: 20)
+  let sibling = exchange("sibling", count: 20)
+  parallel[0].content += sibling[0].content
+  parallel[1].isPinned = true
+  parallel.append(sibling[1])
+  let withPin = [user] + old + parallel + recent
+  #expect(AgentAutocompaction.selection(in: withPin, preservingRecentTokens: 300) == old.map(\.id))
 }
 
 @Test("Compaction tail budgets decode compatibly and allow explicit overrides")
@@ -109,7 +117,10 @@ func compactionPreservesProseAndTools() {
       ]),
     AgentMessage(
       role: .tool,
-      content: [.toolResult(ToolResult(callID: "read", text: String(repeating: "t", count: 100)))]),
+      content: [
+        .toolResult(ToolResult(callID: "read", text: "BEGIN " + String(repeating: "t", count: 90) + " END")),
+        .toolResult(ToolResult(callID: "status", content: [], structuredContent: .object(["exitCode": .integer(17)]))),
+      ]),
   ]
 
   let transcript = AgentCompactionPrompt.transcript(of: messages, resultLimit: 40)
@@ -118,7 +129,8 @@ func compactionPreservesProseAndTools() {
   #expect(transcript.contains("[resource source://binary]"))
   #expect(transcript.contains("Assistant:\nRead the source."))
   #expect(transcript.contains(#"[tool call files_read {"path":"source.swift"}]"#))
-  #expect(transcript.contains("[tool result] " + String(repeating: "t", count: 40)))
+  #expect(transcript.contains("[tool result] BEGIN") && transcript.contains(" END"))
+  #expect(transcript.contains(#"[structured result] {"exitCode":17}"#))
   #expect(transcript.contains("60 characters omitted"))
   #expect(!transcript.contains("Persistent"))
   #expect(!transcript.contains("private reasoning"))

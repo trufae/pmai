@@ -73,6 +73,30 @@ final class AutocompactionApprovalTests: XCTestCase {
     XCTAssertTrue(document.entries.contains { $0.body.contains("Exact old request") && $0.body.contains("excluded from model context") })
   }
 
+  func testTruncatedSummaryKeepsConversationAndMemory() async throws {
+    StubChatEndpoint.install()
+    defer { StubChatEndpoint.uninstall() }
+    StubChatEndpoint.script = { _ in
+      (["choices": [["finish_reason": "length", "message": ["role": "assistant", "content": "Partial"]]]], 0)
+    }
+    let endpoint = OpenAIEndpoint(name: "Stub", baseURL: "https://\(StubChatEndpoint.host)/v1", defaultModel: "stub")
+    store.settings.openAIEndpoints = [endpoint]
+    store.settings.selectedEndpointID = endpoint.id
+    store.settings.defaultProvider = .openAICompatible
+    store.settings.memory = "Keep these notes."
+    store.updateCurrentConversationSettings {
+      $0.provider = .openAICompatible
+      $0.modelID = "stub"
+      $0.endpointID = endpoint.id
+    }
+    let original = try XCTUnwrap(store.currentConversation)
+    await store.compactConversation()
+    XCTAssertTrue(store.errorMessage?.contains("output limit") == true)
+    XCTAssertEqual(store.currentConversation?.messages, original.messages)
+    await store.updateMemoryFromConversations()
+    XCTAssertEqual(store.settings.memory, "Keep these notes.")
+  }
+
   func testSkipPromptsEvenWithUnattendedApprovalAndKeepsHistoryAndModelChanges() async throws {
     let conversation = try XCTUnwrap(store.currentConversation)
     let task = Task { await store.autoCompactIfNeeded(conversationID: conversation.id) }

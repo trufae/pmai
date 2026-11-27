@@ -148,7 +148,7 @@ actor LocalMLXProvider {
         outputCharacterCount: output.count, timing: timing, userInputTokens: request.userInputTokens)
     }
     await UsageStatsStore.record(stats, assistantMessageID: request.assistantMessageID)
-    return output
+    return try request.oneShotResponseFormat.checkedContent(output, response: response)
   }
 
   static func effectiveModelID(conversation: Conversation, settings: AppSettings) -> String {

@@ -244,7 +244,7 @@ configuration, and clearing it in the editor restores the default.
 | `recap` | `/chat recap`: short goals, actions/results, and pending tasks with emoji labels; uses the compact model and keeps history unchanged | `{{transcript}}` | `/edit prompt recap` |
 | `delegation` | the brief a child agent receives | `{{task}}` (`{{context}}`, `{{output}}`, `{{agent}}`, `{{cwd}}` optional) | `/edit delegation` |
 | `worker` | the derived `<agent>.worker` instructions | — | `/edit worker` |
-| `memory` | `/memory learn` | `{{transcript}}` (`{{memory}}`, `{{focus}}` optional) | `/edit memory-prompt` |
+| `memory` | `/memory learn` merges notes using the compact model and saves them after summarization succeeds | `{{transcript}}` (`{{memory}}`, `{{focus}}` optional) | `/edit memory-prompt` |
 
 See `doc/agents.md` for what the delegation and worker templates do.
 

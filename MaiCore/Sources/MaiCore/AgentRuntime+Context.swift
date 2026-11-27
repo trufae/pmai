@@ -250,6 +250,9 @@ extension AgentRuntime {
           state.lastUsage = nil
           await state.emit(.transcriptEdited(state.context, applied.report))
           await supervisor.note(state.pid, transcript: state.transcript)
+          // A preflight check can run after tool schemas and instructions
+          // have been added. Rebuild that request with the new transcript.
+          return preparedTokens != nil && !applied.report.isEmpty
         } catch let error where error is CancellationError || error is RunDeadlineExceeded || error is HurryRequested {
           throw error
         } catch {

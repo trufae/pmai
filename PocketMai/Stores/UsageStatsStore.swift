@@ -70,7 +70,7 @@ final class UsageStatsStore: ObservableObject {
   }
 
   static func recordContext(_ usage: ContextUsage, request: ChatCompletionRequest, assistantText: String? = nil) {
-    guard case .text = request.oneShotResponseFormat else { return }
+    if case .followUpSuggestions = request.oneShotResponseFormat { return }
     // Auxiliary title/summary calls have transient conversation IDs. Retain only
     // a bounded set; this is live telemetry, never a duplicate durable history.
     if shared.contexts[request.conversation.id] == nil, shared.contexts.count >= 8 {

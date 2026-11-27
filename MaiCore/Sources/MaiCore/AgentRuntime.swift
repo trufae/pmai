@@ -315,8 +315,11 @@ public actor AgentRuntime {
         if let interruption = await budget.claimModelTurn() {
           return await finishRun(state, interruption: interruption)
         }
-        guard let call = try await callProvider(turn, state: &state),
-          let response = try await interpretResponse(call, turn: turn, state: &state)
+        guard let call = try await callProvider(turn, state: &state) else { continue }
+        // A discarded preflight request or a context rejection never used
+        // the routed tool decision. Consume it only after a provider reply.
+        state.pendingDecision = nil
+        guard let response = try await interpretResponse(call, turn: turn, state: &state)
         else { continue }
         let calls = response.message.toolCalls.filter { !$0.name.isEmpty }
         if !calls.isEmpty {

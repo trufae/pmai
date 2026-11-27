@@ -1,6 +1,41 @@
 import Foundation
 
 extension AgentRuntime {
+  func summarizeToolResults(_ candidates: [AgentToolResultContext.Candidate], state: inout RunState) async throws {
+    let task = AgentCompactionPrompt.transcript(of: state.workingMessages.filter { $0.role == .user })
+    let sources = candidates.map(AgentToolResultContext.transcript)
+    let numbered = sources.enumerated().map { "Result \($0.offset):\n\($0.element)" }.joined(separator: "\n\n")
+    do {
+      let response = try await compactText(source: numbered,
+        render: { AgentToolResultContext.prompt(outputs: $0, task: task, batch: true) },
+        state: &state, purpose: "tool-results")
+      state.toolContext.store(response, for: candidates)
+    } catch is SplitToolResults {
+      // A byte split can detach a result from its number. Reduce each result
+      // independently so even its continuation chunks have exactly one owner.
+      for (candidate, source) in zip(candidates, sources) {
+        do {
+          let summary = try await compactText(source: source,
+            render: { AgentToolResultContext.prompt(outputs: $0, task: task, batch: false) },
+            state: &state, purpose: "tool-result")
+          state.toolContext.store(summary, for: candidate)
+        } catch let error where error is CancellationError || error is RunDeadlineExceeded || error is HurryRequested {
+          throw error
+        } catch {
+          state.toolContext.store(nil, for: candidate)
+          await state.emit(.compactionFailed(state.context, error.localizedDescription))
+        }
+      }
+    } catch let error where error is CancellationError || error is RunDeadlineExceeded || error is HurryRequested {
+      throw error
+    } catch {
+      state.toolContext.store(nil, for: candidates)
+      await state.emit(.compactionFailed(state.context, error.localizedDescription))
+    }
+  }
+
+  private struct SplitToolResults: Error {}
+
   /// Summarizes arbitrarily long text without placing the whole transcript in
   /// a model turn. Hosts replace their history only after this succeeds.
   public func summarize(
@@ -58,12 +93,16 @@ extension AgentRuntime {
           ]))
         do {
           let text = try await compactText(source: source, render: render, state: &state,
-            inputLimit: inputLimit, depth: depth, outputLimit: outputLimit)
+            inputLimit: inputLimit, depth: depth, outputLimit: outputLimit, purpose: purpose)
           noteDiagnostic("compaction.completed", context: state.context,
             sessionID: state.request.sessionID, value: .object([
               "summaryCharacters": .integer(text.count),
             ]))
           return text
+        } catch is SplitToolResults {
+          noteDiagnostic("compaction.split", context: state.context, sessionID: state.request.sessionID,
+            value: .object(["reason": .string("tool-result-boundaries")]))
+          throw SplitToolResults()
         } catch {
           noteDiagnostic(error is CancellationError ? "compaction.cancelled" : "compaction.failed",
             context: state.context, sessionID: state.request.sessionID,
@@ -87,6 +126,9 @@ extension AgentRuntime {
       throw AgentRuntimeError.providerNotRegistered(inference.provider)
     }
     inference.model = resolvedModel(inference.model, for: provider)
+    if depth == 0 {
+      await refreshDeploymentWindow(for: provider, model: inference.model, options: inference.options)
+    }
     let window =
       contextWindow(
         provider: inference.provider, model: inference.model, options: inference.options) ?? 32_768
@@ -103,9 +145,9 @@ extension AgentRuntime {
     if let effort = ReasoningEffort.promptSection(for: inference.options) {
       insertSystem(effort, into: &messages)
     }
-    let proseSummary = AgentDiagnosticScope.current?.purpose != "tool-results"
+    let proseSummary = purpose != "tool-results"
     if proseSummary {
-      insertSystem("Aim for a concise summary within \(min(1_024, max(1, allowance / 2))) tokens. Follow the requested format. Preserve decisions, constraints, exact identifiers and unresolved work. Refer to large files and logs by path and relevant findings.", into: &messages)
+      insertSystem("Aim for a concise summary within \(min(1_024, max(1, allowance / 2))) tokens. Follow the requested focus and format. Preserve exact details relevant to that purpose.", into: &messages)
     }
     let providerRequest = ProviderRequest(
       model: inference.model, messages: messages, tools: [], toolChoice: .none,
@@ -132,10 +174,13 @@ extension AgentRuntime {
         await state.budget.record(tokens: usage.totalTokens)
         let text = MessageContentFilter.textWithoutReasoning(from: call.response.message.text)
           .trimmingCharacters(in: .whitespacesAndNewlines)
-        if call.response.stopReason != .length, !text.isEmpty { return text }
+        if call.response.stopReason != .length {
+          try call.response.checkSummaryCompletion()
+          if !text.isEmpty { return text }
+        }
         // A long visible partial is evidence that the source will not fit in
         // one summary. Shorten the input instead of repeatedly paying for it.
-        splitAfterCutoff = proseSummary && source.utf8.count >= 2_048
+        splitAfterCutoff = source.utf8.count >= 2_048
           && (allowance == maximumOutput || (text.utf8.count >= 512 && source.utf8.count / 16 >= allowance))
         if !splitAfterCutoff, allowance < maximumOutput {
           noteDiagnostic("compaction.outputRetry", context: state.context, sessionID: state.request.sessionID,
@@ -145,7 +190,7 @@ extension AgentRuntime {
           // the input budget too: more reply space may require smaller chunks.
           return try await compactText(
             source: source, render: render, state: &state, inputLimit: inputLimit,
-            depth: depth + 1, outputLimit: min(maximumOutput, allowance * 2))
+            depth: depth + 1, outputLimit: min(maximumOutput, allowance * 2), purpose: purpose)
         }
         if !splitAfterCutoff {
           throw call.response.stopReason == .length ? SummaryError.truncated : SummaryError.empty
@@ -158,9 +203,10 @@ extension AgentRuntime {
         return try await compactText(
           source: source, render: render, state: &state,
           inputLimit: min(budget - 1, max(1, Self.contextTokens(providerRequest) / 2)),
-          depth: depth + 1, outputLimit: outputLimit)
+          depth: depth + 1, outputLimit: outputLimit, purpose: purpose)
       }
     }
+    if !proseSummary { throw SplitToolResults() }
     // Measure scaffolding separately so long custom prompts or task-agent
     // instructions cannot defeat the chunk limit.
     var empty = providerRequest
@@ -188,13 +234,15 @@ extension AgentRuntime {
     for chunk in chunks {
       partials.append(
         try await compactText(
-          source: chunk, render: render, state: &state, inputLimit: budget, depth: depth + 1, outputLimit: outputLimit))
+          source: chunk, render: render, state: &state, inputLimit: budget, depth: depth + 1,
+          outputLimit: outputLimit, purpose: purpose))
     }
     let combined = partials.enumerated().map { "Part \($0.offset + 1):\n\($0.element)" }
       .joined(separator: "\n\n")
     guard combined.utf8.count < source.utf8.count else { throw SummaryError.cannotReduce }
     return try await compactText(
-      source: combined, render: render, state: &state, inputLimit: budget, depth: depth + 1, outputLimit: outputLimit)
+      source: combined, render: render, state: &state, inputLimit: budget, depth: depth + 1,
+      outputLimit: outputLimit, purpose: purpose)
   }
 
   /// Scalar boundaries preserve all text, including Unicode and a single
@@ -227,23 +275,39 @@ extension AgentRuntime {
     if !chunk.isEmpty { chunks.append(chunk) }
     return chunks
   }
+}
 
-  private enum SummaryError: LocalizedError {
-    case empty, truncated, cannotReduce, instructionsTooLarge
-    case budget(String)
+extension ProviderResponse {
+  /// A partial reply may be displayed in chat, but must never replace saved history or notes.
+  public func checkSummaryCompletion() throws {
+    switch stopReason {
+    case .cancelled: throw CancellationError()
+    case .length: throw SummaryError.truncated
+    case .contentFilter, .toolCall: throw SummaryError.incomplete(stopReason)
+    case .stop, .unknown:
+      if !message.toolCalls.isEmpty { throw SummaryError.incomplete(.toolCall) }
+    }
+  }
+}
 
-    var errorDescription: String? {
-      switch self {
-      case .empty:
-        "The model returned no summary text (possibly only reasoning); history was kept. Lower the compact model's reasoning effort, increase its output limit, or try another model."
-      case .truncated:
-        "The model's summary reached its output limit (which may include reasoning tokens); history was kept. Increase the compact model's output limit or lower its reasoning effort."
-      case .cannotReduce:
-        "Summarization did not reduce the context enough; history was kept. Try another compact model."
-      case .instructionsTooLarge:
-        "The summary instructions exceed the model's input budget. Shorten the compact prompt or use a larger compact model."
-      case .budget(let reason): "Summarization stopped: \(reason). History was kept."
-      }
+private enum SummaryError: LocalizedError {
+  case empty, truncated, cannotReduce, instructionsTooLarge
+  case incomplete(ProviderStopReason)
+  case budget(String)
+
+  var errorDescription: String? {
+    switch self {
+    case .empty:
+      "The model returned no summary text (possibly only reasoning); history was kept. Lower the compact model's reasoning effort, increase its output limit, or try another model."
+    case .truncated:
+      "The model's summary reached its output limit (which may include reasoning tokens); history was kept. Increase the compact model's output limit or lower its reasoning effort."
+    case .incomplete(let reason):
+      "The provider stopped summarization (\(reason.rawValue)). History was kept."
+    case .cannotReduce:
+      "Summarization did not reduce the context enough; history was kept. Try another compact model."
+    case .instructionsTooLarge:
+      "The summary instructions exceed the model's input budget. Shorten the compact prompt or use a larger compact model."
+    case .budget(let reason): "Summarization stopped: \(reason). History was kept."
     }
   }
 }

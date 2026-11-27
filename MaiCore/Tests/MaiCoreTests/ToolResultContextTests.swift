@@ -157,6 +157,12 @@ func toolResultContextEdits() throws {
   #expect(projected[2].toolResults[2] == messages[2].toolResults[2])
   #expect(projected[2].toolResults[3] == messages[2].toolResults[3])
 
+  var pinned = messages
+  pinned[1].isPinned = true
+  #expect(context.messages(from: pinned)[2].toolResults[0] == result)
+  pinned[2].isPinned = true
+  #expect(context.messages(from: pinned)[2] == pinned[2])
+
   messages[2].content[0] = .toolResult(ToolResult(callID: "one", text: large + "NEW EVIDENCE"))
   #expect(
     context.messages(from: messages)[2].content == [

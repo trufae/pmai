@@ -289,7 +289,7 @@ enum ChatProviderRouter {
           ?? messageCount
         let bounded = max(1, min(baseLimit, messageCount))
         let nextLimit = max(1, bounded / 2)
-        if current.messageLimitOverride != nil, nextLimit >= bounded { throw error }
+        guard nextLimit < bounded else { throw error }
         current.messageLimitOverride = nextLimit
       }
     }
@@ -311,6 +311,8 @@ enum ChatProviderRouter {
     case .mlx:
       do {
         return try await LocalMLXProvider.shared.complete(request: request, onUpdate: onUpdate)
+      } catch is CancellationError {
+        throw CancellationError()
       } catch {
         let modelID = LocalMLXProvider.effectiveModelID(
           conversation: request.conversation,
@@ -1006,7 +1008,7 @@ enum AppleFoundationProvider {
       estimatedInputTokens: GenerationStats.estimatedTokenCount(forCharacterCount: input.characterCount),
       outputCharacterCount: content.count, timing: timing, userInputTokens: request.userInputTokens)
     await UsageStatsStore.record(stats, assistantMessageID: request.assistantMessageID)
-    return content
+    return try request.oneShotResponseFormat.checkedContent(content, response: response)
   }
 
   @available(iOS 26.0, *)
@@ -1200,7 +1202,7 @@ enum OpenAICompatibleProvider {
         usage: response.usage,
         outputCharacterCount: response.message.text.count,
         timing: timing)
-      return content
+      return try request.oneShotResponseFormat.checkedContent(content, response: response)
     }
 
     do {

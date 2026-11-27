@@ -121,9 +121,14 @@ public enum AgentCompactionPrompt {
           lines.append("[tool call \(call.name) \(call.arguments.compactJSONString)]")
         case .toolResult(let result):
           let status = result.isError ? " error" : ""
-          let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
-          lines.append(
-            text.isEmpty ? "[tool result\(status)]" : "[tool result\(status)] \(truncated(text, limit: resultLimit))")
+          var text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+          if let structured = result.structuredContent?.compactJSONString, structured != text {
+            if !text.isEmpty { text += "\n" }
+            text += "[structured result] " + structured
+          }
+          // Commands and test runs often put their outcome on the last line.
+          lines.append(text.isEmpty ? "[tool result\(status)]"
+            : "[tool result\(status)] " + truncated(text, limit: resultLimit, keepEnd: true))
         case .file(let file) where file.text != nil:
           lines.append("[file \(file.name)] \(truncated(file.text ?? "", limit: resultLimit))")
         case .file(let file):
@@ -159,9 +164,11 @@ public enum AgentCompactionPrompt {
     return trimmed.contains(transcriptPlaceholder) ? nil : transcriptPlaceholder
   }
 
-  private static func truncated(_ text: String, limit: Int) -> String {
+  private static func truncated(_ text: String, limit: Int, keepEnd: Bool = false) -> String {
     guard limit > 0, text.count > limit else { return text }
-    return text.prefix(limit) + "\n[... truncated, \(text.count - limit) characters omitted ...]"
+    let tail = keepEnd ? limit / 2 : 0
+    let marker = "\n[... truncated, \(text.count - limit) characters omitted ...]"
+    return text.prefix(limit - tail) + marker + (tail > 0 ? "\n" + text.suffix(tail) : "")
   }
 }
 
@@ -220,11 +227,19 @@ public enum AgentAutocompaction {
         tailStart = index
       }
     }
-    let skillInstructions = AgentPromptContext.protectedInstructionMessageIDs(
+    var protected = AgentPromptContext.protectedInstructionMessageIDs(
       in: messages, activeTaskID: activeTaskID)
+    // Keeping a pin also keeps its complete tool transaction. Otherwise a
+    // working brief can leave an orphan result or an unanswered call.
+    let transcript = AgentTranscript(messages: messages)
+    for index in messages.indices where messages[index].isPinned {
+      for linked in transcript.linkedRemovalIndexes(for: index) {
+        protected.insert(messages[linked].id)
+      }
+    }
     let candidates = messages[..<tailStart].enumerated().compactMap { index, message in
       index != latestUser && !AgentPromptContext.isInstruction(message)
-        && !message.isPinned && !skillInstructions.contains(message.id) ? message : nil
+        && !protected.contains(message.id) ? message : nil
     }
     guard candidates.count >= minimumMessages else { return nil }
     let total = AgentTranscriptEditor.characterCount(of: messages)

@@ -3,7 +3,18 @@ import MaiCore
 
 enum OneShotPromptResponseFormat: Sendable {
   case text
+  case summary
   case followUpSuggestions(count: Int)
+
+  func checkedContent(_ content: String, response: ProviderResponse) throws -> String {
+    if case .summary = self {
+      try response.checkSummaryCompletion()
+      guard !MessageContentFilter.promptSafeText(from: response.message.text)
+        .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+      else { throw ChatProviderError.emptyResponse }
+    }
+    return content
+  }
 }
 
 struct OneShotPromptRequest: Sendable {
@@ -74,6 +85,7 @@ enum ConversationPromptBuilder {
           provider: inference.provider,
           modelID: model,
           endpointID: inference.endpointID,
+          responseFormat: .summary,
           reasoningLevel: inference.reasoningLevel,
           systemPromptID: inference.systemPromptID
         )
@@ -122,7 +134,8 @@ enum ConversationPromptBuilder {
         prompt: prompt,
         provider: defaultProvider.provider,
         modelID: defaultProvider.modelID,
-        endpointID: defaultProvider.endpointID
+        endpointID: defaultProvider.endpointID,
+        responseFormat: .summary
       )
     }.value
   }

@@ -112,7 +112,7 @@ public struct AgentTranscript: Codable, Equatable, Sendable {
     }
   }
 
-  private func linkedRemovalIndexes(for index: Int) -> Set<Int> {
+  func linkedRemovalIndexes(for index: Int) -> Set<Int> {
     var indexes: Set<Int> = [index]
     var callIDs = Set(messages[index].toolCalls.map(\.id))
     let resultIDs = Set(messages[index].toolResults.map(\.callID))

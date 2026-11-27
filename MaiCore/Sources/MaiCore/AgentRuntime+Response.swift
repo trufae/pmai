@@ -14,7 +14,7 @@ extension AgentRuntime {
       if providerResponse.stopReason == .toolCall { providerResponse.stopReason = .stop }
     }
     try Task.checkCancellation()
-    if state.request.context == .tools { state.toolContext.didRead(state.workingMessages) }
+    if state.request.context == .tools, !turn.selectingTools { state.toolContext.didRead(state.workingMessages) }
     let stats = await recordModelCall(
       call, provider: turn.provider.descriptor.id, request: turn.request,
       userMessages: state.modelTurns == 1 ? state.request.messages : nil)

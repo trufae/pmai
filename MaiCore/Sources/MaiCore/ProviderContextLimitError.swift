@@ -46,6 +46,17 @@ public struct ProviderContextLimitError: LocalizedError, Sendable {
 }
 
 extension AgentRuntime {
+  func refreshDeploymentWindow(for provider: any ChatProvider, model: String, options: GenerationOptions) async {
+    let id = provider.descriptor.id
+    let revision = providerRevisions[id]
+    var deploymentOptions = options
+    deploymentOptions.contextWindowTokens = nil
+    if let window = await provider.contextWindow(model: model, options: deploymentOptions),
+      providerRevisions[id] == revision {
+      catalogContextWindows[id, default: [:]][model] = window
+    }
+  }
+
   public func contextWindow(provider: ProviderID, model: String, options: GenerationOptions) -> Int? {
     let model = providers[provider].map { resolvedModel(model, for: $0) } ?? model
     return ContextUsage.effectiveWindow(

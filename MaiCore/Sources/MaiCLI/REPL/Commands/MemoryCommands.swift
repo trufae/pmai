@@ -191,19 +191,13 @@ extension MaiCLI {
     }
 
     let existing = memory.current
+    let requestedFocus = focus
     let profile = session.profile
     let request = AgentRequest(
       agentID: profile.agentID,
       provider: profile.provider,
       model: profile.model,
-      messages: [
-        .user(
-          AgentMemoryPrompt.render(
-            existing: existing,
-            transcript: transcript,
-            focus: focus,
-            template: promptTemplate))
-      ],
+      messages: [],
       toolChoice: .none,
       options: profile.options,
       limits: profile.limits,
@@ -213,9 +207,13 @@ extension MaiCLI {
       "Learning from \(everyChat ? "\(chats.count) chat\(chats.count == 1 ? "" : "s")" : "this chat")…"
     )
     do {
-      let result = try await runtime.run(request) { _ in }
+      let result = try await runtime.summarize(transcript, request: request) { source in
+        AgentMemoryPrompt.render(existing: existing, transcript: source,
+          focus: requestedFocus, template: promptTemplate)
+      }
+      try Task.checkCancellation()
       let learned = MessageContentFilter.promptSafeText(
-        from: session.redactor?.unredact(result.response.text) ?? result.response.text
+        from: session.redactor?.unredact(result) ?? result
       )
       .trimmingCharacters(in: .whitespacesAndNewlines)
       guard !learned.isEmpty else {

@@ -116,10 +116,12 @@ References identify the file and how to read it again. It leaves current-task
 reads intact to avoid repeated reads while the model is still working.
 
 Tools mode summarizes successful consumed results of at least 4,000 characters.
-Errors, active skill bodies, loaded proxy catalogs and fresh unread results
+Errors, pinned calls and results, active skill bodies, loaded proxy catalogs and fresh unread results
 are excluded. Binary attachments remain available. A changed user task
 invalidates result summaries; edited results must be consumed again. Failed,
-invalid or oversized summaries retain the original result. Routine automatic
+invalid or oversized summaries retain the original result. When a batch exceeds
+the compact model's input or output budget, pmai summarizes each result separately
+so its evidence stays associated with the tool call that produced it. Routine automatic
 whole-transcript compaction is skipped in this mode; explicit compaction and
 context-edit tools remain available.
 
@@ -141,8 +143,8 @@ archives retain the originals. Summary records identify the messages they replac
 Readable exports include the originals and mark context changes (tool traffic
 still follows `export.tools`). Explicit chat clearing and message deletion remain
 deletions. Older chats already compacted without originals cannot recover them.
-The durable-compaction renderer excerpts long tool/file/resource text and is distinct from smart's
-full-evidence renderer. Do not assume it has the same retention properties.
+Durable compaction excerpts long tool results from both ends and includes
+structured output. File and resource attachments use a leading excerpt.
 
 Provider overflow errors can tighten smart/adaptive reduction and rebuild the
 brief. Recovery is bounded and does not resend an equally large rejected

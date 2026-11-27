@@ -30,7 +30,6 @@ extension AgentRuntime {
     // A task assignment changed during an await cannot mix one provider with
     // another agent's model or options.
     let routedDecision = hurrying ? nil : state.pendingDecision
-    state.pendingDecision = nil
     if let routedDecision {
       switch routedDecision {
       case .tool(let name): definitions = concreteDefinitions.filter { $0.name == name }
@@ -51,19 +50,7 @@ extension AgentRuntime {
       let candidates = state.toolContext.pending(in: state.workingMessages)
       if !candidates.isEmpty {
         await supervisor.note(state.pid, activity: "summarizing tool results")
-        do {
-          let transcript = state.workingMessages
-          let summaries = try await compactText(
-            source: AgentToolResultContext.transcript(for: candidates),
-            render: { AgentToolResultContext.prompt(outputs: $0, in: transcript) },
-            state: &state, purpose: "tool-results")
-          state.toolContext.store(summaries, for: candidates)
-        } catch let error where error is CancellationError || error is RunDeadlineExceeded || error is HurryRequested {
-          throw error
-        } catch {
-          state.toolContext.store(nil, for: candidates)
-          await state.emit(.compactionFailed(state.context, error.localizedDescription))
-        }
+        try await summarizeToolResults(candidates, state: &state)
       }
     }
     var inference = state.request
@@ -120,6 +107,12 @@ extension AgentRuntime {
       case .json: definitions.isEmpty ? nil : .json
       }
     let usesTextToolProtocol = textToolMode != nil && !toolBudgetExhausted
+    if selectingTools {
+      // Size the request the specialist will actually see. A brief built from
+      // this view is invalidated when the primary sees the original evidence.
+      AgentContextPruning.projectToolReads(&inference.messages, activeTaskID: state.activeTaskID,
+        availableTools: Set(concreteDefinitions.map(\.name)))
+    }
     let promptContext = AgentPromptContext(
       messages: inference.messages, activeTaskID: state.activeTaskID)
     var providerMessages = promptContext.messages()
@@ -210,13 +203,7 @@ extension AgentRuntime {
       options: inference.options,
       stream: usesTextToolProtocol ? false : inference.stream,
       sessionID: state.request.sessionID)
-    let revision = providerRevisions[inference.provider]
-    var deploymentOptions = inference.options
-    deploymentOptions.contextWindowTokens = nil
-    if let localWindow = await provider.contextWindow(model: inference.model, options: deploymentOptions),
-      providerRevisions[inference.provider] == revision {
-      catalogContextWindows[inference.provider, default: [:]][inference.model] = localWindow
-    }
+    await refreshDeploymentWindow(for: provider, model: inference.model, options: inference.options)
     if !hurrying, state.request.context == .smart || state.request.context == .adaptive,
       !managesToolLoop, !deciding
     {
@@ -296,10 +283,6 @@ extension AgentRuntime {
         }
       }
       providerRequest.messages = state.smartContext.messages(from: context)
-    }
-    if selectingTools {
-      AgentContextPruning.projectToolReads(&providerRequest.messages, activeTaskID: state.activeTaskID,
-        availableTools: Set(concreteDefinitions.map(\.name)))
     }
     // Do not race a final answer ahead of the broadcast's inbox delivery.
     state.hurryApplied = hurrying && state.transcript.contains {

@@ -3594,6 +3594,7 @@ final class AppStore: ObservableObject {
 
     do {
       let summary = try await OneShotPromptRunner.run(compact.oneShot, settings: settingsSnapshot)
+      try Task.checkCancellation()
       let trimmed = MessageContentFilter.promptSafeText(from: summary)
       guard !trimmed.isEmpty else {
         errorMessage = "Compact returned an empty summary."
@@ -3709,6 +3710,7 @@ final class AppStore: ObservableObject {
 
     do {
       let memory = try await OneShotPromptRunner.run(prompt, settings: settingsSnapshot)
+      try Task.checkCancellation()
       settings.memory = MessageContentFilter.promptSafeText(from: memory)
       saveSettings()
     } catch {
