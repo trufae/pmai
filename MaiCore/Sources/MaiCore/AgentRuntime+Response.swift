@@ -37,7 +37,7 @@ extension AgentRuntime {
     // Reduced context usage does not describe the full saved transcript.
     state.lastUsage =
       state.request.context == .smart || state.request.context == .tools
-        || state.request.context == .adaptive || turn.deciding
+        || state.request.context == .adaptive || turn.selectingTools
       ? nil : providerResponse.usage
     state.lastUsageMessageCount = state.workingMessages.count + 1
     await supervisor.note(state.pid, usage: state.totalUsage.merging(await state.budget.approvalUsage))

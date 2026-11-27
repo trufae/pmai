@@ -482,6 +482,40 @@ func taskAgentPrimaryToolBudget(textProtocol: Bool) async throws {
   #expect(requests[1].messages.contains { $0.text == AgentRuntime.toolBudgetExhaustedPrompt })
 }
 
+@Test("Tool decisions retain recent and pinned reads, and the primary receives the full evidence")
+func toolDecisionReadHistory() async throws {
+  let runtime = AgentRuntime()
+  let specialist = TaskFixtureProvider(id: "small", responses: [.init(message: .assistant("Ready"))])
+  let primary = TaskFixtureProvider(id: "large", responses: [.init(message: .assistant("Done"))])
+  try await runtime.register(specialist)
+  try await runtime.register(primary)
+  try await runtime.register(tool: ClosureTool(definition: ToolDefinition(name: "files_read", description: "Read",
+    inputSchema: .object(["type": .string("object")]))) { _, _ in
+    ToolOutput(text: "file")
+  })
+  try await runtime.register(agent: AgentDefinition(id: "router", provider: "small", model: "small"))
+  await runtime.configureTaskAgents(.init(tool: "router"))
+  var messages: [AgentMessage] = [.user("Preserve the exact constraints.")]
+  for i in 0..<6 {
+    let id = "read-\(i)"
+    let call = ToolCall(id: id, name: "files_read", arguments: .object(["path": .string("\(i).swift")]))
+    let body = String(repeating: "evidence-\(i) ", count: 100)
+    messages.append(AgentMessage(role: .assistant, content: [.toolCall(call)]))
+    var result = AgentMessage(role: .tool, content: [.toolResult(.init(callID: id, content: [.text(body)], isError: i == 3))])
+    result.isPinned = i == 2
+    messages.append(result)
+  }
+  _ = try await runtime.run(AgentRequest(provider: "large", model: "large", messages: messages,
+    toolNames: ["files_read"], autocompact: .init(tokens: 0), context: .cache))
+  let selected = try #require(await specialist.requests.first).messages.flatMap(\.toolResults)
+  let original = messages.flatMap(\.toolResults)
+  #expect(selected.map(\.callID) == original.map(\.callID))
+  #expect(selected[0].text.contains("0.swift") && !selected[0].text.contains("evidence-0"))
+  #expect(!selected[1].text.contains("evidence-1"))
+  #expect(Array(selected[2...]) == Array(original[2...]))
+  #expect(try #require(await primary.requests.first).messages.flatMap(\.toolResults) == original)
+}
+
 private func taskEchoTool() -> ClosureTool {
   ClosureTool(
     definition: ToolDefinition(

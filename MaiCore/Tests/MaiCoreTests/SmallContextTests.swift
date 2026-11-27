@@ -201,6 +201,22 @@ func smallContextRecoversOverflow() async throws {
   #expect(AgentRuntime.contextTokens(chats[1]) < AgentRuntime.contextTokens(chats[0]))
 }
 
+@Test("Compaction splits a source that fits the input window when summaries hit a fixed output cap")
+func smallContextSplitAtOutputCap() async throws {
+  let provider = SmallContextProvider(window: 32_768, maximumSummaryInputBytes: 6_000)
+  let runtime = AgentRuntime()
+  try await runtime.register(provider)
+  let result = try await runtime.summarize(
+    "KEEP-1 " + String(repeating: "evidence ", count: 1_000) + " KEEP-2",
+    request: AgentRequest(provider: "small", model: "fixture", messages: [],
+      options: .init(maxOutputTokens: 256, contextWindowTokens: 32_768)),
+    renderPrompt: { "Summarize every KEEP identifier.\n" + $0 })
+  #expect(result.contains("KEEP-1") && result.contains("KEEP-2"))
+  let requests = await provider.requests
+  #expect(requests.count >= 4 && requests.allSatisfy { ($0.options.maxOutputTokens ?? 0) <= 256 })
+  #expect(await provider.rejections == 0)
+}
+
 @Test("A reasoning-only summary reports output exhaustion and preserves the source")
 func smallContextReasoningSummaryLimit() async throws {
   let provider = SmallContextProvider(window: 32_768, truncatesSummary: true, reasoningOnly: true)
@@ -336,18 +352,20 @@ private actor SmallContextProvider: ChatProvider {
   let truncatesSummary: Bool
   let reasoningOnly: Bool
   let minimumSummaryOutput: Int
+  let maximumSummaryInputBytes: Int
   let advertisesWindow: Bool
   private(set) var requests: [ProviderRequest] = []
   private(set) var rejections = 0
 
   init(
     window: Int, truncatesSummary: Bool = false, reasoningOnly: Bool = false,
-    minimumSummaryOutput: Int = 0, advertisesWindow: Bool = false
+    minimumSummaryOutput: Int = 0, advertisesWindow: Bool = false, maximumSummaryInputBytes: Int = .max
   ) {
     self.window = window
     self.truncatesSummary = truncatesSummary
     self.reasoningOnly = reasoningOnly
     self.minimumSummaryOutput = minimumSummaryOutput
+    self.maximumSummaryInputBytes = maximumSummaryInputBytes
     self.advertisesWindow = advertisesWindow
   }
 
@@ -381,7 +399,7 @@ private actor SmallContextProvider: ChatProvider {
         message: reasoningOnly && fails
           ? AgentMessage(role: .assistant, content: [.reasoning("Still thinking")]) : .assistant(summary),
         usage: .init(inputTokens: input.count / 4, outputTokens: summary.count / 4),
-        stopReason: truncatesSummary && fails ? .length : .stop)
+        stopReason: (truncatesSummary && fails) || input.utf8.count > maximumSummaryInputBytes ? .length : .stop)
     }
     return ProviderResponse(message: .assistant("done"), stopReason: .stop)
   }

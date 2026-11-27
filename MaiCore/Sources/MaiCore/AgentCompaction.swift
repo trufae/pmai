@@ -320,30 +320,50 @@ public enum AgentContextPruning {
     _ messages: inout [AgentMessage], activeTaskID: String? = nil
   ) -> AgentTranscriptEditReport? {
     guard let currentPrompt = messages.lastIndex(where: { $0.role == .user }) else { return nil }
-    var calls: [String: ToolCall] = [:]
-    for message in messages[..<currentPrompt] {
-      for call in message.toolCalls { calls[call.id] = call }
-    }
-    var candidates: [Int] = []
-    let protected = AgentPromptContext.protectedInstructionMessageIDs(
-      in: messages, activeTaskID: activeTaskID)
-    for (index, message) in messages.enumerated()
-    where index < currentPrompt && message.role == .tool && !message.isPinned
-      && !protected.contains(message.id) {
-      if message.toolResults.contains(where: { hasPrunableContent($0, call: calls[$0.callID]) }) {
-        candidates.append(index)
+    let original = messages
+    let count = replaceReadBodies(&messages, before: currentPrompt, activeTaskID: activeTaskID)
+    guard count > 0 else { return nil }
+    return AgentTranscriptEditReport(pruned: count,
+      charactersBefore: AgentTranscriptEditor.characterCount(of: original),
+      charactersAfter: AgentTranscriptEditor.characterCount(of: messages))
+  }
+
+  /// A tool specialist can look up older sources again. Keep the latest two
+  /// tool batches intact, including all sibling results of a parallel call.
+  static func projectToolReads(
+    _ messages: inout [AgentMessage], activeTaskID: String?, availableTools: Set<String>
+  ) {
+    var batches = 0
+    for index in messages.indices.reversed() where messages[index].role == .assistant
+      && !messages[index].toolCalls.isEmpty {
+      batches += 1
+      if batches == 2 {
+        _ = replaceReadBodies(&messages, before: index, activeTaskID: activeTaskID, availableTools: availableTools)
+        return
       }
     }
-    guard !candidates.isEmpty else { return nil }
-    var report = AgentTranscriptEditReport(
-      charactersBefore: AgentTranscriptEditor.characterCount(of: messages))
-    for index in candidates {
+  }
+
+  private static func replaceReadBodies(
+    _ messages: inout [AgentMessage], before boundary: Int, activeTaskID: String?,
+    availableTools: Set<String>? = nil
+  ) -> Int {
+    var calls: [String: ToolCall] = [:]
+    for message in messages[..<boundary] where availableTools == nil || !message.isPinned {
+      for call in message.toolCalls { calls[call.id] = call }
+    }
+    let protected = AgentPromptContext.protectedInstructionMessageIDs(
+      in: messages, activeTaskID: activeTaskID)
+    var count = 0
+    for index in messages[..<boundary].indices where messages[index].role == .tool
+      && !messages[index].isPinned && !protected.contains(messages[index].id) {
       var message = messages[index]
       message.content = message.content.map { part in
         guard case .toolResult(var result) = part,
           hasPrunableContent(result, call: calls[result.callID])
         else { return part }
-        let reference = fileReadReference(calls[result.callID])
+        let reference = fileReadReference(calls[result.callID], availableTools: availableTools)
+        if availableTools != nil && reference == nil { return part }
         let path = result.structuredContent?.objectValue?["path"]?.stringValue
         let sourceID = result.structuredContent?.objectValue?["source_id"]?.stringValue
         let offset = result.structuredContent?.objectValue?["offset"]?.intValue ?? 0
@@ -357,7 +377,7 @@ public enum AgentContextPruning {
               "[Web source body read earlier and removed from context; call web_fetch with source_id \(sourceID) and offset \(offset), or query it. If evicted, fetch \(resource.uri) again.]"
             )
           }
-          guard case .file(let file) = inner, let text = file.text,
+          guard case .file(let file) = inner, availableTools == nil || file.source == nil, let text = file.text,
             text.count >= minimumCharacters
           else { return inner }
           let lines = text.split(separator: "\n", omittingEmptySubsequences: false).count
@@ -365,14 +385,12 @@ public enum AgentContextPruning {
             "[\(path ?? file.name): \(lines) lines, \(text.count) characters, read earlier and removed from the context; call files_read again if needed]"
           )
         }
-        report.pruned += 1
+        count += 1
         return .toolResult(result)
       }
       messages[index] = message
     }
-    guard report.pruned > 0 else { return nil }
-    report.charactersAfter = AgentTranscriptEditor.characterCount(of: messages)
-    return report
+    return count
   }
 
   private static func hasPrunableContent(_ result: ToolResult, call: ToolCall?) -> Bool {
@@ -392,7 +410,7 @@ public enum AgentContextPruning {
 
   /// Range and function reads return plain text rather than FileContent. Use
   /// the linked call to identify them, never a guess based on the body or path.
-  private static func fileReadReference(_ call: ToolCall?) -> String? {
+  private static func fileReadReference(_ call: ToolCall?, availableTools: Set<String>? = nil) -> String? {
     guard let call else { return nil }
     var name = call.name
     var arguments = call.arguments
@@ -400,7 +418,8 @@ public enum AgentContextPruning {
       name = envelope["name"]?.stringValue ?? ""
       arguments = envelope["arguments"] ?? .null
     }
-    guard ["files_read", "files_read_range", "files_get_function"].contains(name),
+    guard availableTools?.contains(name) != false,
+      ["files_read", "files_read_range", "files_get_function"].contains(name),
       arguments.objectValue?["path"]?.stringValue != nil
         || (name == "files_read" && arguments.objectValue?["reads"]?.arrayValue?.isEmpty == false)
     else { return nil }

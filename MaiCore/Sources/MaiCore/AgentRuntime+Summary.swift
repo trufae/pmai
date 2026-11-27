@@ -96,11 +96,16 @@ extension AgentRuntime {
       max(1, inference.options.maxOutputTokens ?? 16_384), max(1, window / 4))
     inference.options.maxOutputTokens = min(
       max(1, outputLimit ?? inference.options.maxOutputTokens ?? 2_048), maximumOutput)
+    let allowance = inference.options.maxOutputTokens ?? 2_048
     let budget = min(
       inputLimit ?? Int.max, Self.inputTokenBudget(window: window, options: inference.options))
     var messages = inference.messages
     if let effort = ReasoningEffort.promptSection(for: inference.options) {
       insertSystem(effort, into: &messages)
+    }
+    let proseSummary = AgentDiagnosticScope.current?.purpose != "tool-results"
+    if proseSummary {
+      insertSystem("Aim for a concise summary within \(min(1_024, max(1, allowance / 2))) tokens. Follow the requested format. Preserve decisions, constraints, exact identifiers and unresolved work. Refer to large files and logs by path and relevant findings.", into: &messages)
     }
     let providerRequest = ProviderRequest(
       model: inference.model, messages: messages, tools: [], toolChoice: .none,
@@ -113,6 +118,7 @@ extension AgentRuntime {
         "outputLimit": .integer(inference.options.maxOutputTokens ?? 0),
         "estimatedInputTokens": .integer(Self.contextTokens(providerRequest)),
       ]))
+    var splitAfterCutoff = false
     if Self.contextTokens(providerRequest) <= budget {
       do {
         let call = try await complete(
@@ -126,8 +132,12 @@ extension AgentRuntime {
         await state.budget.record(tokens: usage.totalTokens)
         let text = MessageContentFilter.textWithoutReasoning(from: call.response.message.text)
           .trimmingCharacters(in: .whitespacesAndNewlines)
-        let allowance = inference.options.maxOutputTokens ?? 2_048
-        if (call.response.stopReason == .length || text.isEmpty), allowance < maximumOutput {
+        if call.response.stopReason != .length, !text.isEmpty { return text }
+        // A long visible partial is evidence that the source will not fit in
+        // one summary. Shorten the input instead of repeatedly paying for it.
+        splitAfterCutoff = proseSummary && source.utf8.count >= 2_048
+          && (allowance == maximumOutput || (text.utf8.count >= 512 && source.utf8.count / 16 >= allowance))
+        if !splitAfterCutoff, allowance < maximumOutput {
           noteDiagnostic("compaction.outputRetry", context: state.context, sessionID: state.request.sessionID,
             value: .object(["reason": .string(text.isEmpty ? "empty-summary" : "output-limit"),
               "nextOutputLimit": .integer(min(maximumOutput, allowance * 2))]))
@@ -137,9 +147,9 @@ extension AgentRuntime {
             source: source, render: render, state: &state, inputLimit: inputLimit,
             depth: depth + 1, outputLimit: min(maximumOutput, allowance * 2))
         }
-        guard call.response.stopReason != .length else { throw SummaryError.truncated }
-        guard !text.isEmpty else { throw SummaryError.empty }
-        return text
+        if !splitAfterCutoff {
+          throw call.response.stopReason == .length ? SummaryError.truncated : SummaryError.empty
+        }
       } catch is ProviderContextLimitError {
         noteDiagnostic("compaction.overflowRetry", context: state.context, sessionID: state.request.sessionID,
           value: .object(["depth": .integer(depth)]))
@@ -165,13 +175,15 @@ extension AgentRuntime {
     // Measure expansion from JSON escaping and repeated template placeholders,
     // rather than assuming a fixed number of source characters per token.
     let share = min(0.8, Double(available) / Double(evidenceTokens) * 0.8)
-    let chunkBytes = Int(Double(source.utf8.count) * share)
+    let inputChunkBytes = Int(Double(source.utf8.count) * share)
+    let chunkBytes = splitAfterCutoff ? min(inputChunkBytes, source.utf8.count / 2) : inputChunkBytes
     guard chunkBytes >= 256 else { throw SummaryError.instructionsTooLarge }
     let chunks = Self.summaryChunks(source, maxBytes: chunkBytes)
     guard chunks.count > 1 else { throw SummaryError.cannotReduce }
     noteDiagnostic("compaction.split", context: state.context, sessionID: state.request.sessionID,
       value: .object(["depth": .integer(depth), "chunks": .integer(chunks.count),
-        "chunkBytes": .integer(chunkBytes)]))
+        "chunkBytes": .integer(chunkBytes),
+        "reason": .string(splitAfterCutoff ? "summary-output-limit" : "input-budget")]))
     var partials: [String] = []
     for chunk in chunks {
       partials.append(

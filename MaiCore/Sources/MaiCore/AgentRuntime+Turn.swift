@@ -297,6 +297,10 @@ extension AgentRuntime {
       }
       providerRequest.messages = state.smartContext.messages(from: context)
     }
+    if selectingTools {
+      AgentContextPruning.projectToolReads(&providerRequest.messages, activeTaskID: state.activeTaskID,
+        availableTools: Set(concreteDefinitions.map(\.name)))
+    }
     // Do not race a final answer ahead of the broadcast's inbox delivery.
     state.hurryApplied = hurrying && state.transcript.contains {
       $0.role == .user && $0.text == Self.hurryPrompt
