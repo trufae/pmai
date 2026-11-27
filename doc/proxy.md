@@ -56,9 +56,10 @@ characters, roughly 2.2k tokens, after the catalog cut recorded in `test/PLAN.md
 (it was 23 tools and 16k characters before), and it is resent on every model
 turn of every run because the schemas live outside the conversation.
 
-With the proxy, the request carries only the two proxy schemas, which now end
-with the names of the enabled tools (about 340 tokens for the standard set). The model calls `list-tools keywords=…` to learn what exists and how
-to call it, then `call-tool name=… arguments={…}`. The runtime resolves the
+With the pure proxy, the request carries two schemas. For up to six discoverable
+tools, the discovery description includes their names. Larger catalogs use a
+fixed description. The model calls `list-tools keywords=…` to fetch matching
+names and parameters, then `call-tool name=… arguments={…}`. The runtime resolves the
 concrete tool (`ToolProxy.resolveCall`) and runs it exactly as if it had been
 called directly; approval rules, the identical-call guard and the tool budget
 all apply to the resolved call.

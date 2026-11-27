@@ -244,7 +244,7 @@ func compactJSONSortsKeys() {
   #expect(value.compactJSONString == #"{"entries":[1],"path":".","workspace":"w"}"#)
 }
 
-@Test("Tool proxy names its catalog and caps a broad listing")
+@Test("Tool proxy keeps large catalogs in discovery and caps a broad listing")
 func toolProxyCatalogAndCap() {
   let catalog = (1...9).map { index in
     ToolDefinition(
@@ -256,10 +256,9 @@ func toolProxyCatalogAndCap() {
   }
   let definitions = ToolProxy.definitions(for: catalog)
   #expect(definitions.map(\.name) == [ToolProxy.listName, ToolProxy.callName])
-  #expect(
-    definitions[0].description.contains(
-      "files_op1 (Work with files, operation 1); files_op2 (Work with files, operation 2)"))
-  #expect(ToolProxy.definitions.first?.description.contains("They are:") == false)
+  #expect(definitions[0].description == ToolProxy.definitions[0].description)
+  let found = ToolProxy.listTools(arguments: ["keywords": .string("files_op9")], definitions: catalog)
+  #expect(found.contains("files_op9") && found.contains("path"))
 
   // Hybrid: the common tools stay native, the rest sit behind the two proxy tools.
   let hybridCatalog = [
@@ -268,7 +267,7 @@ func toolProxyCatalogAndCap() {
   ]
   let hybrid = ToolProxy.definitions(for: hybridCatalog)
   #expect(hybrid.map(\.name) == ["files_read", ToolProxy.listName, ToolProxy.callName])
-  #expect(hybrid[1].description.contains("weather (Look up a forecast)"))
+  #expect(hybrid[1].description.contains("weather"))
   #expect(!hybrid[1].description.contains("files_read"))
   #expect(
     ToolProxy.definitions(for: hybridCatalog, exposing: []).map(\.name)
@@ -691,7 +690,7 @@ func proxiedToolLoop(wrapped: Bool) async throws {
   #expect(result.transcript.flatMap(\.toolResults).first?.text == "HELLO")
   let offered = await provider.requests.first?.tools ?? []
   #expect(offered.map(\.name) == [ToolProxy.listName, ToolProxy.callName])
-  #expect(offered.first?.description.contains("They are: uppercase") == true)
+  #expect(offered.first?.description.contains("uppercase") == true)
 }
 
 @Test("Tool result events carry importance from the resolved definition", arguments: [false, true])

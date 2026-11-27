@@ -97,6 +97,8 @@ public final class StreamTimingRecorder: @unchecked Sendable {
 public struct ModelCallStats: Codable, Equatable, Sendable {
   public var providerLabel: String
   public var modelID: String
+  public var completionID: String?
+  public var requestWallSeconds: TimeInterval?
   public var inputTokens: Int
   /// Estimated tokens in the user-authored message(s) for this turn only.
   public var userInputTokens: Int?
@@ -221,6 +223,8 @@ public struct ModelCallStats: Codable, Equatable, Sendable {
   }
 
   public mutating func merge(_ other: ModelCallStats) {
+    completionID = nil
+    requestWallSeconds = nil
     providerLabel = other.providerLabel
     modelID = other.modelID
     inputTokens += other.inputTokens
@@ -266,7 +270,7 @@ public struct ModelCallStats: Codable, Equatable, Sendable {
           return false
         }.count
     }
-    return measured(
+    var stats = measured(
       providerLabel: providerLabel,
       modelID: modelID,
       usage: response.usage,
@@ -276,6 +280,8 @@ public struct ModelCallStats: Codable, Equatable, Sendable {
       end: end,
       userInputTokens: userInputTokens,
       imageInputs: images > 0 ? images : nil)
+    stats.completionID = response.completionID
+    return stats
   }
 
   /// The stats of one call from what every host has at hand once a call
@@ -296,7 +302,7 @@ public struct ModelCallStats: Codable, Equatable, Sendable {
   ) -> ModelCallStats {
     let resolved = resolveTiming(timing, end: end)
     let receivedTextTokens = estimatedTokenCount(forCharacterCount: outputCharacterCount)
-    return ModelCallStats(
+    var stats = ModelCallStats(
       providerLabel: providerLabel,
       modelID: modelID,
       inputTokens: usage?.inputTokens ?? estimatedInputTokens,
@@ -310,6 +316,8 @@ public struct ModelCallStats: Codable, Equatable, Sendable {
       generationSeconds: resolved.generationSeconds,
       firstTokenSeconds: resolved.firstTokenSeconds,
       tokensEstimated: usage?.isEstimated ?? true)
+    stats.requestWallSeconds = max(0, end.timeIntervalSince(timing.requestStart))
+    return stats
   }
 }
 
@@ -348,6 +356,7 @@ public struct ModelUsageTotals: Codable, Identifiable, Equatable, Sendable {
   public var estimatedCallCount = 0
   /// Speed of the most recent call, over all output tokens.
   public var lastOutputTokensPerSecond: Double?
+  public var lastRequest: ModelCallStats?
   /// Nil on old ledgers, whose saved last speed used all completion tokens.
   public var lastOutputSpeedEstimated: Bool?
   public var lastFirstTokenSeconds: TimeInterval?
@@ -419,6 +428,7 @@ public struct ModelUsageTotals: Codable, Identifiable, Equatable, Sendable {
     accumulate(&imageInputs, stats.imageInputs)
     callCount += stats.callCount
     if stats.tokensEstimated { estimatedCallCount += stats.callCount }
+    lastRequest = stats.callCount == 1 && stats.requestWallSeconds != nil ? stats : nil
     lastOutputTokensPerSecond = stats.tokensPerSecond
     lastOutputSpeedEstimated = stats.tokensPerSecond.map { _ in stats.tokensEstimated }
     if let firstTokenSeconds = stats.firstTokenSeconds {
@@ -469,6 +479,16 @@ public struct ModelUsageTotals: Codable, Identifiable, Equatable, Sendable {
         ModelUsageFormat.speed($0, estimated: estimated)
       }),
       ("Last output speed", lastOutputSpeedText),
+      ("Last completion ID", lastRequest?.completionID),
+      ("Last request tokens", lastRequest.map { call in
+        let approx = call.tokensEstimated ? "~" : ""
+        return "\(approx)\(call.inputTokens) in · \(approx)\(call.outputTokens) out · \(call.cachedTokens) cached"
+      }),
+      ("Last request wall speed", lastRequest.flatMap { call in
+        guard let seconds = call.requestWallSeconds, seconds > 0 else { return nil }
+        return ModelUsageFormat.speed(Double(call.outputTokens) / seconds, estimated: call.tokensEstimated)
+          + " over " + ModelUsageFormat.seconds(seconds)
+      }),
       ("Prompt processing speed", averagePromptTokensPerSecond.map(ModelUsageFormat.speed)),
       ("Last time to first token", lastFirstTokenSeconds.map(ModelUsageFormat.seconds)),
       ("Average time to first token", averageFirstTokenSeconds.map(ModelUsageFormat.seconds)),

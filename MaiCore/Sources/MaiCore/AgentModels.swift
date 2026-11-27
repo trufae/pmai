@@ -825,6 +825,7 @@ public struct ProviderRequest: Codable, Sendable {
 }
 
 public struct ProviderResponse: Codable, Equatable, Sendable {
+  public var completionID: String?
   public var contextUsage: ContextUsage?
   public var message: AgentMessage
   public var usage: TokenUsage?
@@ -836,8 +837,10 @@ public struct ProviderResponse: Codable, Equatable, Sendable {
     usage: TokenUsage? = nil,
     stopReason: ProviderStopReason = .unknown,
     toolDecision: ToolChoice? = nil,
-    contextUsage: ContextUsage? = nil
+    contextUsage: ContextUsage? = nil,
+    completionID: String? = nil
   ) {
+    self.completionID = completionID
     self.message = message
     self.usage = usage
     self.stopReason = stopReason

@@ -23,9 +23,6 @@ public enum ToolProxy {
     "files_read", "files_grep", "files_patch", "files_write", "files_list", "run_shell",
   ]
 
-  /// Tools shown at most in the list-tools description before "and N more".
-  static let maximumDescribedTools = 40
-
   /// The definitions a proxied run offers: the exposed tools as they are,
   /// then list-tools and call-tool for the rest. `exposed` nil means
   /// `defaultExposedNames`; an empty set is the pure proxy.
@@ -63,18 +60,11 @@ public enum ToolProxy {
   public static let repairHint =
     "Tools not offered directly run through \(callAPIName): {\"name\": TOOL, \"arguments\": {…}}; call \(listAPIName) directly to see their arguments."
 
-  /// list-tools, describing what it reaches: each hidden tool's name and the
-  /// start of its description, so the model knows what exists without paying
-  /// for the schemas until it needs one.
+  /// Keep large catalogs in discovery results so every model turn can reuse the same schema.
   static func listDefinition(for hidden: [ToolDefinition]) -> ToolDefinition {
-    var description =
-      "Call this function directly to discover tools and their arguments."
-    description += " Search for a tool's name or capability, then use \(callAPIName) with its arguments to perform the task."
-    if !hidden.isEmpty {
-      let shown = hidden.prefix(maximumDescribedTools).map { "\($0.name) (\(blurb($0.description)))" }
-      description += " They are: " + shown.joined(separator: "; ")
-      if hidden.count > shown.count { description += "; and \(hidden.count - shown.count) more" }
-      description += "."
+    var description = "Find available tools and their arguments. Use call_tool to run a discovered tool."
+    if !hidden.isEmpty && hidden.count <= detailedMatches {
+      description += " Available: " + hidden.map(\.name).joined(separator: ", ") + "."
     }
     var definition = ToolDefinition(
       name: listName,
@@ -83,7 +73,7 @@ public enum ToolProxy {
         ToolParameterDef(
           name: "keywords",
           type: "string",
-          description: "Space-separated tool names or capabilities. Omit to browse tools. Put the user's search query in the discovered tool's arguments.",
+          description: "Tool names or capabilities. Omit to browse.",
           required: false)
       ],
       annotations: ToolAnnotations(
@@ -97,7 +87,7 @@ public enum ToolProxy {
     var definition = ToolDefinition(
       name: callName,
       description:
-        "Run a concrete tool by exact name with JSON arguments. Set name to the target tool, never \(callAPIName), and arguments to that tool's parameter object; do not wrap them in another name/arguments envelope. Call \(listAPIName) only when you need to discover a tool or its arguments. Some tools are callable by known name without appearing in discovery.",
+        "Run a tool by its exact name. Pass its arguments directly in the arguments object.",
       parameters: [
         ToolParameterDef(
           name: "name",
@@ -107,23 +97,13 @@ public enum ToolProxy {
         ToolParameterDef(
           name: "arguments",
           type: "object",
-          description: "JSON object with arguments for the selected tool. Use {} when none.",
+          description: "Tool parameters, or {}.",
           required: true),
       ],
       annotations: ToolAnnotations(approval: .automatic))
     definition.providerName = callAPIName
     return definition
   }()
-
-  /// The first clause of a description, cut to a few words.
-  static func blurb(_ description: String) -> String {
-    let clause =
-      description.split(whereSeparator: { $0 == "." || $0 == ";" || $0 == ":" }).first.map(String.init)
-      ?? description
-    let trimmed = clause.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard trimmed.count > 48 else { return trimmed }
-    return String(trimmed.prefix(48)).trimmingCharacters(in: .whitespaces) + "…"
-  }
 
   public static func listTools(
     arguments: [String: AgentToolArgumentValue],

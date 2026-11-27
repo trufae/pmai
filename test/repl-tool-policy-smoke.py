@@ -97,6 +97,14 @@ for line in sys.stdin:
                 assert not answers, answers
                 return output, list(requests)
 
+            def discover(commands):
+                output, calls = run(commands, [call('list_tools', {}), final])
+                catalog = '\n'.join(line for m in calls[-1]['messages'] if m['role'] == 'system'
+                                    for line in message_text(m).splitlines()
+                                    if line.startswith(('- ', 'Also matching, named only:')))
+                assert 'Also matching' in catalog or 'Arguments:' in catalog, catalog
+                return output, calls, catalog
+
             def agent_settings():
                 agents = json.loads(config.read_text())['agents']
                 for agent in agents:
@@ -161,19 +169,17 @@ for line in sys.stdin:
             assert agent_settings() == before, 'global on changed individual settings'
             assert json.loads(config.read_text())['toolsEnabled'] is True
 
-            output, calls = run([
+            output, calls, catalog = discover([
                 '/tools proxy github', '/tools direct github/pr', '/tools direct github/issue',
                 '/tools disable github/ci_log', '/mcp direct fixture/search',
                 '/skills disable beta', '/tools show github', 'Show capabilities',
-            ], [final])
+            ])
             assert 'github_pr [● direct] 0 calls' in output, output
             assert 'github_ci_log [○ disabled] 0 calls' in output, output
             offered = {t['function']['name'] for t in calls[0]['tools']}
             assert {'files_read', 'github_pr', 'github_issue', 'external_search',
                     'list_tools', 'call_tool'} <= offered, offered
             assert not {'github_ci_log', 'skills_beta', 'skills_alpha', 'external::read'} & offered
-            catalog = next(t['function']['description'] for t in calls[0]['tools']
-                           if t['function']['name'] == 'list_tools')
             assert 'external::read' in catalog and 'skills_alpha' in catalog, catalog
             assert 'github_ci_log' not in catalog and 'skills_beta' not in catalog, catalog
 
@@ -206,16 +212,12 @@ for line in sys.stdin:
             output, calls = run(['/set tool.auto on', 'Auto on'], [final])
             assert 'skills_alpha' in {t['function']['name'] for t in calls[0]['tools']}
 
-            output, calls = run(['/tools disable mcp/fixture', '/mcp proxy fixture/search',
-                                 '/mcp tools fixture', 'Restricted MCP'], [final])
-            catalog = next(t['function']['description'] for t in calls[0]['tools']
-                           if t['function']['name'] == 'list_tools')
+            output, calls, catalog = discover(['/tools disable mcp/fixture', '/mcp proxy fixture/search',
+                                 '/mcp tools fixture', 'Restricted MCP'])
             assert 'external::read' not in catalog and 'external::search' in catalog, catalog
-            output, calls = run(['/tools disable mcp', '/tools inherit mcp/fixture',
+            output, calls, catalog = discover(['/tools disable mcp', '/tools inherit mcp/fixture',
                                  '/tools inherit external::search', '/tools enable mcp/fixture',
-                                 '/mcp list', '/tools show agent_start', 'MCP enabled'], [final])
-            catalog = next(t['function']['description'] for t in calls[0]['tools']
-                           if t['function']['name'] == 'list_tools')
+                                 '/mcp list', '/tools show agent_start', 'MCP enabled'])
             assert 'external::read' in catalog and 'external::search' in catalog, catalog
             assert '0 calls' in output and 'agent_start [' in output, output
             saved = json.loads(config.read_text())['agents'][0]
@@ -233,7 +235,7 @@ for line in sys.stdin:
             assert not {'github_issue', 'skills_alpha', 'external_search', 'external_read'} & offered
             catalog = next(t['function']['description'] for t in calls[0]['tools']
                            if t['function']['name'] == 'list_tools')
-            assert not any(name + ' (' in catalog for name in
+            assert not any(name in catalog for name in
                            ('github_issue', 'skills_alpha', 'external::search', 'external::read')), catalog
             saved = json.loads(config.read_text())['agents'][0]['toolPolicy']
             assert saved['tools']['github_issue'] == 'hidden', saved
@@ -260,13 +262,12 @@ for line in sys.stdin:
 
             # Airplane mode is global and reversible; proxy/direct pins cannot bypass it.
             profile_before = agent_settings()
-            output, calls = run(['/set airplane on', '/tools show github', 'Offline tools'], [final])
+            output, calls, catalog = discover(['/set airplane on', '/tools show github', 'Offline tools'])
             assert 'airplane = on ✈' in output, output
             assert 'github_pr [○ disabled] 0 calls' in output, output
             offered = {t['function']['name'] for t in calls[0]['tools']}
             assert 'files_read' in offered, offered
             assert not any(name.startswith(('github_', 'weather', 'web_', 'mastodon')) for name in offered), offered
-            catalog = next(t['function']['description'] for t in calls[0]['tools'] if t['function']['name'] == 'list_tools')
             assert not any(name in catalog for name in ('github_pr', 'weather', 'web_search', 'mastodon')), catalog
             assert 'external::read' in catalog, catalog
             assert json.loads(config.read_text())['airplane'] is True

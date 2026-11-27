@@ -594,7 +594,8 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
     return ProviderResponse(
       message: message,
       usage: usage,
-      stopReason: stopReason)
+      stopReason: stopReason,
+      completionID: root["id"]?.stringValue)
   }
 
   private func stream(
@@ -659,6 +660,7 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
     }
 
     var hasContent = false
+    var completionID: String?
     var reasoningStream = ReasoningStream()
     var usage: TokenUsage?
     var stopReason = ProviderStopReason.unknown
@@ -690,6 +692,7 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
       if let error = providerError(in: root, response: http) {
         throw error
       }
+      if completionID == nil { completionID = root["id"]?.stringValue }
       // Some servers attach usage to every chunk, zero or cumulative until
       // the last one. Only the final figures count, announced once below.
       if let value = try tokenUsage(root["usage"]) { usage = value }
@@ -793,7 +796,8 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
     return ProviderResponse(
       message: AgentMessage(role: .assistant, content: parts),
       usage: usage,
-      stopReason: completedCalls.isEmpty ? stopReason : .toolCall)
+      stopReason: completedCalls.isEmpty ? stopReason : .toolCall,
+      completionID: completionID)
   }
 
   private func emitParts(_ parts: [ContentPart], emit: ProviderEventHandler) async {
