@@ -35,6 +35,8 @@ extension AgentRuntime {
     var pendingDecision: ToolChoice?
     var usingPrimary = false
     var repeatedCalls: [ToolCallKey: Int] = [:]
+    var recentReads: [ToolCallKey: ReadEvidence] = [:]
+    var repeatedReads: [String: RepeatedRead] = [:]
     var repeatGuardTripped = false
     var consecutiveRepairs = 0
     var goal: AgentGoal?

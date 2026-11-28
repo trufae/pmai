@@ -287,6 +287,7 @@ extension AgentRuntime {
       }
       providerRequest.messages = state.smartContext.messages(from: context)
     }
+    RepeatedRead.project(state.repeatedReads, onto: &providerRequest.messages)
     // Do not race a final answer ahead of the broadcast's inbox delivery.
     state.hurryApplied = hurrying && state.transcript.contains {
       $0.role == .user && $0.text == Self.hurryPrompt

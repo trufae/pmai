@@ -357,6 +357,45 @@ func repeatedCallWithdrawsTools() async throws {
   #expect(result.transcript.contains { $0.toolResults.contains { $0.text.contains("already run 3 times") } })
 }
 
+@Test("Repeat reads reference only verified, visible evidence from before any workspace mutation",
+  arguments: ["same", "changed", "write"])
+func repeatedFileReadEvidence(scenario: String) async throws {
+  func reply(_ id: String, _ name: String) -> ProviderResponse {
+    .init(message: AgentMessage(role: .assistant, content: [
+      .toolCall(.init(id: id, name: name, arguments: .object(["path": .string("main.c")]))),
+    ]), stopReason: .toolCall)
+  }
+  let opening = reply("first", "files_read")
+  let repeated = reply("second", "files_read")
+  let responses = [opening] + (scenario == "write" ? [reply("edit", "files_patch")] : [])
+    + [repeated, .init(message: .assistant("Done"), stopReason: .stop)]
+  let provider = ScriptedProvider(responses: responses)
+  let runtime = AgentRuntime()
+  try await runtime.register(provider)
+  try await runtime.register(tool: ClosureTool(definition: .init(name: "files_read",
+    description: "Read code", annotations: .init(readOnly: true, approval: .automatic))) { _, context in
+      ToolOutput(text: scenario == "changed" && context.modelTurn > 1 ? "New bytes" : "Original bytes")
+    })
+  try await runtime.register(tool: ClosureTool(definition: .init(name: "files_patch",
+    description: "Write code", annotations: .init(approval: .automatic))) { _, _ in
+      ToolOutput(text: "Edited")
+    })
+  let result = try await runtime.run(.init(provider: "scripted", model: "fixture",
+    messages: [.user("Read main.c")], toolNames: ["files_read", "files_patch"],
+    limits: .init(maxToolCalls: 5), retry: .none))
+  let request = try #require(await provider.requests.last)
+  let outgoing = try #require(request.messages.flatMap(\.toolResults).first { $0.callID == "second" })
+  let saved = try #require(result.transcript.flatMap(\.toolResults).first { $0.callID == "second" })
+  #expect(saved.text == (scenario == "changed" ? "New bytes" : "Original bytes"))
+  if scenario == "same" {
+    #expect(outgoing.text.contains("tool call first above"))
+    #expect(outgoing.text.contains("Tool calls remaining: 3."))
+    #expect(request.messages.flatMap(\.toolResults).first { $0.callID == "first" }?.text == "Original bytes")
+  } else {
+    #expect(outgoing == saved)
+  }
+}
+
 @Test("A run's session id reaches every provider request it makes")
 func sessionIDReachesProviderRequests() async throws {
   let provider = ScriptedProvider(responses: [

@@ -397,6 +397,7 @@ extension AgentRuntime {
     let usedTokens = state.contextSize.estimatedTokens
     var results = [ToolResult?](repeating: nil, count: calls.count)
     var changesState = [Bool](repeating: false, count: calls.count)
+    var readKeys = [ToolCallKey?](repeating: nil, count: calls.count)
     try await withThrowingTaskGroup(of: (Int, ToolResult).self) { group in
       for (index, call) in calls.enumerated() {
         try Task.checkCancellation()
@@ -430,9 +431,16 @@ extension AgentRuntime {
         let callDefinitions = try visibleDefinitions(for: callRequest, depth: depth)
         let name = AgentProcessTools.canonicalName(call.name)
         let pollable = AgentProcessTools.reservedToolNames.contains(name)
-        changesState[index] =
-          !pollable
-          && callDefinitions.contains { $0.name == name && !$0.annotations.readOnly }
+        let target = callRequest.usesToolProxy && name == ToolProxy.callName
+          ? ToolProxy.resolveCall(arguments: call.arguments.objectValue ?? [:], definitions: callDefinitions).call
+          : nil
+        let targetName = target?.name ?? name
+        if let definition = callDefinitions.first(where: { $0.name == targetName }) {
+          changesState[index] = !pollable && !definition.annotations.readOnly
+          if definition.annotations.readOnly && Self.repeatableFileReads.contains(targetName) {
+            readKeys[index] = target.map(ToolCallKey.init) ?? ToolCallKey(call)
+          }
+        }
         if await budget.deadlinePassed {
           // Out of time between two calls: the rest are answered rather
           // than run, so the transcript stays sendable and the pause at
@@ -508,9 +516,30 @@ extension AgentRuntime {
         results[index] = result
       }
     }
+    // A mixed batch can run tools concurrently, and even a failed write can
+    // change the workspace. Establish new read evidence on a later batch.
+    let readOnlyBatch = readKeys.allSatisfy { $0 != nil }
+    if !readOnlyBatch { state.recentReads.removeAll() }
     for (index, call) in calls.enumerated() {
       guard let result = results[index] else { continue }
-      state.transcript.append(AgentMessage(role: .tool, content: [.toolResult(result)]))
+      let message = AgentMessage(role: .tool, content: [.toolResult(result)])
+      state.transcript.append(message)
+      if readOnlyBatch, let key = readKeys[index] {
+        if result.isError {
+          state.recentReads.removeValue(forKey: key)
+        } else if let prior = state.recentReads[key],
+          state.modelRequest?.messages.contains(where: {
+            $0.id == prior.messageID && $0.toolResults.contains(prior.result)
+          }) == true,
+          prior.result.content == result.content, prior.result.structuredContent == result.structuredContent
+        {
+          state.repeatedReads[message.id] = RepeatedRead(
+            original: prior, current: result,
+            remaining: state.request.limits.remainingToolCalls(used: state.toolCalls))
+        } else {
+          state.recentReads[key] = ReadEvidence(messageID: message.id, result: result)
+        }
+      }
       // A call that changed something makes repeating an earlier call
       // reasonable again — the tests run after each fix are the common
       // case — so every other call's identical-call count starts over.
@@ -522,6 +551,42 @@ extension AgentRuntime {
     await supervisor.note(
       pid, transcript: state.transcript,
       contextSize: state.contextSize)
+  }
+
+  private static let repeatableFileReads: Set<String> = [
+    "files_read", "files_read_range", "files_get_function", "files_grep", "files_find", "files_list",
+  ]
+
+  struct ReadEvidence {
+    let messageID: String
+    let result: ToolResult
+  }
+
+  struct RepeatedRead {
+    let original: ReadEvidence
+    let current: ToolResult
+    let remaining: Int
+
+    static func project(_ reads: [String: Self], onto messages: inout [AgentMessage]) {
+      guard !reads.isEmpty else { return }
+      let originals = Set(reads.values.map(\.original.messageID))
+      var present: [String: [ToolResult]] = [:]
+      for index in messages.indices {
+        let id = messages[index].id
+        if originals.contains(id) { present[id] = messages[index].toolResults }
+        guard !messages[index].isPinned, let read = reads[id],
+          present[read.original.messageID]?.contains(read.original.result) == true
+        else { continue }
+        let allowance = read.remaining == Int.max ? "Tool calls remaining: unlimited." : "Tool calls remaining: \(read.remaining)."
+        messages[index].content = messages[index].content.map { part in
+          guard case .toolResult(let result) = part, result == read.current else { return part }
+          return .toolResult(ToolResult(callID: result.callID,
+            text: "[This read returned the same evidence as tool call \(read.original.result.callID) above. Use that result. \(allowance)]",
+            importance: result.importance))
+        }
+        if originals.contains(id) { present[id] = messages[index].toolResults }
+      }
+    }
   }
 
   /// A one-shot signal a concurrent call gives once it is under way — a
