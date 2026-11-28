@@ -288,6 +288,22 @@ extension AgentRuntime {
       providerRequest.messages = state.smartContext.messages(from: context)
     }
     RepeatedRead.project(state.repeatedReads, onto: &providerRequest.messages)
+    if !selectingTools, !managesToolLoop, !state.editReceipt.isEmpty,
+      let index = providerRequest.messages.lastIndex(where: { !$0.toolResults.isEmpty }),
+      let part = providerRequest.messages[index].content.lastIndex(where: {
+        if case .toolResult = $0 { return true }
+        return false
+      }), case .toolResult(var result) = providerRequest.messages[index].content[part]
+    {
+      let records = commandHistory.records(sessionID: state.request.sessionID ?? state.context.runID.uuidString)
+        .filter { $0.run.runID == state.context.runID }
+      var withReceipt = providerRequest
+      result.content.append(.text(state.editReceipt.text(commands: records)))
+      withReceipt.messages[index].content[part] = .toolResult(result)
+      let available = contextWindow(provider: inference.provider, model: inference.model, options: inference.options)
+        .map { Self.inputTokenBudget(window: $0, options: inference.options) }
+      if available.map({ Self.contextTokens(withReceipt) < $0 }) ?? true { providerRequest = withReceipt }
+    }
     // Do not race a final answer ahead of the broadcast's inbox delivery.
     state.hurryApplied = hurrying && state.transcript.contains {
       $0.role == .user && $0.text == Self.hurryPrompt

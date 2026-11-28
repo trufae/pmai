@@ -398,6 +398,7 @@ extension AgentRuntime {
     var results = [ToolResult?](repeating: nil, count: calls.count)
     var changesState = [Bool](repeating: false, count: calls.count)
     var readKeys = [ToolCallKey?](repeating: nil, count: calls.count)
+    var patchCalls = [Bool](repeating: false, count: calls.count)
     try await withThrowingTaskGroup(of: (Int, ToolResult).self) { group in
       for (index, call) in calls.enumerated() {
         try Task.checkCancellation()
@@ -436,6 +437,7 @@ extension AgentRuntime {
           : nil
         let targetName = target?.name ?? name
         if let definition = callDefinitions.first(where: { $0.name == targetName }) {
+          patchCalls[index] = targetName == "files_patch"
           changesState[index] = !pollable && !definition.annotations.readOnly
           if definition.annotations.readOnly && Self.repeatableFileReads.contains(targetName) {
             readKeys[index] = target.map(ToolCallKey.init) ?? ToolCallKey(call)
@@ -524,6 +526,7 @@ extension AgentRuntime {
       guard let result = results[index] else { continue }
       let message = AgentMessage(role: .tool, content: [.toolResult(result)])
       state.transcript.append(message)
+      if patchCalls[index] { state.editReceipt.record(result) }
       if readOnlyBatch, let key = readKeys[index] {
         if result.isError {
           state.recentReads.removeValue(forKey: key)

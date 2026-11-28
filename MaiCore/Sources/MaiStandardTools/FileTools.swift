@@ -1518,13 +1518,20 @@ struct MaiFileWorkspace: Sendable {
         throw MaiFilePatchError(
           message: "Could not write '\(displayPath(file.path))': \(error.localizedDescription). \(state)",
           details: ["path": .string(displayPath(file.path)), "changed": .bool(!changed.isEmpty),
-            "changed_paths": .array(changed)])
+            "changed_paths": .array(changed), "files": .array(outputs.compactMap(\.structuredContent))])
       }
+      let diff = MaiUnifiedDiff.render(old: file.original, new: file.text, path: displayPath(file.path))
+      let preview = diff.utf8.prefix(4_096)
+      let truncated = preview.count < diff.utf8.count
+      let completeLines = truncated ? preview.lastIndex(of: 0x0A).map { preview[..<$0] } ?? preview.prefix(0) : preview
+      let lines = completeLines.isEmpty ? [] : String(decoding: completeLines, as: UTF8.self).components(separatedBy: "\n")
       outputs.append(mutationOutput(
         "Patched \(file.matches) match\(file.matches == 1 ? "" : "es") in \(displayPath(file.path)).",
         path: file.path,
-        diff: MaiUnifiedDiff.render(old: file.original, new: file.text, path: displayPath(file.path)),
-        extra: ["matches": .integer(file.matches)]))
+        diff: diff,
+        extra: ["matches": .integer(file.matches), "changed": .bool(didChange),
+          "diff_lines": didChange && diff.isEmpty ? .null : .array(lines.map(JSONValue.string)),
+          "diff_truncated": .bool(truncated)]))
     }
     if !batch { return outputs[0] }
     return ToolOutput(
@@ -2558,7 +2565,7 @@ struct MaiFileWorkspace: Sendable {
     var values: [String: JSONValue] = ["path": .string(displayPath(path))]
     values.merge(extra) { _, new in new }
     let rendered = diff.map { $0.isEmpty ? text : text + "\n" + $0 } ?? text
-    if let diff { values["changed"] = .bool(!diff.isEmpty) }
+    if let diff, values["changed"] == nil { values["changed"] = .bool(!diff.isEmpty) }
     return ToolOutput(content: [.text(rendered)], structuredContent: .object(values))
   }
 }

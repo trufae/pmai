@@ -345,6 +345,47 @@ func nativeToolAliasesUseCanonicalDispatch() async throws {
   #expect(approvals.first?.call.arguments == .object(["command": .string("printf repaired")]))
 }
 
+@Test("The acting model sees actual patch lines and command exits in the edit receipt")
+func editReceiptUsesToolOutcomes() async throws {
+  let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+  try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: root) }
+  let file = root.appendingPathComponent("example.txt")
+  try Data("before\n".utf8).write(to: file)
+  func call(_ id: String, _ tool: String, _ arguments: [String: JSONValue]) -> ProviderResponse {
+    .init(message: .init(role: .assistant, content: [
+      .toolCall(.init(id: id, name: tool, arguments: .object(arguments))),
+    ]), stopReason: .toolCall)
+  }
+  let provider = UsabilityScriptedProvider(responses: [
+    call("patch", "files_patch", ["path": .string("example.txt"), "find": .string("before"), "replace": .string("after")]),
+    call("pass", "run_shell", ["script": .string("exit 0")]),
+    call("fail", "run_shell", ["script": .string("exit 7")]),
+    .init(message: .assistant("Done"), stopReason: .stop),
+  ])
+  let runtime = AgentRuntime(approvalHandler: AllowAllApprovals())
+  try await runtime.register(provider)
+  try await runtime.register(tool: MaiFileWorkspaceTool(operation: .patch,
+    configuration: .init(rootURL: root)))
+  for tool in MaiRunTool.makeTools(configuration: .init()) { try await runtime.register(tool: tool) }
+  let result = try await runtime.run(.init(provider: provider.descriptor.id, model: "fixture",
+    messages: [.user("Edit the file and run the checks")], toolNames: ["files_patch", "run_shell"], retry: .none))
+  #expect(try String(contentsOf: file, encoding: .utf8) == "after\n")
+  let request = try #require(await provider.requests.last)
+  let report = try #require(request.messages.flatMap(\.toolResults).last?.text)
+  let payload = try #require(report.split(separator: "\n").last)
+  let receipt = try JSONDecoder().decode(JSONValue.self, from: Data(payload.utf8)).objectValue
+  let patch = receipt?["patches"]?.arrayValue?.first?.objectValue
+  #expect(patch?["changed_paths"] == .array([.string("example.txt")]))
+  let lines = patch?["diffs"]?.arrayValue?.first?.objectValue?["lines"]?.arrayValue
+  #expect(lines?.contains(.string("-before")) == true)
+  #expect(lines?.contains(.string("+after")) == true)
+  let commands = receipt?["commands"]?.arrayValue?.compactMap(\.objectValue)
+  #expect(commands?.map { $0["exit_code"] } == [.integer(0), .integer(7)])
+  #expect(receipt?["other_checks_exit_code"] == .null)
+  #expect(!result.transcript.flatMap(\.toolResults).contains { $0.text.contains("Edit receipt for this run") })
+}
+
 // MARK: - Fixtures
 
 private func usabilityTool(
@@ -371,6 +412,7 @@ private actor UsabilityScriptedProvider: ChatProvider {
     displayName: "Usability scripted",
     capabilities: [.streaming, .nativeToolCalling])
   private var responses: [ProviderResponse]
+  private(set) var requests: [ProviderRequest] = []
 
   init(responses: [ProviderResponse]) {
     self.responses = responses
@@ -380,6 +422,7 @@ private actor UsabilityScriptedProvider: ChatProvider {
     _ request: ProviderRequest,
     emit: @escaping ProviderEventHandler
   ) async throws -> ProviderResponse {
+    requests.append(request)
     guard !responses.isEmpty else { throw UsabilityTestError.missingResponse }
     return responses.removeFirst()
   }

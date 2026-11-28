@@ -37,6 +37,7 @@ extension AgentRuntime {
     var repeatedCalls: [ToolCallKey: Int] = [:]
     var recentReads: [ToolCallKey: ReadEvidence] = [:]
     var repeatedReads: [String: RepeatedRead] = [:]
+    var editReceipt = AgentEditReceipt()
     var repeatGuardTripped = false
     var consecutiveRepairs = 0
     var goal: AgentGoal?
