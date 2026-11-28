@@ -231,11 +231,12 @@ extension AgentRuntime {
         requiredAtTokens: state.rejectedContextTokens == nil ? budget : threshold)
       var projected = providerRequest
       projected.messages = state.smartContext.messages(from: context)
+      let projectedTokens = Self.contextTokens(projected)
       noteDiagnostic("context.decision", context: state.context, sessionID: state.request.sessionID,
         purpose: "working-context", operationID: reductionID, value: .object([
           "strategy": .string(state.request.context.rawValue),
           "reason": .string(state.smartContext.decisionReason),
-          "estimatedInputTokens": .integer(Self.contextTokens(projected)),
+          "estimatedInputTokens": .integer(projectedTokens),
           "window": window.map(JSONValue.integer) ?? .null,
           "inputBudget": budget.map(JSONValue.integer) ?? .null,
           "threshold": .integer(threshold),
@@ -251,7 +252,9 @@ extension AgentRuntime {
             source: AgentSmartContext.transcript(for: evidence.messages, in: context),
             render: { AgentSmartContextPrompt.render(transcript: $0, template: template) },
             state: &state, outputLimit: min(8_000, max(2_048, threshold / 8)),
-            purpose: "working-context", operationID: reductionID)
+            purpose: "working-context", operationID: reductionID,
+            stopAfterRepeatedCutoffs: state.rejectedContextTokens == nil
+              && (budget.map { projectedTokens < $0 } ?? false))
           outcome = state.smartContext.store(brief, for: evidence.messages) ? "applied" : "unchanged"
         } catch let error where error is CancellationError || error is RunDeadlineExceeded || error is HurryRequested {
           throw error

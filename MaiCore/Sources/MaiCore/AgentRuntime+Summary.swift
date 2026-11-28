@@ -79,9 +79,10 @@ extension AgentRuntime {
   /// removed from the durable transcript until every call has succeeded.
   func compactText(
     source: String, render: @escaping @Sendable (String) -> String,
-    state: inout RunState, inputLimit: Int? = nil, depth: Int = 0, outputLimit: Int? = nil,
-    purpose: String = "manual-summary", operationID: UUID? = nil
+    state: inout RunState, outputLimit: Int? = nil, purpose: String = "manual-summary",
+    operationID: UUID? = nil, stopAfterRepeatedCutoffs: Bool = false
   ) async throws -> String {
+    var consecutiveCutoffs: Int? = stopAfterRepeatedCutoffs ? 0 : nil
     if AgentDiagnosticScope.current == nil {
       return try await AgentDiagnosticScope.$current.withValue(
         .init(operationID: operationID ?? UUID(), purpose: purpose)
@@ -93,7 +94,7 @@ extension AgentRuntime {
           ]))
         do {
           let text = try await compactText(source: source, render: render, state: &state,
-            inputLimit: inputLimit, depth: depth, outputLimit: outputLimit, purpose: purpose)
+            outputLimit: outputLimit, purpose: purpose, consecutiveCutoffs: &consecutiveCutoffs)
           noteDiagnostic("compaction.completed", context: state.context,
             sessionID: state.request.sessionID, value: .object([
               "summaryCharacters": .integer(text.count),
@@ -111,6 +112,15 @@ extension AgentRuntime {
         }
       }
     }
+    return try await compactText(source: source, render: render, state: &state,
+      outputLimit: outputLimit, purpose: purpose, consecutiveCutoffs: &consecutiveCutoffs)
+  }
+
+  private func compactText(
+    source: String, render: @escaping @Sendable (String) -> String,
+    state: inout RunState, inputLimit: Int? = nil, depth: Int = 0, outputLimit: Int?,
+    purpose: String, consecutiveCutoffs: inout Int?
+  ) async throws -> String {
     try Task.checkCancellation()
     guard depth < 12 else { throw SummaryError.cannotReduce }
     if let interruption = await state.budget.exhausted() {
@@ -172,6 +182,11 @@ extension AgentRuntime {
         state.totalUsage = state.totalUsage.merging(usage)
         await supervisor.note(state.pid, usage: state.totalUsage.merging(await state.budget.approvalUsage))
         await state.budget.record(tokens: usage.totalTokens)
+        if let previous = consecutiveCutoffs {
+          let count = call.response.stopReason == .length ? previous + 1 : 0
+          consecutiveCutoffs = count
+          if count >= 2 { throw SummaryError.truncated }
+        }
         let text = MessageContentFilter.textWithoutReasoning(from: call.response.message.text)
           .trimmingCharacters(in: .whitespacesAndNewlines)
         if call.response.stopReason != .length {
@@ -190,12 +205,14 @@ extension AgentRuntime {
           // the input budget too: more reply space may require smaller chunks.
           return try await compactText(
             source: source, render: render, state: &state, inputLimit: inputLimit,
-            depth: depth + 1, outputLimit: min(maximumOutput, allowance * 2), purpose: purpose)
+            depth: depth + 1, outputLimit: min(maximumOutput, allowance * 2), purpose: purpose,
+            consecutiveCutoffs: &consecutiveCutoffs)
         }
         if !splitAfterCutoff {
           throw call.response.stopReason == .length ? SummaryError.truncated : SummaryError.empty
         }
       } catch is ProviderContextLimitError {
+        if consecutiveCutoffs != nil { consecutiveCutoffs = 0 }
         noteDiagnostic("compaction.overflowRetry", context: state.context, sessionID: state.request.sessionID,
           value: .object(["depth": .integer(depth)]))
         // A conservative character estimate still cannot know every tokenizer.
@@ -203,7 +220,8 @@ extension AgentRuntime {
         return try await compactText(
           source: source, render: render, state: &state,
           inputLimit: min(budget - 1, max(1, Self.contextTokens(providerRequest) / 2)),
-          depth: depth + 1, outputLimit: outputLimit, purpose: purpose)
+          depth: depth + 1, outputLimit: outputLimit, purpose: purpose,
+          consecutiveCutoffs: &consecutiveCutoffs)
       }
     }
     if !proseSummary { throw SplitToolResults() }
@@ -235,14 +253,14 @@ extension AgentRuntime {
       partials.append(
         try await compactText(
           source: chunk, render: render, state: &state, inputLimit: budget, depth: depth + 1,
-          outputLimit: outputLimit, purpose: purpose))
+          outputLimit: outputLimit, purpose: purpose, consecutiveCutoffs: &consecutiveCutoffs))
     }
     let combined = partials.enumerated().map { "Part \($0.offset + 1):\n\($0.element)" }
       .joined(separator: "\n\n")
     guard combined.utf8.count < source.utf8.count else { throw SummaryError.cannotReduce }
     return try await compactText(
       source: combined, render: render, state: &state, inputLimit: budget, depth: depth + 1,
-      outputLimit: outputLimit, purpose: purpose)
+      outputLimit: outputLimit, purpose: purpose, consecutiveCutoffs: &consecutiveCutoffs)
   }
 
   /// Scalar boundaries preserve all text, including Unicode and a single

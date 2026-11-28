@@ -227,6 +227,33 @@ func smartContextDiscoversWindow(mode: AgentContextMode) async throws {
   #expect(await primary.requests.first?.messages.contains(messages[1]) == true)
 }
 
+@Test("Two truncated working summaries fall back only when the original request fits",
+  arguments: [false, true])
+func smartContextRepeatedSummaryCutoffs(requiresReduction: Bool) async throws {
+  let primary = SmartContextProvider(id: "primary", responses: [.init(message: .assistant("done"))])
+  let cutoff = ProviderResponse(message: .assistant(String(repeating: "partial ", count: 80)),
+    stopReason: .length)
+  let summary = ProviderResponse(message: .assistant("Usable summary"), stopReason: .stop)
+  let compact = SmartContextProvider(id: "compact", responses: [cutoff, cutoff] + Array(repeating: summary, count: 12))
+  let runtime = try await smartRuntime(primary, compact)
+  let oldEvidence = AgentMessage.assistant(String(repeating: "evidence ", count: 4_600))
+  let original = [AgentMessage.user("Earlier task"), oldEvidence, .user("Continue")]
+  let result = try await runtime.run(AgentRequest(
+    provider: "primary", model: "frontier", messages: original,
+    options: .init(maxOutputTokens: 768, contextWindowTokens: requiresReduction ? 12_000 : 16_000),
+    retry: .none, autocompact: .init(tokens: 0), context: .adaptive))
+  #expect(result.response.text == "done")
+  #expect(Array(result.transcript.prefix(original.count)) == original)
+  let acting = try #require(await primary.requests.first)
+  #expect(acting.messages.contains(oldEvidence) == !requiresReduction)
+  if requiresReduction {
+    #expect(await compact.requests.count > 2)
+    #expect(acting.messages.contains { $0.text.contains("Usable summary") })
+  } else {
+    #expect(await compact.requests.count == 2)
+  }
+}
+
 @Test("Smart context still compacts the full growing transcript")
 func smartContextAutocompaction() async throws {
   let call = ToolCall(id: "one", name: "read", arguments: .object([:]))
